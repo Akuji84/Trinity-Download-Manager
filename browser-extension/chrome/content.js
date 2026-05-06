@@ -1,5 +1,34 @@
 const DOWNLOAD_HINT_PATTERN =
   /(download|installer|install|setup|exe|msi|zip|rar|7z|pkg|dmg|apk|iso|torrent)/i;
+const PAGE_CAPTURE_EVENT = "trinity-page-download-capture";
+const PAGE_CAPTURE_RESULT_EVENT = "trinity-page-download-result";
+
+injectPageHook();
+
+window.addEventListener(PAGE_CAPTURE_EVENT, (event) => {
+  const detail = event.detail;
+  if (!detail?.requestId || !detail?.payload) {
+    return;
+  }
+
+  chrome.runtime.sendMessage(
+    {
+      type: "capture-download-click",
+      payload: detail.payload,
+    },
+    (response) => {
+      const captured = chrome.runtime.lastError ? false : response?.captured === true;
+      window.dispatchEvent(
+        new CustomEvent(PAGE_CAPTURE_RESULT_EVENT, {
+          detail: {
+            requestId: detail.requestId,
+            captured,
+          },
+        }),
+      );
+    },
+  );
+});
 
 document.addEventListener(
   "click",
@@ -51,6 +80,15 @@ document.addEventListener(
   },
   true,
 );
+
+function injectPageHook() {
+  const script = document.createElement("script");
+  script.src = chrome.runtime.getURL("page-hook.js");
+  script.async = false;
+  script.dataset.trinityHook = "true";
+  (document.documentElement || document.head || document.body).appendChild(script);
+  script.remove();
+}
 
 function findDownloadCandidate(startNode) {
   if (!(startNode instanceof Element)) {

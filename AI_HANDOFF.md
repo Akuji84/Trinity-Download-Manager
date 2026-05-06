@@ -554,6 +554,10 @@ Exit criteria:
   - likely download candidates are detected from anchor `download` attributes and download/install/setup-style text or URLs
   - the content script asks the background worker to hand the URL to Trinity first and only falls back to the browser if Trinity capture is unavailable
   - recent pre-captured URLs are tracked so any later `chrome.downloads.onCreated` duplicate can be canceled and erased immediately
+- Added page-context capture hooks for JS-triggered downloads:
+  - `page-hook.js` is injected into the page world so site JavaScript calls to `window.open(...)`, programmatic anchor clicks, and `location.assign/replace(...)` can be intercepted before Chrome starts its own download UI
+  - the page hook relays likely download URLs to the content script, which asks the background worker to hand them to Trinity first
+  - browser fallback is preserved if Trinity capture is unavailable or rejected
 - Rebuilt the full icon set from the new square branding asset:
   - added `scripts/regenerate_icons.py` to regenerate app and extension icons consistently from `assets/branding/trinity-logo-square.png`
   - refreshed `assets/branding/trinity-logo-source.png` from that square asset
@@ -591,4 +595,4 @@ Exit criteria:
 
 ## Next Step
 
-Reinstall/reload the app and unpacked Chrome extension so the regenerated square icon set is picked up everywhere, then verify any previously cut-off icon surfaces now render the full cropped asset cleanly.
+Reload the unpacked Chrome extension and verify that JS-driven download buttons now hand off to Trinity without Chrome opening its own duplicate save/download flow.

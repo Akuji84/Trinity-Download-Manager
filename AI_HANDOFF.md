@@ -516,6 +516,7 @@ Exit criteria:
   - the segmented resume manifest is stored in Trinity app data under `segment-manifests/`
   - no visible per-segment payload files are created in the destination folder anymore
 - Paused downloads no longer store or render the old `Partial file kept for resume` message in the main list.
+- Added file-type icons to the download name cell so common extensions such as executables, archives, media, documents, images, and folder-like entries are visually distinguishable in the main list.
 - Current segmented implementation is still conservative:
   - segmented jobs rebalance naturally through the chunk queue, but live splitting/merging of in-flight chunks is not implemented yet
   - segmented part state is persisted on a short interval, so an abrupt kill may lose only the most recent in-flight chunk progress instead of the whole job

@@ -8,10 +8,18 @@ import {
   ArrowUp,
   ChevronDown,
   Clock3,
+  FileArchive,
+  FileAudio,
+  FileCode2,
+  FileImage,
+  FileText,
+  FileVideo,
   Flag,
   FolderInput,
+  Folder,
   GripVertical,
   MoreHorizontal,
+  Package,
   Play,
   Plus,
   RefreshCw,
@@ -2640,25 +2648,32 @@ function App() {
                             />
                           </span>
                           <div className="download-name">
-                            <div className="download-title-row">
-                              <button
-                                className={`drag-handle ${
-                                  isQueueManageable(job) ? "" : "disabled"
-                                }`}
-                                disabled={!isQueueManageable(job)}
-                                onClick={(event) => event.stopPropagation()}
-                                title={
-                                  isQueueManageable(job)
-                                    ? "Drag to reorder within the same priority"
-                                    : "Only queued, paused, failed, or canceled jobs can be reordered"
-                                }
-                                type="button"
-                              >
-                                <GripVertical size={14} strokeWidth={2} />
-                              </button>
-                              <strong title={job.file_name}>{job.file_name}</strong>
+                            <div className="download-entry-row">
+                              <span className="download-file-icon">
+                                {renderDownloadTypeIcon(job.file_name)}
+                              </span>
+                              <div className="download-title-block">
+                                <div className="download-title-row">
+                                  <button
+                                    className={`drag-handle ${
+                                      isQueueManageable(job) ? "" : "disabled"
+                                    }`}
+                                    disabled={!isQueueManageable(job)}
+                                    onClick={(event) => event.stopPropagation()}
+                                    title={
+                                      isQueueManageable(job)
+                                        ? "Drag to reorder within the same priority"
+                                        : "Only queued, paused, failed, or canceled jobs can be reordered"
+                                    }
+                                    type="button"
+                                  >
+                                    <GripVertical size={14} strokeWidth={2} />
+                                  </button>
+                                  <strong title={job.file_name}>{job.file_name}</strong>
+                                </div>
+                                <small title={job.url}>{job.url}</small>
+                              </div>
                             </div>
-                            <small title={job.url}>{job.url}</small>
                             {job.scheduler_enabled ? (
                               <small className="schedule-detail" title={scheduleSummary}>
                                 {scheduleSummary}
@@ -3190,6 +3205,40 @@ function formatPriorityLabel(priority: number) {
     default:
       return "Normal";
   }
+}
+
+function renderDownloadTypeIcon(fileName: string) {
+  const extension = getFileExtension(fileName);
+
+  if ([".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz"].includes(extension)) {
+    return <FileArchive size={16} strokeWidth={2} />;
+  }
+
+  if ([".exe", ".msi", ".appx", ".msix", ".bat", ".cmd"].includes(extension)) {
+    return <Package size={16} strokeWidth={2} />;
+  }
+
+  if ([".pdf", ".doc", ".docx", ".txt", ".rtf", ".csv", ".xlsx", ".pptx"].includes(extension)) {
+    return <FileText size={16} strokeWidth={2} />;
+  }
+
+  if ([".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a"].includes(extension)) {
+    return <FileAudio size={16} strokeWidth={2} />;
+  }
+
+  if ([".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm"].includes(extension)) {
+    return <FileVideo size={16} strokeWidth={2} />;
+  }
+
+  if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico"].includes(extension)) {
+    return <FileImage size={16} strokeWidth={2} />;
+  }
+
+  if (extension === "") {
+    return <Folder size={16} strokeWidth={2} />;
+  }
+
+  return <FileCode2 size={16} strokeWidth={2} />;
 }
 
 function timeValueToMinutes(value: string | null) {

@@ -319,6 +319,29 @@ button {
   gap: 1px;
 }
 
+.download-entry-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+}
+
+.download-file-icon {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+  color: #7ec8ff;
+}
+
+.download-title-block {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
 .download-title-row {
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr);

@@ -481,6 +481,8 @@ Exit criteria:
 - Manager-side Delete now removes the actual file from disk when it exists, removes any `.trinitydownload` partial sidecar, and then removes the job from SQLite.
 - Completed jobs whose final files were deleted outside Trinity are now pruned automatically on job refresh so they disappear from the UI.
 - Removed the extra per-row speed-limit and retry-policy text from the main download list to keep row details tighter.
+- Added backend filesystem watching for directories containing completed downloads.
+- When Windows reports a completed file being removed or renamed, Trinity now prunes that job immediately and emits a UI refresh event so the row disappears without manual refresh.
 
 ## Current Verification Status
 

@@ -13,6 +13,7 @@ use std::{
     },
 };
 
+use notify::{event::ModifyKind, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use models::{
     AppSettings, AppStatus, CreateDownloadJobRequest, DownloadJob, DownloadState,
     DownloadUrlMetadata, ReorderDownloadJobRequest, UpdateAppSettingsRequest,
@@ -23,7 +24,7 @@ use reqwest::{
     Client, StatusCode,
 };
 use storage::Storage;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use url::Url;
 use uuid::Uuid;
 use chrono::Timelike;
@@ -31,6 +32,8 @@ use chrono::Timelike;
 struct AppState {
     storage: Mutex<Storage>,
     active_downloads: Mutex<HashMap<String, Arc<download_engine::DownloadControl>>>,
+    file_watcher: Mutex<RecommendedWatcher>,
+    watched_directories: Mutex<Vec<PathBuf>>,
     queue_running: AtomicBool,
 }
 
@@ -313,28 +316,8 @@ fn list_download_jobs(state: State<'_, AppState>) -> Result<Vec<DownloadJob>, St
         .storage
         .lock()
         .map_err(|_| "Storage lock is unavailable.".to_string())?;
-    let mut jobs = storage.list_download_jobs().map_err(|error| error.to_string())?;
-    let missing_completed_job_ids = jobs
-        .iter()
-        .filter(|job| {
-            matches!(job.state, DownloadState::Completed)
-                && !job.output_path.trim().is_empty()
-                && !PathBuf::from(job.output_path.trim()).exists()
-        })
-        .map(|job| job.id.clone())
-        .collect::<Vec<_>>();
-
-    if missing_completed_job_ids.is_empty() {
-        return Ok(jobs);
-    }
-
-    for id in missing_completed_job_ids {
-        storage
-            .delete_download_job(&id)
-            .map_err(|error| error.to_string())?;
-    }
-
-    jobs = storage.list_download_jobs().map_err(|error| error.to_string())?;
+    let jobs = load_jobs_with_cleanup(&storage).map_err(|error| error.to_string())?;
+    sync_completed_file_watchers(&state, &jobs)?;
     Ok(jobs)
 }
 
@@ -912,6 +895,115 @@ fn open_storage(app: &AppHandle) -> Result<Storage, String> {
     Storage::open(app_data_dir.join("trinity.sqlite3")).map_err(|error| error.to_string())
 }
 
+fn load_jobs_with_cleanup(storage: &Storage) -> rusqlite::Result<Vec<DownloadJob>> {
+    let mut jobs = storage.list_download_jobs()?;
+    let missing_completed_job_ids = jobs
+        .iter()
+        .filter(|job| {
+            matches!(job.state, DownloadState::Completed)
+                && !job.output_path.trim().is_empty()
+                && !PathBuf::from(job.output_path.trim()).exists()
+        })
+        .map(|job| job.id.clone())
+        .collect::<Vec<_>>();
+
+    if missing_completed_job_ids.is_empty() {
+        return Ok(jobs);
+    }
+
+    for id in missing_completed_job_ids {
+        storage.delete_download_job(&id)?;
+    }
+
+    jobs = storage.list_download_jobs()?;
+    Ok(jobs)
+}
+
+fn sync_completed_file_watchers(state: &AppState, jobs: &[DownloadJob]) -> Result<(), String> {
+    let mut next_directories = jobs
+        .iter()
+        .filter(|job| matches!(job.state, DownloadState::Completed))
+        .filter_map(|job| {
+            let output_path = job.output_path.trim();
+            if output_path.is_empty() {
+                return None;
+            }
+
+            PathBuf::from(output_path)
+                .parent()
+                .map(|parent| parent.to_path_buf())
+        })
+        .collect::<Vec<_>>();
+    next_directories.sort();
+    next_directories.dedup();
+
+    let mut watcher = state
+        .file_watcher
+        .lock()
+        .map_err(|_| "File watcher lock is unavailable.".to_string())?;
+    let mut watched_directories = state
+        .watched_directories
+        .lock()
+        .map_err(|_| "Watched directory registry is unavailable.".to_string())?;
+
+    let directories_to_remove = watched_directories
+        .iter()
+        .filter(|current| !next_directories.iter().any(|next| next == *current))
+        .cloned()
+        .collect::<Vec<_>>();
+    let directories_to_add = next_directories
+        .iter()
+        .filter(|next| !watched_directories.iter().any(|current| current == *next))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    for directory in directories_to_remove {
+        watcher.unwatch(&directory).map_err(|error| error.to_string())?;
+    }
+
+    for directory in &directories_to_add {
+        watcher
+            .watch(directory, RecursiveMode::NonRecursive)
+            .map_err(|error| error.to_string())?;
+    }
+
+    *watched_directories = next_directories;
+    Ok(())
+}
+
+fn should_process_file_event(kind: &EventKind) -> bool {
+    matches!(
+        kind,
+        EventKind::Remove(_)
+            | EventKind::Modify(ModifyKind::Name(_))
+            | EventKind::Modify(ModifyKind::Any)
+            | EventKind::Modify(ModifyKind::Metadata(_))
+            | EventKind::Modify(ModifyKind::Data(_))
+    )
+}
+
+fn handle_file_watch_event(app: &AppHandle, kind: &EventKind) -> Result<(), String> {
+    if !should_process_file_event(kind) {
+        return Ok(());
+    }
+
+    let storage = open_storage(app)?;
+    let jobs_before = storage
+        .list_download_jobs()
+        .map_err(|error| error.to_string())?
+        .len();
+    let jobs_after = load_jobs_with_cleanup(&storage)
+        .map_err(|error| error.to_string())?
+        .len();
+
+    if jobs_after < jobs_before {
+        app.emit("downloads-changed", ())
+            .map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -924,11 +1016,46 @@ pub fn run() {
                     message,
                 ))
             })?;
+            let app_handle = app.handle().clone();
+            let file_watcher = notify::recommended_watcher(move |event_result: notify::Result<notify::Event>| {
+                if let Ok(event) = event_result {
+                    let _ = handle_file_watch_event(&app_handle, &event.kind);
+                }
+            })
+            .map_err(|error| {
+                Box::<dyn std::error::Error>::from(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    error.to_string(),
+                ))
+            })?;
             app.manage(AppState {
                 storage: Mutex::new(storage),
                 active_downloads: Mutex::new(HashMap::new()),
+                file_watcher: Mutex::new(file_watcher),
+                watched_directories: Mutex::new(Vec::new()),
                 queue_running: AtomicBool::new(true),
             });
+            let state = app.state::<AppState>();
+            let jobs = {
+                let storage = state.storage.lock().map_err(|_| {
+                    Box::<dyn std::error::Error>::from(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "Storage lock is unavailable.",
+                    ))
+                })?;
+                load_jobs_with_cleanup(&storage).map_err(|error| {
+                    Box::<dyn std::error::Error>::from(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        error.to_string(),
+                    ))
+                })?
+            };
+            sync_completed_file_watchers(&state, &jobs).map_err(|message| {
+                Box::<dyn std::error::Error>::from(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    message,
+                ))
+            })?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

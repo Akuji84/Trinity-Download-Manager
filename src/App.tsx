@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   ArrowLeft,
@@ -401,6 +402,22 @@ function App() {
       })
       .catch(console.error);
     refreshJobs();
+  }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+
+    listen("downloads-changed", () => {
+      refreshJobs().catch(console.error);
+    })
+      .then((dispose) => {
+        unlisten = dispose;
+      })
+      .catch(console.error);
+
+    return () => {
+      unlisten?.();
+    };
   }, []);
 
   useEffect(() => {

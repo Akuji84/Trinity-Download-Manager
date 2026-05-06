@@ -549,6 +549,11 @@ Exit criteria:
   - respects the popup's pause-capture and site-exclusion settings
   - only auto-captures when Trinity's localhost bridge is already reachable
   - sends the browser download to Trinity, then cancels and erases the Chrome-side duplicate
+- Added pre-click Chrome capture for likely download links/buttons:
+  - a new `content.js` runs on pages and captures likely download clicks before Chrome starts its own save/download flow
+  - likely download candidates are detected from anchor `download` attributes and download/install/setup-style text or URLs
+  - the content script asks the background worker to hand the URL to Trinity first and only falls back to the browser if Trinity capture is unavailable
+  - recent pre-captured URLs are tracked so any later `chrome.downloads.onCreated` duplicate can be canceled and erased immediately
 - Simplified the NSIS desktop shortcut icon fix:
   - the installer now ships a dedicated `trinity-shortcut.ico` into `$INSTDIR`
   - desktop shortcuts are recreated during the install section against that installed `.ico`
@@ -581,4 +586,4 @@ Exit criteria:
 
 ## Next Step
 
-Run the rebuilt NSIS installer and verify that the install-time desktop shortcut again shows the intended icon on this machine.
+Reload the unpacked Chrome extension and verify that clicking download-style links now hands off to Trinity without Chrome showing its own duplicate save/download flow.

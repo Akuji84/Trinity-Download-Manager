@@ -10,7 +10,19 @@
     "tabs"
   ],
   "host_permissions": [
-    "http://127.0.0.1:38491/*"
+    "http://127.0.0.1:38491/*",
+    "<all_urls>"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start"
+    }
   ],
   "background": {
     "service_worker": "background.js"

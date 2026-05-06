@@ -9,6 +9,8 @@ const CONTEXT_MENU_IDS = {
   page: "trinity-download-page",
 };
 const interceptedDownloadIds = new Set();
+const RECENT_CAPTURE_WINDOW_MS = 8000;
+const recentCapturedUrls = new Map();
 
 // Cached bridge status so onCreated can cancel immediately without a network round-trip
 let cachedBridgeAlive = false;
@@ -67,6 +69,16 @@ chrome.downloads.onCreated.addListener((downloadItem) => {
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "capture-download-click") {
+    captureDownloadClick(message.payload)
+      .then((result) => sendResponse(result))
+      .catch((error) => {
+        console.error("Capture download click failed", error);
+        sendResponse({ captured: false });
+      });
+    return true;
+  }
+
   if (message?.type === "bridge-status") {
     pingBridge()
       .then((connected) => sendResponse({ connected }))
@@ -221,6 +233,25 @@ async function handleCreatedDownload(downloadItem) {
     return;
   }
 
+  const targetUrl = downloadItem.finalUrl || downloadItem.url || "";
+  if (wasRecentlyCaptured(targetUrl)) {
+    interceptedDownloadIds.add(downloadItem.id);
+    try {
+      await chrome.downloads.cancel(downloadItem.id);
+    } catch (error) {
+      console.warn("Could not cancel duplicate browser download after pre-capture", error);
+    }
+
+    try {
+      await chrome.downloads.erase({ id: downloadItem.id });
+    } catch (error) {
+      console.warn("Could not erase duplicate browser download after pre-capture", error);
+    }
+
+    setTimeout(() => interceptedDownloadIds.delete(downloadItem.id), 5000);
+    return;
+  }
+
   const { capturePaused = false, excludedSites = [] } = await chrome.storage.local.get([
     STORAGE_KEYS.capturePaused,
     STORAGE_KEYS.excludedSites,
@@ -345,6 +376,53 @@ async function toggleSiteExclusion(siteHost) {
   };
 }
 
+async function captureDownloadClick(payload) {
+  if (!payload || !isHttpUrl(payload.url)) {
+    return { captured: false };
+  }
+
+  const { capturePaused = false, excludedSites = [] } = await chrome.storage.local.get([
+    STORAGE_KEYS.capturePaused,
+    STORAGE_KEYS.excludedSites,
+  ]);
+
+  if (capturePaused) {
+    return { captured: false };
+  }
+
+  const pageHost = extractHost(payload.page_url || payload.referrer || "");
+  if (pageHost && excludedSites.includes(pageHost)) {
+    return { captured: false };
+  }
+
+  if (!cachedBridgeAlive && !(await pingBridge())) {
+    cachedBridgeAlive = false;
+    return { captured: false };
+  }
+
+  const sentToTrinity = await sendToTrinity({
+    url: payload.url,
+    page_url: payload.page_url ?? null,
+    suggested_file_name: payload.suggested_file_name ?? deriveSuggestedFileName(payload.url),
+    mime_type: payload.mime_type ?? null,
+    referrer: payload.referrer ?? payload.page_url ?? null,
+    browser: "chrome",
+    output_folder: null,
+  });
+
+  if (!sentToTrinity) {
+    return { captured: false };
+  }
+
+  markRecentlyCaptured(payload.url);
+  if (payload.page_url) {
+    markRecentlyCaptured(payload.page_url);
+  }
+
+  await showBridgeBadge("CAP", "#145d29");
+  return { captured: true };
+}
+
 async function getActiveTab() {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   return tabs[0] ?? null;
@@ -375,6 +453,34 @@ function isHttpUrl(value) {
     return parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:";
   } catch {
     return false;
+  }
+}
+
+function markRecentlyCaptured(value) {
+  if (!value) {
+    return;
+  }
+
+  cleanupRecentCapturedUrls();
+  recentCapturedUrls.set(value, Date.now() + RECENT_CAPTURE_WINDOW_MS);
+}
+
+function wasRecentlyCaptured(value) {
+  if (!value) {
+    return false;
+  }
+
+  cleanupRecentCapturedUrls();
+  const expiresAt = recentCapturedUrls.get(value);
+  return typeof expiresAt === "number" && expiresAt > Date.now();
+}
+
+function cleanupRecentCapturedUrls() {
+  const now = Date.now();
+  for (const [key, expiresAt] of recentCapturedUrls.entries()) {
+    if (expiresAt <= now) {
+      recentCapturedUrls.delete(key);
+    }
   }
 }
 

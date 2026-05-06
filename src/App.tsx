@@ -2666,22 +2666,13 @@ function App() {
                           event.preventDefault();
                           handleRowDrop(job);
                         }}
-                      >
-                        <div className="download-primary-row">
-                          <span className="check-cell">
-                            <input
-                              aria-label={`Select ${job.file_name}`}
-                              checked={isSelected}
-                              onChange={() => toggleJobSelection(job.id)}
-                              onClick={(event) => event.stopPropagation()}
-                              type="checkbox"
-                            />
-                          </span>
-                          <div className="download-name">
+                        >
+                          <div className="download-primary-row">
+                            <span className="check-cell file-icon-cell" aria-hidden="true">
+                              {renderDownloadIcon(job, systemIcons)}
+                            </span>
+                            <div className="download-name">
                               <div className="download-entry-row">
-                                <span className="download-file-icon">
-                                  {renderDownloadIcon(job, systemIcons)}
-                                </span>
                                 <div className="download-title-block">
                                 <div className="download-title-row">
                                   <button

@@ -272,6 +272,12 @@ button {
   accent-color: #159ce8;
 }
 
+.file-icon-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .download-list {
   min-height: 0;
   overflow: auto;
@@ -321,7 +327,7 @@ button {
 
 .download-entry-row {
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
   gap: 8px;
 }

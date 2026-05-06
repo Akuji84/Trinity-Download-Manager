@@ -478,8 +478,9 @@ Exit criteria:
 - Added a drag handle to queue-manageable rows and visual drop-target feedback in the table.
 - Select-all now respects only the currently visible filtered rows instead of the whole dataset.
 - Verified drag-drop queue reordering and richer filters with `npm run build` and `cargo check`.
-- Clarified the speed-policy row text so `Unlimited` now explicitly means Trinity is not applying an app-side cap.
-- Completed downloads remain persisted in the download list until the user deletes them.
+- Manager-side Delete now removes the actual file from disk when it exists, removes any `.trinitydownload` partial sidecar, and then removes the job from SQLite.
+- Completed jobs whose final files were deleted outside Trinity are now pruned automatically on job refresh so they disappear from the UI.
+- Removed the extra per-row speed-limit and retry-policy text from the main download list to keep row details tighter.
 
 ## Current Verification Status
 

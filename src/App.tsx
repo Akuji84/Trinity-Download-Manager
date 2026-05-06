@@ -2604,11 +2604,9 @@ function App() {
                     const nextScheduledStart = waitingForSchedule
                       ? formatNextScheduledStart(job, scheduleNow)
                       : "";
-                    const retryPolicySummary = formatRetryPolicySummary(settings);
                     const queuePolicySummary = isQueueManageable(job)
                       ? `Queue: ${formatPriorityLabel(job.priority)} / #${job.queue_position}`
                       : "";
-                    const speedPolicySummary = formatSpeedPolicySummary(job, settings, scheduleNow);
 
                     return (
                       <article
@@ -2686,8 +2684,6 @@ function App() {
                             {queuePolicySummary ? (
                               <small className="queue-policy-detail">{queuePolicySummary}</small>
                             ) : null}
-                            <small className="speed-policy-detail">{speedPolicySummary}</small>
-                            <small className="retry-policy-detail">{retryPolicySummary}</small>
                             {job.error_message ? (
                               <em title={job.error_message}>{job.error_message}</em>
                             ) : null}
@@ -3198,16 +3194,6 @@ function formatRetryTime(value: string) {
   });
 }
 
-function formatRetryPolicySummary(settings: AppSettings) {
-  if (!settings.retry_enabled) {
-    return "Retry policy: Manual only";
-  }
-
-  const attemptLabel = settings.retry_attempts === 1 ? "attempt" : "attempts";
-  const delayLabel = settings.retry_delay_seconds === 1 ? "second" : "seconds";
-  return `Retry policy: Auto ${settings.retry_attempts} ${attemptLabel}, ${settings.retry_delay_seconds} ${delayLabel}`;
-}
-
 function formatPriorityLabel(priority: number) {
   switch (priority) {
     case 2:
@@ -3217,36 +3203,6 @@ function formatPriorityLabel(priority: number) {
     default:
       return "Normal";
   }
-}
-
-function formatSpeedPolicySummary(job: DownloadJob, settings: AppSettings, currentDate: Date) {
-  const jobLimitLabel =
-    job.speed_limit_kbps > 0
-      ? `App limit: ${formatKbps(job.speed_limit_kbps)}`
-      : "App limit: Unlimited";
-  if (
-    settings.bandwidth_schedule_enabled &&
-    settings.bandwidth_schedule_limit_kbps > 0 &&
-    isClockWindowActive(
-      settings.bandwidth_schedule_start,
-      settings.bandwidth_schedule_end,
-      currentDate,
-    )
-  ) {
-    return `${jobLimitLabel} / Scheduled app cap: ${formatKbps(
-      settings.bandwidth_schedule_limit_kbps,
-    )}`;
-  }
-
-  return jobLimitLabel;
-}
-
-function formatKbps(value: number) {
-  if (value >= 1024) {
-    return `${(value / 1024).toFixed(value % 1024 === 0 ? 0 : 1)} MB/s`;
-  }
-
-  return `${value} KB/s`;
 }
 
 function timeValueToMinutes(value: string | null) {
@@ -3288,21 +3244,6 @@ function formatScheduleClock(value: string | null) {
 
 function formatWeekday(value: Date) {
   return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][value.getDay()];
-}
-
-function isClockWindowActive(start: string, end: string, currentDate: Date) {
-  const startMinutes = timeValueToMinutes(start);
-  const endMinutes = timeValueToMinutes(end);
-  if (startMinutes === null || endMinutes === null) {
-    return false;
-  }
-
-  const currentMinutes = currentDate.getHours() * 60 + currentDate.getMinutes();
-  if (startMinutes <= endMinutes) {
-    return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
-  }
-
-  return currentMinutes >= startMinutes || currentMinutes <= endMinutes;
 }
 
 export default App;

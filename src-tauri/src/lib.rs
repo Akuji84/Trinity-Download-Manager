@@ -5,6 +5,7 @@ mod task_manager;
 
 use std::{
     collections::HashMap,
+    fs,
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -312,10 +313,29 @@ fn list_download_jobs(state: State<'_, AppState>) -> Result<Vec<DownloadJob>, St
         .storage
         .lock()
         .map_err(|_| "Storage lock is unavailable.".to_string())?;
+    let mut jobs = storage.list_download_jobs().map_err(|error| error.to_string())?;
+    let missing_completed_job_ids = jobs
+        .iter()
+        .filter(|job| {
+            matches!(job.state, DownloadState::Completed)
+                && !job.output_path.trim().is_empty()
+                && !PathBuf::from(job.output_path.trim()).exists()
+        })
+        .map(|job| job.id.clone())
+        .collect::<Vec<_>>();
 
-    storage
-        .list_download_jobs()
-        .map_err(|error| error.to_string())
+    if missing_completed_job_ids.is_empty() {
+        return Ok(jobs);
+    }
+
+    for id in missing_completed_job_ids {
+        storage
+            .delete_download_job(&id)
+            .map_err(|error| error.to_string())?;
+    }
+
+    jobs = storage.list_download_jobs().map_err(|error| error.to_string())?;
+    Ok(jobs)
 }
 
 #[tauri::command]
@@ -324,10 +344,25 @@ fn delete_download_job(state: State<'_, AppState>, id: String) -> Result<bool, S
         .storage
         .lock()
         .map_err(|_| "Storage lock is unavailable.".to_string())?;
+    let existing_job = storage
+        .get_download_job(&id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Download job could not be found.".to_string())?;
 
-    storage
-        .delete_download_job(&id)
-        .map_err(|error| error.to_string())
+    let output_path = existing_job.output_path.trim().to_string();
+    if !output_path.is_empty() {
+        let final_path = PathBuf::from(&output_path);
+        if final_path.exists() {
+            fs::remove_file(&final_path).map_err(|error| error.to_string())?;
+        }
+
+        let partial_path = PathBuf::from(format!("{output_path}.trinitydownload"));
+        if partial_path.exists() {
+            fs::remove_file(&partial_path).map_err(|error| error.to_string())?;
+        }
+    }
+
+    storage.delete_download_job(&id).map_err(|error| error.to_string())
 }
 
 #[tauri::command]

@@ -1,4 +1,5 @@
 const statusNode = document.getElementById("popup-status");
+const openTrinityButton = document.getElementById("open-trinity");
 const captureButton = document.getElementById("toggle-capture");
 const siteButton = document.getElementById("toggle-site");
 const optionsButton = document.getElementById("open-options");
@@ -24,7 +25,8 @@ async function initializePopup() {
 }
 
 function render() {
-  setStatus(popupState.connected ? "Trinity is connected." : "Trying to open Trinity...");
+  setStatus(popupState.connected ? "Trinity is connected." : "Trinity is not running.");
+  openTrinityButton.hidden = popupState.connected;
   captureButton.textContent = popupState.capturePaused
     ? "Resume catching downloads from all sites"
     : "Pause to catch downloads from all sites";
@@ -37,6 +39,14 @@ function render() {
 function setStatus(value) {
   statusNode.textContent = value;
 }
+
+openTrinityButton.addEventListener("click", async () => {
+  await launchTrinityFromPopup();
+  setStatus("Checking Trinity...");
+  const response = await chrome.runtime.sendMessage({ type: "bridge-status" });
+  popupState.connected = response?.connected === true;
+  render();
+});
 
 captureButton.addEventListener("click", async () => {
   const response = await chrome.runtime.sendMessage({ type: "toggle-capture-paused" });
@@ -64,6 +74,15 @@ optionsButton.addEventListener("click", async () => {
 helpButton.addEventListener("click", async () => {
   await chrome.runtime.sendMessage({ type: "open-help-page" });
 });
+
+async function launchTrinityFromPopup() {
+  const launchFrame = document.createElement("iframe");
+  launchFrame.style.display = "none";
+  launchFrame.src = "trinity://launch";
+  document.body.appendChild(launchFrame);
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  launchFrame.remove();
+}
 
 initializePopup().catch((error) => {
   console.error("Popup initialization failed", error);

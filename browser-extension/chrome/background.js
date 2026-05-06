@@ -52,7 +52,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "bridge-status") {
-    ensureBridgeReady()
+    pingBridge()
       .then((connected) => sendResponse({ connected }))
       .catch((error) => {
         console.error("Bridge status check failed", error);
@@ -132,7 +132,7 @@ async function sendToTrinity(payload) {
     return;
   }
 
-  const bridgeReady = await ensureBridgeReady();
+  const bridgeReady = await pingBridge();
   if (!bridgeReady) {
     await showBridgeBadge("OFF", "#6a1b1b");
     return;
@@ -177,28 +177,6 @@ async function pingBridge() {
   }
 }
 
-async function ensureBridgeReady() {
-  if (await pingBridge()) {
-    return true;
-  }
-
-  await launchTrinityManager();
-
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    await delay(500);
-    if (await pingBridge()) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-async function launchTrinityManager() {
-  const launchUrl = "trinity://launch";
-  await chrome.tabs.create({ url: launchUrl, active: false });
-}
-
 async function getPopupState() {
   const [{ capturePaused = false, excludedSites = [] }, currentTab] = await Promise.all([
     chrome.storage.local.get([STORAGE_KEYS.capturePaused, STORAGE_KEYS.excludedSites]),
@@ -207,7 +185,7 @@ async function getPopupState() {
   const siteHost = extractHost(currentTab?.url ?? "");
 
   return {
-    connected: await ensureBridgeReady(),
+    connected: await pingBridge(),
     capturePaused,
     siteExcluded: siteHost ? excludedSites.includes(siteHost) : false,
     siteHost,
@@ -268,10 +246,6 @@ function isHttpUrl(value) {
   } catch {
     return false;
   }
-}
-
-function delay(milliseconds) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function showBridgeBadge(text, color) {

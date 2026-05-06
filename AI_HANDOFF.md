@@ -560,9 +560,10 @@ Exit criteria:
   - browser fallback is preserved if Trinity capture is unavailable or rejected
   - the fallback path is now biased against Chrome duplicates: page-hook capture waits longer and defaults to suppressing Chrome if the handoff result is merely delayed instead of explicitly rejected
 - Added explicit browser fallback control in the extension:
-  - the extension now stores `Use browser if Trinity is unavailable` as a real option in `options.html`
-  - capture responses now include whether the browser should be allowed to continue when Trinity is unavailable
-  - content-script and page-hook fallback now follow that setting instead of assuming a fixed fallback policy
+  - browser fallback when Trinity is unavailable is now fixed as the default policy instead of a user-editable browser-side setting
+  - the browser extension options page was removed
+  - the popup `Options` action now targets Trinity's own Preferences through the localhost bridge instead of opening a browser page
+  - the bridge now exposes `/app/open-options`, which focuses the main window and opens Trinity Preferences
 - Rebuilt the full icon set from the new square branding asset:
   - added `scripts/regenerate_icons.py` to regenerate app and extension icons consistently from `assets/branding/trinity-logo-square.png`
   - refreshed `assets/branding/trinity-logo-source.png` from that square asset
@@ -600,4 +601,4 @@ Exit criteria:
 
 ## Next Step
 
-Reload the unpacked Chrome extension, verify the new fallback setting in the options page, and confirm that capture still suppresses Chrome while Trinity is available.
+Reload the unpacked Chrome extension and verify that the popup `Options` button opens Trinity Preferences directly while Chrome-side fallback remains fixed when Trinity is unavailable.

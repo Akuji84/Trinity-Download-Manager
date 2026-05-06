@@ -2,7 +2,6 @@ const BRIDGE_BASE_URL = "http://127.0.0.1:38491";
 const STORAGE_KEYS = {
   capturePaused: "capturePaused",
   excludedSites: "excludedSites",
-  browserFallbackWhenUnavailable: "browserFallbackWhenUnavailable",
 };
 const CONTEXT_MENU_IDS = {
   link: "trinity-download-link",
@@ -126,23 +125,23 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message?.type === "get-options-state") {
-    getOptionsState()
+    sendResponse({ browserFallbackWhenUnavailable: true });
+    return false;
+  }
+
+  if (message?.type === "open-trinity-options") {
+    openTrinityOptions()
       .then((state) => sendResponse(state))
       .catch((error) => {
-        console.error("Options state load failed", error);
-        sendResponse({ browserFallbackWhenUnavailable: true });
+        console.error("Open Trinity options failed", error);
+        sendResponse({ ok: false });
       });
     return true;
   }
 
   if (message?.type === "set-browser-fallback-when-unavailable") {
-    setBrowserFallbackWhenUnavailable(message.value)
-      .then((state) => sendResponse(state))
-      .catch((error) => {
-        console.error("Browser fallback setting update failed", error);
-        sendResponse({ browserFallbackWhenUnavailable: true });
-      });
-    return true;
+    sendResponse({ browserFallbackWhenUnavailable: true });
+    return false;
   }
 
   if (message?.type === "open-options-page") {
@@ -237,14 +236,6 @@ async function getPopupState() {
     siteExcluded: siteHost ? excludedSites.includes(siteHost) : false,
     siteHost,
   };
-}
-
-async function getOptionsState() {
-  const { browserFallbackWhenUnavailable = true } = await chrome.storage.local.get(
-    STORAGE_KEYS.browserFallbackWhenUnavailable,
-  );
-
-  return { browserFallbackWhenUnavailable };
 }
 
 async function handleCreatedDownload(downloadItem) {
@@ -413,11 +404,9 @@ async function captureDownloadClick(payload) {
   const {
     capturePaused = false,
     excludedSites = [],
-    browserFallbackWhenUnavailable = true,
   } = await chrome.storage.local.get([
     STORAGE_KEYS.capturePaused,
     STORAGE_KEYS.excludedSites,
-    STORAGE_KEYS.browserFallbackWhenUnavailable,
   ]);
 
   if (capturePaused) {
@@ -433,7 +422,7 @@ async function captureDownloadClick(payload) {
     cachedBridgeAlive = false;
     return {
       captured: false,
-      fallbackToBrowser: browserFallbackWhenUnavailable,
+      fallbackToBrowser: true,
     };
   }
 
@@ -450,7 +439,7 @@ async function captureDownloadClick(payload) {
   if (!sentToTrinity) {
     return {
       captured: false,
-      fallbackToBrowser: browserFallbackWhenUnavailable,
+      fallbackToBrowser: true,
     };
   }
 
@@ -463,12 +452,26 @@ async function captureDownloadClick(payload) {
   return { captured: true };
 }
 
-async function setBrowserFallbackWhenUnavailable(value) {
-  const nextValue = value !== false;
-  await chrome.storage.local.set({
-    [STORAGE_KEYS.browserFallbackWhenUnavailable]: nextValue,
+async function openTrinityOptions() {
+  if (!cachedBridgeAlive && !(await pingBridge())) {
+    cachedBridgeAlive = false;
+    return { ok: false };
+  }
+
+  const response = await fetch(`${BRIDGE_BASE_URL}/app/open-options`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: "{}",
   });
-  return { browserFallbackWhenUnavailable: nextValue };
+
+  if (!response.ok) {
+    throw new Error(`Bridge returned HTTP ${response.status}`);
+  }
+
+  cachedBridgeAlive = true;
+  return { ok: true };
 }
 
 async function getActiveTab() {

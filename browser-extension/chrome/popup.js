@@ -61,7 +61,7 @@ siteButton.addEventListener("click", async () => {
 });
 
 optionsButton.addEventListener("click", async () => {
-  await chrome.runtime.sendMessage({ type: "open-options-page" });
+  await chrome.runtime.sendMessage({ type: "open-trinity-options" });
 });
 
 helpButton.addEventListener("click", async () => {

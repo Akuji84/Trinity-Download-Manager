@@ -467,6 +467,22 @@ function App() {
   }, []);
 
   useEffect(() => {
+    let unlisten: (() => void) | null = null;
+
+    listen("extension-open-options", () => {
+      openPreferencesPage();
+    })
+      .then((dispose) => {
+        unlisten = dispose;
+      })
+      .catch(console.error);
+
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
     if (!isSettingsOpen) {
       return;
     }

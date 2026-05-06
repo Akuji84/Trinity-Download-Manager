@@ -64,6 +64,7 @@ struct AppState {
 const EXTENSION_BRIDGE_HOST: &str = "127.0.0.1";
 const EXTENSION_BRIDGE_PORT: u16 = 38491;
 const EXTENSION_DOWNLOAD_EVENT: &str = "extension-download-request";
+const EXTENSION_OPEN_OPTIONS_EVENT: &str = "extension-open-options";
 
 #[tauri::command]
 fn app_status() -> AppStatus {
@@ -1299,9 +1300,27 @@ fn handle_extension_bridge_connection(app: &AppHandle, mut stream: TcpStream) ->
                 "ok": true,
                 "appName": "Trinity Download Manager",
                 "bridgePort": EXTENSION_BRIDGE_PORT,
-                "endpoints": ["/app/ping", "/downloads/create"]
+                "endpoints": ["/app/ping", "/downloads/create", "/app/open-options"]
             }),
         ),
+        ("POST", "/app/open-options") => {
+            app.emit(EXTENSION_OPEN_OPTIONS_EVENT, ())
+                .map_err(|error| error.to_string())?;
+
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+
+            write_json_response(
+                &mut stream,
+                "202 Accepted",
+                &serde_json::json!({
+                    "accepted": true
+                }),
+            )
+        }
         ("POST", "/downloads/create") => {
             let request: ExtensionDownloadRequest = serde_json::from_slice(&body)
                 .map_err(|error| format!("Invalid Trinity extension payload: {error}"))?;

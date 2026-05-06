@@ -8,6 +8,7 @@ const CONTEXT_MENU_IDS = {
   media: "trinity-download-media",
   page: "trinity-download-page",
 };
+const interceptedDownloadIds = new Set();
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
@@ -47,6 +48,12 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     referrer: tab?.url ?? null,
     browser: "chrome",
     output_folder: null,
+  });
+});
+
+chrome.downloads.onCreated.addListener((downloadItem) => {
+  handleCreatedDownload(downloadItem).catch((error) => {
+    console.error("Automatic Trinity interception failed", error);
   });
 });
 
@@ -152,9 +159,11 @@ async function sendToTrinity(payload) {
     }
 
     await showBridgeBadge("OK", "#145d29");
+    return true;
   } catch (error) {
     console.error("Trinity bridge handoff failed", error);
     await showBridgeBadge("ERR", "#6a1b1b");
+    return false;
   }
 }
 
@@ -190,6 +199,115 @@ async function getPopupState() {
     siteExcluded: siteHost ? excludedSites.includes(siteHost) : false,
     siteHost,
   };
+}
+
+async function handleCreatedDownload(downloadItem) {
+  if (!shouldConsiderDownload(downloadItem)) {
+    return;
+  }
+
+  if (interceptedDownloadIds.has(downloadItem.id)) {
+    return;
+  }
+
+  const extensionState = await getExtensionCaptureState(downloadItem);
+  if (!extensionState.shouldCapture) {
+    return;
+  }
+
+  const sentToTrinity = await sendToTrinity({
+    url: downloadItem.finalUrl || downloadItem.url,
+    page_url: extensionState.pageUrl,
+    suggested_file_name: deriveDownloadItemFileName(downloadItem),
+    mime_type: downloadItem.mime || null,
+    referrer: downloadItem.referrer || extensionState.pageUrl || null,
+    browser: "chrome",
+    output_folder: null,
+  });
+
+  if (!sentToTrinity) {
+    return;
+  }
+
+  interceptedDownloadIds.add(downloadItem.id);
+
+  try {
+    await chrome.downloads.cancel(downloadItem.id);
+  } catch (error) {
+    console.warn("Could not cancel the browser download after Trinity handoff", error);
+  }
+
+  try {
+    await chrome.downloads.erase({ id: downloadItem.id });
+  } catch (error) {
+    console.warn("Could not erase the canceled browser download", error);
+  } finally {
+    setTimeout(() => interceptedDownloadIds.delete(downloadItem.id), 5000);
+  }
+
+  await showBridgeBadge("CAP", "#145d29");
+}
+
+function shouldConsiderDownload(downloadItem) {
+  const targetUrl = downloadItem.finalUrl || downloadItem.url || "";
+  if (!isHttpUrl(targetUrl)) {
+    return false;
+  }
+
+  if (downloadItem.byExtensionId && downloadItem.byExtensionId !== chrome.runtime.id) {
+    return false;
+  }
+
+  if (downloadItem.state && downloadItem.state !== "in_progress") {
+    return false;
+  }
+
+  return true;
+}
+
+async function getExtensionCaptureState(downloadItem) {
+  const [{ capturePaused = false, excludedSites = [] }, pageUrl] = await Promise.all([
+    chrome.storage.local.get([STORAGE_KEYS.capturePaused, STORAGE_KEYS.excludedSites]),
+    resolveDownloadPageUrl(downloadItem),
+  ]);
+
+  const siteHost = extractHost(pageUrl || downloadItem.referrer || "");
+  const siteExcluded = siteHost ? excludedSites.includes(siteHost) : false;
+  const bridgeReady = await pingBridge();
+
+  return {
+    shouldCapture: !capturePaused && !siteExcluded && bridgeReady,
+    pageUrl,
+  };
+}
+
+async function resolveDownloadPageUrl(downloadItem) {
+  if (downloadItem.referrer) {
+    return downloadItem.referrer;
+  }
+
+  if (typeof downloadItem.tabId === "number" && downloadItem.tabId >= 0) {
+    try {
+      const tab = await chrome.tabs.get(downloadItem.tabId);
+      return tab?.url ?? null;
+    } catch (error) {
+      console.warn("Could not resolve tab URL for download interception", error);
+    }
+  }
+
+  return null;
+}
+
+function deriveDownloadItemFileName(downloadItem) {
+  if (downloadItem.filename) {
+    const parts = downloadItem.filename.split(/[/\\\\]/).filter(Boolean);
+    const finalPart = parts.at(-1);
+    if (finalPart) {
+      return finalPart;
+    }
+  }
+
+  return deriveSuggestedFileName(downloadItem.finalUrl || downloadItem.url);
 }
 
 async function toggleCapturePaused() {

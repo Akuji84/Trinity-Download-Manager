@@ -543,6 +543,12 @@ Exit criteria:
 - Per user feedback, also cut the three enclosed circular interior regions to transparent alpha and regenerated the app/extension icon outputs from that hollowed source.
 - Replaced the prior Trinity emblem source with the new user-provided branding image, renamed it to `assets/branding/trinity-logo-source.png`, and regenerated all Windows app and Chrome extension icon outputs from that new source.
 - Per user feedback, the Chrome extension was switched back to dedicated icon files and those extension icons were regenerated from a tighter square crop of the base logo source so they read larger and more naturally in Chrome's toolbar and extension surfaces.
+- Added first-pass Chrome automatic download interception:
+  - requested the `downloads` permission in the extension manifest
+  - listens for created Chrome downloads
+  - respects the popup's pause-capture and site-exclusion settings
+  - only auto-captures when Trinity's localhost bridge is already reachable
+  - sends the browser download to Trinity, then cancels and erases the Chrome-side duplicate
 - Current segmented implementation is still conservative:
   - segmented jobs rebalance naturally through the chunk queue, but live splitting/merging of in-flight chunks is not implemented yet
   - segmented part state is persisted on a short interval, so an abrupt kill may lose only the most recent in-flight chunk progress instead of the whole job
@@ -570,4 +576,4 @@ Exit criteria:
 
 ## Next Step
 
-Load the unpacked Chrome extension and verify the popup launch flow and menu actions against an installed Trinity build, then add download-event interception that respects the pause and site-exclusion settings.
+Load the unpacked Chrome extension and verify the automatic interception flow against a running installed Trinity build, then add per-file-type and per-size capture rules so the browser side feels more controllable.

@@ -68,6 +68,15 @@ type AppSettings = {
   bandwidth_schedule_start: string;
   bandwidth_schedule_end: string;
   bandwidth_schedule_limit_kbps: number;
+  close_to_tray: boolean;
+  start_minimized: boolean;
+};
+
+type DownloadProgressEvent = {
+  id: string;
+  downloaded_bytes: number;
+  total_bytes: number | null;
+  speed_bps: number;
 };
 
 type DownloadUrlMetadata = {
@@ -371,6 +380,8 @@ function App() {
     bandwidth_schedule_start: "22:00",
     bandwidth_schedule_end: "06:00",
     bandwidth_schedule_limit_kbps: 512,
+    close_to_tray: true,
+    start_minimized: false,
   });
   const [preferencesDraft, setPreferencesDraft] = useState<PreferencesDraft>(() =>
     createPreferencesDraft(3),
@@ -405,6 +416,8 @@ function App() {
           bandwidthScheduleStart: loadedSettings.bandwidth_schedule_start,
           bandwidthScheduleEnd: loadedSettings.bandwidth_schedule_end,
           bandwidthScheduleLimitKbps: loadedSettings.bandwidth_schedule_limit_kbps,
+          closeToTray: loadedSettings.close_to_tray,
+          startMinimized: loadedSettings.start_minimized,
         }));
       })
       .catch(console.error);
@@ -493,13 +506,37 @@ function App() {
     if (!jobs.some((job) => job.state === "Running")) {
       return;
     }
-
     const intervalId = window.setInterval(() => {
       refreshJobs().catch(console.error);
-    }, 750);
-
+    }, 3000);
     return () => window.clearInterval(intervalId);
   }, [jobs]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    listen<DownloadProgressEvent>("download-progress", (event) => {
+      const { id, downloaded_bytes, total_bytes, speed_bps } = event.payload;
+      setJobs((currentJobs) =>
+        currentJobs.map((job) =>
+          job.id === id
+            ? {
+                ...job,
+                downloaded_bytes,
+                total_bytes: total_bytes ?? job.total_bytes,
+                speed_bps,
+              }
+            : job,
+        ),
+      );
+    })
+      .then((dispose) => {
+        unlisten = dispose;
+      })
+      .catch(console.error);
+    return () => {
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     setUrlMetadata(null);
@@ -728,6 +765,8 @@ function App() {
         bandwidth_schedule_start: preferencesDraft.bandwidthScheduleStart,
         bandwidth_schedule_end: preferencesDraft.bandwidthScheduleEnd,
         bandwidth_schedule_limit_kbps: preferencesDraft.bandwidthScheduleLimitKbps,
+        close_to_tray: preferencesDraft.closeToTray,
+        start_minimized: preferencesDraft.startMinimized,
       },
     });
     setSettings(updatedSettings);
@@ -744,8 +783,10 @@ function App() {
       bandwidthScheduleStart: updatedSettings.bandwidth_schedule_start,
       bandwidthScheduleEnd: updatedSettings.bandwidth_schedule_end,
       bandwidthScheduleLimitKbps: updatedSettings.bandwidth_schedule_limit_kbps,
+      closeToTray: updatedSettings.close_to_tray,
+      startMinimized: updatedSettings.start_minimized,
     }));
-    setPreferencesStatus("Saved live queue, retry, bandwidth, and segmented connection settings. Other sections remain local placeholders for now.");
+    setPreferencesStatus("Settings saved.");
     await refreshJobs();
   }
 
@@ -763,6 +804,8 @@ function App() {
       bandwidthScheduleStart: settings.bandwidth_schedule_start,
       bandwidthScheduleEnd: settings.bandwidth_schedule_end,
       bandwidthScheduleLimitKbps: settings.bandwidth_schedule_limit_kbps,
+      closeToTray: settings.close_to_tray,
+      startMinimized: settings.start_minimized,
     }));
     setPreferencesStatus("");
     setActivePreferencesSection("general");

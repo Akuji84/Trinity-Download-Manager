@@ -142,6 +142,8 @@ pub struct AppSettings {
     pub bandwidth_schedule_start: String,
     pub bandwidth_schedule_end: String,
     pub bandwidth_schedule_limit_kbps: u64,
+    pub close_to_tray: bool,
+    pub start_minimized: bool,
 }
 
 impl Default for AppSettings {
@@ -157,6 +159,8 @@ impl Default for AppSettings {
             bandwidth_schedule_start: "22:00".to_string(),
             bandwidth_schedule_end: "06:00".to_string(),
             bandwidth_schedule_limit_kbps: 512,
+            close_to_tray: true,
+            start_minimized: false,
         }
     }
 }
@@ -173,4 +177,14 @@ pub struct UpdateAppSettingsRequest {
     pub bandwidth_schedule_start: String,
     pub bandwidth_schedule_end: String,
     pub bandwidth_schedule_limit_kbps: u64,
+    pub close_to_tray: bool,
+    pub start_minimized: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DownloadProgressEvent {
+    pub id: String,
+    pub downloaded_bytes: u64,
+    pub total_bytes: Option<u64>,
+    pub speed_bps: u64,
 }

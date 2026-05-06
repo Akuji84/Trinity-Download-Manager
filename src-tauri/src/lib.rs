@@ -18,9 +18,9 @@ use std::{
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use notify::{event::ModifyKind, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use models::{
-    AppSettings, AppStatus, CreateDownloadJobRequest, DownloadJob, DownloadState,
-    DownloadUrlMetadata, ExtensionDownloadRequest, ReorderDownloadJobRequest, UpdateAppSettingsRequest,
-    UpdateDownloadPriorityRequest, UpdateDownloadSpeedLimitRequest,
+    AppSettings, AppStatus, CreateDownloadJobRequest, DownloadJob, DownloadProgressEvent,
+    DownloadState, DownloadUrlMetadata, ExtensionDownloadRequest, ReorderDownloadJobRequest,
+    UpdateAppSettingsRequest, UpdateDownloadPriorityRequest, UpdateDownloadSpeedLimitRequest,
 };
 use reqwest::{
     header::{CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_RANGE, RANGE},
@@ -58,6 +58,7 @@ struct AppState {
     file_watcher: Mutex<RecommendedWatcher>,
     watched_directories: Mutex<Vec<PathBuf>>,
     queue_running: AtomicBool,
+    close_to_tray: AtomicBool,
 }
 
 const EXTENSION_BRIDGE_HOST: &str = "127.0.0.1";
@@ -98,7 +99,10 @@ fn update_app_settings(
         bandwidth_schedule_start: normalize_time_setting(&request.bandwidth_schedule_start)?,
         bandwidth_schedule_end: normalize_time_setting(&request.bandwidth_schedule_end)?,
         bandwidth_schedule_limit_kbps: request.bandwidth_schedule_limit_kbps.min(1024 * 1024),
+        close_to_tray: request.close_to_tray,
+        start_minimized: request.start_minimized,
     };
+    state.close_to_tray.store(request.close_to_tray, Ordering::Relaxed);
 
     let storage = state
         .storage
@@ -587,7 +591,18 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
                         total_bytes,
                         speed_bps,
                     )
-                    .map_err(|error| error.to_string())
+                    .map_err(|error| error.to_string())?;
+                drop(storage);
+                let _ = app_for_progress.emit(
+                    "download-progress",
+                    DownloadProgressEvent {
+                        id: job_id_for_progress.clone(),
+                        downloaded_bytes,
+                        total_bytes,
+                        speed_bps,
+                    },
+                );
+                Ok(())
             },
             move || {
                 let state = app_for_speed_limit.state::<AppState>();
@@ -1410,6 +1425,19 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let should_hide = window
+                    .app_handle()
+                    .state::<AppState>()
+                    .close_to_tray
+                    .load(Ordering::Relaxed);
+                if should_hide {
+                    let _ = window.hide();
+                    api.prevent_close();
+                }
+            }
+        })
         .setup(|app| {
             let storage = open_storage(app.handle()).map_err(|message| {
                 Box::<dyn std::error::Error>::from(std::io::Error::new(
@@ -1418,6 +1446,12 @@ pub fn run() {
                 ))
             })?;
             storage.recover_running_downloads().map_err(|error| {
+                Box::<dyn std::error::Error>::from(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    error.to_string(),
+                ))
+            })?;
+            let initial_settings = storage.get_app_settings().map_err(|error| {
                 Box::<dyn std::error::Error>::from(std::io::Error::new(
                     std::io::ErrorKind::Other,
                     error.to_string(),
@@ -1441,6 +1475,7 @@ pub fn run() {
                 file_watcher: Mutex::new(file_watcher),
                 watched_directories: Mutex::new(Vec::new()),
                 queue_running: AtomicBool::new(true),
+                close_to_tray: AtomicBool::new(initial_settings.close_to_tray),
             });
             let state = app.state::<AppState>();
             let jobs = {
@@ -1469,6 +1504,53 @@ pub fn run() {
                     message,
                 ))
             })?;
+
+            // System tray
+            let open_item = tauri::menu::MenuItem::with_id(app, "open", "Open Trinity", true, None::<&str>)?;
+            let separator = tauri::menu::PredefinedMenuItem::separator(app)?;
+            let quit_item = tauri::menu::MenuItem::with_id(app, "quit", "Quit Trinity", true, None::<&str>)?;
+            let tray_menu = tauri::menu::Menu::with_items(app, &[&open_item, &separator, &quit_item])?;
+            let mut tray_builder = tauri::tray::TrayIconBuilder::new()
+                .menu(&tray_menu)
+                .tooltip("Trinity Download Manager")
+                .on_tray_icon_event(|tray, event| {
+                    if matches!(
+                        event,
+                        tauri::tray::TrayIconEvent::Click { .. }
+                            | tauri::tray::TrayIconEvent::DoubleClick { .. }
+                    ) {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.unminimize();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "open" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.unminimize();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    "quit" => {
+                        app.exit(0);
+                    }
+                    _ => {}
+                });
+            if let Some(icon) = app.default_window_icon() {
+                tray_builder = tray_builder.icon(icon.clone());
+            }
+            tray_builder.build(app)?;
+
+            if initial_settings.start_minimized {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

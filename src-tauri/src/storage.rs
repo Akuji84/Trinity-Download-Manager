@@ -210,6 +210,20 @@ impl Storage {
             ",
             [],
         )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('close_to_tray', '1');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('start_minimized', '0');
+            ",
+            [],
+        )?;
 
         Ok(())
     }
@@ -930,6 +944,16 @@ impl Storage {
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(defaults.bandwidth_schedule_limit_kbps)
             .min(1024 * 1024);
+        let close_to_tray = self
+            .get_setting("close_to_tray")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.close_to_tray);
+        let start_minimized = self
+            .get_setting("start_minimized")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.start_minimized);
 
         Ok(AppSettings {
             max_concurrent_downloads,
@@ -942,6 +966,8 @@ impl Storage {
             bandwidth_schedule_start,
             bandwidth_schedule_end,
             bandwidth_schedule_limit_kbps,
+            close_to_tray,
+            start_minimized,
         })
     }
 
@@ -970,6 +996,14 @@ impl Storage {
         self.upsert_setting(
             "bandwidth_schedule_limit_kbps",
             settings.bandwidth_schedule_limit_kbps.to_string(),
+        )?;
+        self.upsert_setting(
+            "close_to_tray",
+            if settings.close_to_tray { "1" } else { "0" },
+        )?;
+        self.upsert_setting(
+            "start_minimized",
+            if settings.start_minimized { "1" } else { "0" },
         )?;
 
         Ok(())

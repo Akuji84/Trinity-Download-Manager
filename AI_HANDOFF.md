@@ -511,6 +511,10 @@ Exit criteria:
   - successful completions feed average observed throughput back into the host profile
   - final failures back off the host's recommended connection count conservatively
 - Delete cleanup now removes segmented manifests and part files in addition to the final file/temp file.
+- Reworked segmented storage layout so the user download folder no longer fills with visible `partN` files:
+  - segmented downloads now write into one `.trinitydownload` temp payload beside the target file
+  - the segmented resume manifest is stored in Trinity app data under `segment-manifests/`
+  - no visible per-segment payload files are created in the destination folder anymore
 - Current segmented implementation is still conservative:
   - segmented jobs rebalance naturally through the chunk queue, but live splitting/merging of in-flight chunks is not implemented yet
   - segmented part state is persisted on a short interval, so an abrupt kill may lose only the most recent in-flight chunk progress instead of the whole job

@@ -335,7 +335,11 @@ fn list_download_jobs(state: State<'_, AppState>) -> Result<Vec<DownloadJob>, St
 }
 
 #[tauri::command]
-fn delete_download_job(state: State<'_, AppState>, id: String) -> Result<bool, String> {
+fn delete_download_job(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<bool, String> {
     let storage = state
         .storage
         .lock()
@@ -347,7 +351,11 @@ fn delete_download_job(state: State<'_, AppState>, id: String) -> Result<bool, S
 
     let output_path = existing_job.output_path.trim().to_string();
     if !output_path.is_empty() {
-        download_engine::cleanup_download_artifacts(PathBuf::from(&output_path).as_path())?;
+        let manifest_root = segment_manifest_root(&app)?;
+        download_engine::cleanup_download_artifacts(
+            PathBuf::from(&output_path).as_path(),
+            manifest_root.as_path(),
+        )?;
     }
 
     storage.delete_download_job(&id).map_err(|error| error.to_string())
@@ -499,8 +507,10 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
 
     tauri::async_runtime::spawn(async move {
         let job_id = job.id.clone();
-        let output_path = job.output_path.clone();
         let started_at = std::time::Instant::now();
+        let manifest_root = segment_manifest_root(&app).unwrap_or_else(|_| {
+            std::env::temp_dir().join("trinity-segment-manifests")
+        });
         let app_for_progress = app.clone();
         let app_for_output = app.clone();
         let app_for_speed_limit = app.clone();
@@ -509,6 +519,7 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
         let job_id_for_speed_limit = job_id.clone();
         let result = download_engine::download_to_disk(
             job,
+            manifest_root,
             control,
             move |file_name, output_path, total_bytes, is_resumable| {
                 let state = app_for_output.state::<AppState>();
@@ -561,10 +572,6 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
         let state = app.state::<AppState>();
         if let Ok(mut active_downloads) = state.active_downloads.lock() {
             active_downloads.remove(&id);
-        }
-
-        if matches!(result, Err(download_engine::DownloadError::Failed(_))) {
-            let _ = tokio::fs::remove_file(format!("{output_path}.trinitydownload")).await;
         }
 
         let should_pump_now = {
@@ -706,6 +713,16 @@ fn default_download_folder(app: &AppHandle) -> Result<PathBuf, String> {
 
     std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
     Ok(folder)
+}
+
+fn segment_manifest_root(app: &AppHandle) -> Result<PathBuf, String> {
+    let root = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("segment-manifests");
+    std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    Ok(root)
 }
 
 fn derive_file_name(url: &Url) -> String {

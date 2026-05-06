@@ -540,6 +540,7 @@ Exit criteria:
   - the Windows app bundle files in `src-tauri/icons/`
   - the Chrome extension icons in `browser-extension/chrome/icons/`
 - Removed the baked light background from the Trinity logo source with a border-connected alpha cut and regenerated the app/extension icon outputs so the icon corners are actually transparent.
+- Per user feedback, also cut the three enclosed circular interior regions to transparent alpha and regenerated the app/extension icon outputs from that hollowed source.
 - Current segmented implementation is still conservative:
   - segmented jobs rebalance naturally through the chunk queue, but live splitting/merging of in-flight chunks is not implemented yet
   - segmented part state is persisted on a short interval, so an abrupt kill may lose only the most recent in-flight chunk progress instead of the whole job

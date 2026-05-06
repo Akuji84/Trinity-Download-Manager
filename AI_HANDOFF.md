@@ -549,6 +549,10 @@ Exit criteria:
   - respects the popup's pause-capture and site-exclusion settings
   - only auto-captures when Trinity's localhost bridge is already reachable
   - sends the browser download to Trinity, then cancels and erases the Chrome-side duplicate
+- Simplified the NSIS desktop shortcut icon fix:
+  - the installer now ships a dedicated `trinity-shortcut.ico` into `$INSTDIR`
+  - the desktop shortcut is recreated against that installed `.ico` instead of the app `.exe`
+  - the old `.lnk` LinkFlags patching path was removed because the shortcut no longer depends on Explorer extracting the exe icon
 - Current segmented implementation is still conservative:
   - segmented jobs rebalance naturally through the chunk queue, but live splitting/merging of in-flight chunks is not implemented yet
   - segmented part state is persisted on a short interval, so an abrupt kill may lose only the most recent in-flight chunk progress instead of the whole job
@@ -576,4 +580,4 @@ Exit criteria:
 
 ## Next Step
 
-Load the unpacked Chrome extension and verify the automatic interception flow against a running installed Trinity build, then add per-file-type and per-size capture rules so the browser side feels more controllable.
+Run the rebuilt NSIS installer and verify that the newly created desktop shortcut now resolves its icon from the installed `trinity-shortcut.ico` instead of the app exe, then resume Chrome extension interception testing.

@@ -530,6 +530,12 @@ Exit criteria:
   - `manifest.json` with the initial Chromium permissions and localhost host permission
   - `background.js` service worker with toolbar action, right-click menu items, bridge ping, and POST handoff to Trinity
   - toolbar badge feedback for invalid URLs, bridge unavailable, success, and handoff failure states
+- Added the first extension popup menu and app-launch fallback:
+  - clicking the extension now opens a menu-style popup instead of sending immediately
+  - the popup asks the background worker to find Trinity through the localhost bridge
+  - if the bridge is down, the extension attempts to open `trinity://launch`
+  - the app now registers the `trinity://` deep-link scheme through Tauri
+  - the popup includes pause capture, per-site exclusion, options, and help/feedback entries
 - Current segmented implementation is still conservative:
   - segmented jobs rebalance naturally through the chunk queue, but live splitting/merging of in-flight chunks is not implemented yet
   - segmented part state is persisted on a short interval, so an abrupt kill may lose only the most recent in-flight chunk progress instead of the whole job
@@ -557,4 +563,4 @@ Exit criteria:
 
 ## Next Step
 
-Load the unpacked Chrome extension, verify the context-menu and toolbar flows against a running Trinity instance, then add download-event interception as the next browser-side capability.
+Load the unpacked Chrome extension and verify the popup launch flow and menu actions against an installed Trinity build, then add download-event interception that respects the pause and site-exclusion settings.

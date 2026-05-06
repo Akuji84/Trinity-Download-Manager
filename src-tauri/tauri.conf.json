@@ -23,6 +23,15 @@
       "csp": null
     }
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "trinity"
+        ]
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",

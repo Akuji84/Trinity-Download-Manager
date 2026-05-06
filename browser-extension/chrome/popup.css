@@ -1,0 +1,47 @@
+body {
+  margin: 0;
+  min-width: 330px;
+  background: #f2f2f2;
+  color: #1a1a1a;
+  font: 13px "Segoe UI", Arial, sans-serif;
+}
+
+.popup-shell {
+  display: grid;
+  padding: 6px 0;
+}
+
+.popup-status {
+  padding: 6px 16px 8px;
+  color: #5f6368;
+  font-size: 11px;
+}
+
+.menu-item {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: 8px 28px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.menu-item:hover {
+  background: #e8e8e8;
+}
+
+.menu-item:disabled {
+  color: #909090;
+  cursor: default;
+}
+
+.menu-item:disabled:hover {
+  background: transparent;
+}
+
+.menu-separator {
+  height: 1px;
+  margin: 6px 0;
+  background: #d5d5d5;
+}

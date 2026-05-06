@@ -5,6 +5,7 @@
   "version": "0.1.0",
   "permissions": [
     "contextMenus",
+    "storage",
     "tabs"
   ],
   "host_permissions": [
@@ -14,6 +15,8 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Send current page to Trinity"
-  }
+    "default_title": "Trinity Download Manager",
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html"
 }

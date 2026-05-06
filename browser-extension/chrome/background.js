@@ -1,4 +1,8 @@
 const BRIDGE_BASE_URL = "http://127.0.0.1:38491";
+const STORAGE_KEYS = {
+  capturePaused: "capturePaused",
+  excludedSites: "excludedSites",
+};
 const CONTEXT_MENU_IDS = {
   link: "trinity-download-link",
   media: "trinity-download-media",
@@ -27,10 +31,6 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
-chrome.action.onClicked.addListener(async (tab) => {
-  await sendTabToTrinity(tab);
-});
-
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const selectedUrl =
     info.linkUrl ??
@@ -48,6 +48,69 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     browser: "chrome",
     output_folder: null,
   });
+});
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "bridge-status") {
+    ensureBridgeReady()
+      .then((connected) => sendResponse({ connected }))
+      .catch((error) => {
+        console.error("Bridge status check failed", error);
+        sendResponse({ connected: false });
+      });
+    return true;
+  }
+
+  if (message?.type === "get-popup-state") {
+    getPopupState()
+      .then((state) => sendResponse(state))
+      .catch((error) => {
+        console.error("Popup state load failed", error);
+        sendResponse({
+          connected: false,
+          capturePaused: false,
+          siteExcluded: false,
+          siteHost: "",
+        });
+      });
+    return true;
+  }
+
+  if (message?.type === "toggle-capture-paused") {
+    toggleCapturePaused()
+      .then((state) => sendResponse(state))
+      .catch((error) => {
+        console.error("Capture pause toggle failed", error);
+        sendResponse({ capturePaused: false });
+      });
+    return true;
+  }
+
+  if (message?.type === "toggle-site-exclusion") {
+    toggleSiteExclusion(message.siteHost)
+      .then((state) => sendResponse(state))
+      .catch((error) => {
+        console.error("Site exclusion toggle failed", error);
+        sendResponse({ siteExcluded: false });
+      });
+    return true;
+  }
+
+  if (message?.type === "open-options-page") {
+    chrome.runtime.openOptionsPage();
+    sendResponse({ ok: true });
+    return false;
+  }
+
+  if (message?.type === "open-help-page") {
+    chrome.tabs.create({
+      url: "https://github.com/Akuji84/Trinity-Download-Manager/issues",
+    });
+    sendResponse({ ok: true });
+    return false;
+  }
+
+  return false;
 });
 
 async function sendTabToTrinity(tab) {
@@ -69,7 +132,7 @@ async function sendToTrinity(payload) {
     return;
   }
 
-  const bridgeReady = await pingBridge();
+  const bridgeReady = await ensureBridgeReady();
   if (!bridgeReady) {
     await showBridgeBadge("OFF", "#6a1b1b");
     return;
@@ -114,6 +177,79 @@ async function pingBridge() {
   }
 }
 
+async function ensureBridgeReady() {
+  if (await pingBridge()) {
+    return true;
+  }
+
+  await launchTrinityManager();
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await delay(500);
+    if (await pingBridge()) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function launchTrinityManager() {
+  const launchUrl = "trinity://launch";
+  await chrome.tabs.create({ url: launchUrl, active: false });
+}
+
+async function getPopupState() {
+  const [{ capturePaused = false, excludedSites = [] }, currentTab] = await Promise.all([
+    chrome.storage.local.get([STORAGE_KEYS.capturePaused, STORAGE_KEYS.excludedSites]),
+    getActiveTab(),
+  ]);
+  const siteHost = extractHost(currentTab?.url ?? "");
+
+  return {
+    connected: await ensureBridgeReady(),
+    capturePaused,
+    siteExcluded: siteHost ? excludedSites.includes(siteHost) : false,
+    siteHost,
+  };
+}
+
+async function toggleCapturePaused() {
+  const { capturePaused = false } = await chrome.storage.local.get(STORAGE_KEYS.capturePaused);
+  const nextValue = !capturePaused;
+  await chrome.storage.local.set({ [STORAGE_KEYS.capturePaused]: nextValue });
+  return { capturePaused: nextValue };
+}
+
+async function toggleSiteExclusion(siteHost) {
+  if (!siteHost) {
+    return { siteExcluded: false };
+  }
+
+  const { excludedSites = [] } = await chrome.storage.local.get(STORAGE_KEYS.excludedSites);
+  const nextSites = excludedSites.includes(siteHost)
+    ? excludedSites.filter((currentSite) => currentSite !== siteHost)
+    : [...excludedSites, siteHost].sort();
+  await chrome.storage.local.set({ [STORAGE_KEYS.excludedSites]: nextSites });
+
+  return {
+    siteExcluded: nextSites.includes(siteHost),
+  };
+}
+
+async function getActiveTab() {
+  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tabs[0] ?? null;
+}
+
+function extractHost(value) {
+  try {
+    return new URL(value).host;
+  } catch {
+    return "";
+  }
+}
+
 function deriveSuggestedFileName(targetUrl) {
   try {
     const parsedUrl = new URL(targetUrl);
@@ -132,6 +268,10 @@ function isHttpUrl(value) {
   } catch {
     return false;
   }
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function showBridgeBadge(text, color) {

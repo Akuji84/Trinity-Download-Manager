@@ -5,6 +5,7 @@ mod task_manager;
 
 use std::{
     collections::HashMap,
+    ffi::c_void,
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -12,6 +13,7 @@ use std::{
     },
 };
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use notify::{event::ModifyKind, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use models::{
     AppSettings, AppStatus, CreateDownloadJobRequest, DownloadJob, DownloadState,
@@ -27,6 +29,26 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use url::Url;
 use uuid::Uuid;
 use chrono::Timelike;
+#[cfg(target_os = "windows")]
+use windows::{
+    core::PCWSTR,
+    Win32::{
+        Foundation::{HANDLE, HWND},
+        Graphics::Gdi::{
+            BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS,
+            DeleteDC, DeleteObject, GetDC, HBRUSH, HGDIOBJ, ReleaseDC, SelectObject,
+        },
+        Storage::FileSystem::{
+            FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_FLAGS_AND_ATTRIBUTES,
+        },
+        UI::{
+            Shell::{
+                SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_SMALLICON, SHGFI_USEFILEATTRIBUTES,
+            },
+            WindowsAndMessaging::{DestroyIcon, DrawIconEx, GetSystemMetrics, DI_NORMAL, HICON, SM_CXSMICON, SM_CYSMICON},
+        },
+    },
+};
 
 struct AppState {
     storage: Mutex<Storage>,
@@ -89,6 +111,15 @@ fn update_app_settings(
 #[tauri::command]
 fn get_default_download_folder(app: AppHandle) -> Result<String, String> {
     default_download_folder(&app).map(|folder| folder.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn get_system_file_icon(path_hint: String, is_directory: bool) -> Result<Option<String>, String> {
+    if path_hint.trim().is_empty() {
+        return Ok(None);
+    }
+
+    system_file_icon_data_url(path_hint.trim(), is_directory)
 }
 
 #[tauri::command]
@@ -715,6 +746,153 @@ fn default_download_folder(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(folder)
 }
 
+#[cfg(target_os = "windows")]
+fn system_file_icon_data_url(path_hint: &str, is_directory: bool) -> Result<Option<String>, String> {
+    let hint_path = PathBuf::from(path_hint);
+    let path_exists = hint_path.exists();
+    let normalized_hint = if path_exists {
+        hint_path.to_string_lossy().to_string()
+    } else if is_directory {
+        path_hint.to_string()
+    } else if path_hint.contains('.') {
+        path_hint.to_string()
+    } else {
+        format!("{path_hint}.bin")
+    };
+    let wide_path = normalized_hint
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect::<Vec<u16>>();
+
+    let mut file_info = SHFILEINFOW::default();
+    let mut flags = SHGFI_ICON | SHGFI_SMALLICON;
+    let attributes = if is_directory {
+        FILE_ATTRIBUTE_DIRECTORY.0
+    } else {
+        FILE_ATTRIBUTE_NORMAL.0
+    };
+    if !path_exists {
+        flags |= SHGFI_USEFILEATTRIBUTES;
+    }
+
+    let result = unsafe {
+        SHGetFileInfoW(
+            PCWSTR(wide_path.as_ptr()),
+            FILE_FLAGS_AND_ATTRIBUTES(attributes),
+            Some(&mut file_info),
+            std::mem::size_of::<SHFILEINFOW>() as u32,
+            flags,
+        )
+    };
+
+    if result == 0 || file_info.hIcon.0.is_null() {
+        return Ok(None);
+    }
+
+    unsafe { icon_handle_to_data_url(file_info.hIcon) }.map(Some)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn system_file_icon_data_url(
+    _path_hint: &str,
+    _is_directory: bool,
+) -> Result<Option<String>, String> {
+    Ok(None)
+}
+
+#[cfg(target_os = "windows")]
+unsafe fn icon_handle_to_data_url(icon: HICON) -> Result<String, String> {
+    let icon_width = GetSystemMetrics(SM_CXSMICON).max(16);
+    let icon_height = GetSystemMetrics(SM_CYSMICON).max(16);
+    let desktop_window = HWND(std::ptr::null_mut());
+
+    let screen_dc = GetDC(desktop_window);
+    if screen_dc.0.is_null() {
+        let _ = DestroyIcon(icon);
+        return Err("Could not acquire the screen context for icon rendering.".to_string());
+    }
+
+    let memory_dc = CreateCompatibleDC(screen_dc);
+    if memory_dc.0.is_null() {
+        let _ = ReleaseDC(desktop_window, screen_dc);
+        let _ = DestroyIcon(icon);
+        return Err("Could not allocate an icon render context.".to_string());
+    }
+
+    let mut bitmap_info = BITMAPINFO::default();
+    bitmap_info.bmiHeader = BITMAPINFOHEADER {
+        biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+        biWidth: icon_width,
+        biHeight: -icon_height,
+        biPlanes: 1,
+        biBitCount: 32,
+        biCompression: BI_RGB.0,
+        ..Default::default()
+    };
+
+    let mut pixel_buffer = std::ptr::null_mut::<c_void>();
+    let dib_bitmap = CreateDIBSection(
+        screen_dc,
+        &bitmap_info,
+        DIB_RGB_COLORS,
+        &mut pixel_buffer,
+        HANDLE(std::ptr::null_mut()),
+        0,
+    )
+    .map_err(|error| format!("Could not allocate an icon bitmap: {error}"))?;
+    if dib_bitmap.0.is_null() || pixel_buffer.is_null() {
+        let _ = DeleteDC(memory_dc);
+        let _ = ReleaseDC(desktop_window, screen_dc);
+        let _ = DestroyIcon(icon);
+        return Err("Could not allocate an icon bitmap.".to_string());
+    }
+
+    let previous_object = SelectObject(memory_dc, HGDIOBJ(dib_bitmap.0));
+    DrawIconEx(
+        memory_dc,
+        0,
+        0,
+        icon,
+        icon_width,
+        icon_height,
+        0,
+        HBRUSH(std::ptr::null_mut()),
+        DI_NORMAL,
+    )
+    .map_err(|error| format!("Could not render the file icon: {error}"))?;
+
+    let pixel_len = (icon_width * icon_height * 4) as usize;
+    let bgra_pixels = std::slice::from_raw_parts(pixel_buffer.cast::<u8>(), pixel_len);
+    let mut rgba_pixels = Vec::with_capacity(pixel_len);
+    for chunk in bgra_pixels.chunks_exact(4) {
+        rgba_pixels.extend_from_slice(&[chunk[2], chunk[1], chunk[0], chunk[3]]);
+    }
+
+    let mut png_bytes = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut png_bytes, icon_width as u32, icon_height as u32);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder
+            .write_header()
+            .map_err(|error| format!("Could not encode icon PNG header: {error}"))?;
+        writer
+            .write_image_data(&rgba_pixels)
+            .map_err(|error| format!("Could not encode icon PNG data: {error}"))?;
+    }
+
+    let _ = SelectObject(memory_dc, previous_object);
+    let _ = DeleteObject(dib_bitmap);
+    let _ = DeleteDC(memory_dc);
+    let _ = ReleaseDC(desktop_window, screen_dc);
+    let _ = DestroyIcon(icon);
+
+    Ok(format!(
+        "data:image/png;base64,{}",
+        BASE64_STANDARD.encode(png_bytes)
+    ))
+}
+
 fn segment_manifest_root(app: &AppHandle) -> Result<PathBuf, String> {
     let root = app
         .path()
@@ -1118,6 +1296,7 @@ pub fn run() {
             get_app_settings,
             update_app_settings,
             get_default_download_folder,
+            get_system_file_icon,
             inspect_download_url,
             create_download_job,
             list_download_jobs,

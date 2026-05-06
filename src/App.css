@@ -334,6 +334,21 @@ button {
   justify-content: center;
   margin-top: 1px;
   color: #7ec8ff;
+  overflow: hidden;
+}
+
+.download-file-icon-image {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  display: block;
+}
+
+.download-file-icon-fallback {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: rgba(121, 139, 156, 0.2);
 }
 
 .download-title-block {

@@ -8,18 +8,10 @@ import {
   ArrowUp,
   ChevronDown,
   Clock3,
-  FileArchive,
-  FileAudio,
-  FileCode2,
-  FileImage,
-  FileText,
-  FileVideo,
   Flag,
   FolderInput,
-  Folder,
   GripVertical,
   MoreHorizontal,
-  Package,
   Play,
   Plus,
   RefreshCw,
@@ -343,6 +335,7 @@ function preferenceSectionLabel(sectionId: PreferencesSectionId) {
 
 function App() {
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
+  const [systemIcons, setSystemIcons] = useState<Record<string, string>>({});
   const [url, setUrl] = useState("");
   const [outputFolder, setOutputFolder] = useState("");
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -384,6 +377,7 @@ function App() {
   const [draggedJobId, setDraggedJobId] = useState<string | null>(null);
   const [dropTargetJobId, setDropTargetJobId] = useState<string | null>(null);
   const preferencesContentRef = useRef<HTMLElement | null>(null);
+  const pendingIconKeysRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     invoke<AppSettings>("get_app_settings")
@@ -516,6 +510,42 @@ function App() {
 
     return () => window.clearInterval(intervalId);
   }, []);
+
+  useEffect(() => {
+    const iconRequests = jobs.map(getJobIconRequest);
+
+    iconRequests.forEach((iconRequest) => {
+      if (systemIcons[iconRequest.key] || pendingIconKeysRef.current.has(iconRequest.key)) {
+        return;
+      }
+
+      pendingIconKeysRef.current.add(iconRequest.key);
+      invoke<string | null>("get_system_file_icon", {
+        pathHint: iconRequest.pathHint,
+        isDirectory: iconRequest.isDirectory,
+      })
+        .then((iconDataUrl) => {
+          if (!iconDataUrl) {
+            return;
+          }
+
+          setSystemIcons((currentIcons) => {
+            if (currentIcons[iconRequest.key] === iconDataUrl) {
+              return currentIcons;
+            }
+
+            return {
+              ...currentIcons,
+              [iconRequest.key]: iconDataUrl,
+            };
+          });
+        })
+        .catch(console.error)
+        .finally(() => {
+          pendingIconKeysRef.current.delete(iconRequest.key);
+        });
+    });
+  }, [jobs, systemIcons]);
 
   async function refreshJobs() {
     const savedJobs = await invoke<DownloadJob[]>("list_download_jobs");
@@ -2648,11 +2678,11 @@ function App() {
                             />
                           </span>
                           <div className="download-name">
-                            <div className="download-entry-row">
-                              <span className="download-file-icon">
-                                {renderDownloadTypeIcon(job.file_name)}
-                              </span>
-                              <div className="download-title-block">
+                              <div className="download-entry-row">
+                                <span className="download-file-icon">
+                                  {renderDownloadIcon(job, systemIcons)}
+                                </span>
+                                <div className="download-title-block">
                                 <div className="download-title-row">
                                   <button
                                     className={`drag-handle ${
@@ -3030,6 +3060,22 @@ function getFileExtension(fileName: string) {
   return fileName.slice(extensionIndex).toLowerCase();
 }
 
+function getJobIconRequest(job: DownloadJob) {
+  const extension = getFileExtension(job.file_name);
+  const hasCompletedFilePath = job.state === "Completed" && job.output_path.trim().length > 0;
+  const pathHint = hasCompletedFilePath ? job.output_path.trim() : job.file_name;
+  const isDirectory = extension === "";
+  const cacheKey = hasCompletedFilePath
+    ? `path:${pathHint.toLowerCase()}`
+    : `assoc:${isDirectory ? pathHint.toLowerCase() : extension}`;
+
+  return {
+    key: cacheKey,
+    pathHint,
+    isDirectory,
+  };
+}
+
 function isWaitingForSchedule(job: DownloadJob, currentDate: Date) {
   return job.state === "Queued" && job.scheduler_enabled && !isScheduleWindowActive(job, currentDate);
 }
@@ -3207,38 +3253,14 @@ function formatPriorityLabel(priority: number) {
   }
 }
 
-function renderDownloadTypeIcon(fileName: string) {
-  const extension = getFileExtension(fileName);
-
-  if ([".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz"].includes(extension)) {
-    return <FileArchive size={16} strokeWidth={2} />;
+function renderDownloadIcon(job: DownloadJob, systemIcons: Record<string, string>) {
+  const iconRequest = getJobIconRequest(job);
+  const iconDataUrl = systemIcons[iconRequest.key];
+  if (iconDataUrl) {
+    return <img alt="" className="download-file-icon-image" draggable={false} src={iconDataUrl} />;
   }
 
-  if ([".exe", ".msi", ".appx", ".msix", ".bat", ".cmd"].includes(extension)) {
-    return <Package size={16} strokeWidth={2} />;
-  }
-
-  if ([".pdf", ".doc", ".docx", ".txt", ".rtf", ".csv", ".xlsx", ".pptx"].includes(extension)) {
-    return <FileText size={16} strokeWidth={2} />;
-  }
-
-  if ([".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a"].includes(extension)) {
-    return <FileAudio size={16} strokeWidth={2} />;
-  }
-
-  if ([".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm"].includes(extension)) {
-    return <FileVideo size={16} strokeWidth={2} />;
-  }
-
-  if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico"].includes(extension)) {
-    return <FileImage size={16} strokeWidth={2} />;
-  }
-
-  if (extension === "") {
-    return <Folder size={16} strokeWidth={2} />;
-  }
-
-  return <FileCode2 size={16} strokeWidth={2} />;
+  return <div className="download-file-icon-fallback" aria-hidden="true" />;
 }
 
 function timeValueToMinutes(value: string | null) {

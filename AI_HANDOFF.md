@@ -536,6 +536,9 @@ Exit criteria:
   - if the bridge is down, the popup now auto-attempts the `trinity://launch` protocol from inside the popup without opening a browser tab
   - the app now registers the `trinity://` deep-link scheme through Tauri
   - the popup includes pause capture, per-site exclusion, options, and help/feedback entries
+- Added the new Trinity logo into the repo under `assets/branding/trinity-logo-source.png` and generated icon sizes from it for:
+  - the Windows app bundle files in `src-tauri/icons/`
+  - the Chrome extension icons in `browser-extension/chrome/icons/`
 - Current segmented implementation is still conservative:
   - segmented jobs rebalance naturally through the chunk queue, but live splitting/merging of in-flight chunks is not implemented yet
   - segmented part state is persisted on a short interval, so an abrupt kill may lose only the most recent in-flight chunk progress instead of the whole job

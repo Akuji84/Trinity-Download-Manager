@@ -551,7 +551,7 @@ Exit criteria:
   - sends the browser download to Trinity, then cancels and erases the Chrome-side duplicate
 - Simplified the NSIS desktop shortcut icon fix:
   - the installer now ships a dedicated `trinity-shortcut.ico` into `$INSTDIR`
-  - existing desktop shortcuts are recreated against that installed `.ico` instead of the app `.exe`
+  - desktop shortcuts are now rewritten against that installed `.ico` from the installer shutdown path, after the Finish-page checkbox logic has run
   - fresh interactive installs no longer create a desktop shortcut during the install section before the Finish page
   - the old `.lnk` LinkFlags patching path was removed because the shortcut no longer depends on Explorer extracting the exe icon
 - Current segmented implementation is still conservative:
@@ -581,4 +581,4 @@ Exit criteria:
 
 ## Next Step
 
-Run the rebuilt NSIS installer and verify that fresh interactive installs do not create the desktop shortcut before the Finish page, then confirm the final shortcut creation path still resolves the intended icon.
+Run the rebuilt NSIS installer and verify that the Finish-page checkbox-created desktop shortcut is rewritten to the installed `trinity-shortcut.ico` and shows the intended icon.

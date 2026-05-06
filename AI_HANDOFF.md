@@ -486,6 +486,20 @@ Exit criteria:
 - Removed the three direct toolbar speed-limit buttons (`Unlimit`, `512 KB/s`, `2 MB/s`) to reduce command-bar clutter.
 - Updated toolbar button text styling so short labels such as `Queue Up` and `Queue Down` stay on a single line.
 - Removed the footer's bottom-left `Engine` and `Storage` status text, leaving only the live transfer totals.
+- Added persisted segmented-download groundwork:
+  - `connection_count` on each download job
+  - `default_connection_count` in app settings
+- Wired `Default segmented connections` in Preferences to live backend settings for new downloads.
+- The Rust download engine now:
+  - probes range support with a lightweight `bytes=0-0` request
+  - plans byte ranges for fresh downloads when the server supports ranges
+  - downloads segment parts concurrently
+  - merges part files into the final `.trinitydownload` temp file before rename
+  - falls back to the existing single-stream path when range support is missing, the file is too small, the requested connection count is `1`, or the job is a resume case
+- Current segmented groundwork is intentionally conservative:
+  - segmented resume across app restarts is not implemented yet
+  - segmented pause currently behaves as a restart-required pause instead of true partial-range resume
+  - new segmented jobs report `is_resumable = false` for now so the UI does not over-promise resume support
 
 ## Current Verification Status
 
@@ -496,7 +510,7 @@ Exit criteria:
 ## Current Engine Limitations
 
 - Downloads are single-stream only.
-- Segmented downloads are not implemented yet.
+- Segmented downloads now exist for fresh range-capable sources, but segmented resume metadata and true paused-range continuation are not implemented yet.
 - Retry is configurable globally, but there is not yet per-download retry override support.
 - Queue ordering, priority, drag-drop reorder, and filterable queue views exist, but there is not yet multi-select drag reorder or saved custom views.
 - Global bandwidth scheduling and per-download limits are implemented, but there is not yet a visual calendar/profile editor or separate upload shaping.
@@ -508,4 +522,4 @@ Exit criteria:
 
 ## Next Step
 
-Start the segmented download engine foundation: range planning, chunk workers, temporary part files, merge flow, and per-download connection settings so Trinity can begin moving beyond single-stream transfers.
+Build real segmented-resume persistence: manifest/part metadata on disk, resumed range continuation after pause/restart, and safer cleanup/recovery rules for interrupted segmented jobs.

@@ -41,6 +41,7 @@ type DownloadJob = {
   state: DownloadState;
   queue_position: number;
   priority: number;
+  connection_count: number;
   speed_limit_kbps: number;
   downloaded_bytes: number;
   total_bytes: number | null;
@@ -62,6 +63,7 @@ type AppSettings = {
   retry_enabled: boolean;
   retry_attempts: number;
   retry_delay_seconds: number;
+  default_connection_count: number;
   default_download_speed_limit_kbps: number;
   bandwidth_schedule_enabled: boolean;
   bandwidth_schedule_start: string;
@@ -147,6 +149,7 @@ type PreferencesDraft = {
   limitPresetLow: string;
   limitPresetMedium: string;
   limitPresetHigh: string;
+  defaultConnectionCount: number;
   defaultDownloadSpeedLimitKbps: number;
   bandwidthScheduleEnabled: boolean;
   bandwidthScheduleStart: string;
@@ -246,6 +249,7 @@ function createPreferencesDraft(maxConcurrentDownloads: number): PreferencesDraf
     limitPresetLow: "256 KB/s",
     limitPresetMedium: "2 MB/s",
     limitPresetHigh: "Unlimited",
+    defaultConnectionCount: 4,
     defaultDownloadSpeedLimitKbps: 0,
     bandwidthScheduleEnabled: false,
     bandwidthScheduleStart: "22:00",
@@ -351,6 +355,7 @@ function App() {
     retry_enabled: true,
     retry_attempts: 3,
     retry_delay_seconds: 5,
+    default_connection_count: 4,
     default_download_speed_limit_kbps: 0,
     bandwidth_schedule_enabled: false,
     bandwidth_schedule_start: "22:00",
@@ -383,6 +388,7 @@ function App() {
           retryMode: loadedSettings.retry_enabled ? "auto" : "manual",
           retryAttempts: loadedSettings.retry_attempts,
           retryDelaySeconds: loadedSettings.retry_delay_seconds,
+          defaultConnectionCount: loadedSettings.default_connection_count,
           defaultDownloadSpeedLimitKbps: loadedSettings.default_download_speed_limit_kbps,
           bandwidthScheduleEnabled: loadedSettings.bandwidth_schedule_enabled,
           bandwidthScheduleStart: loadedSettings.bandwidth_schedule_start,
@@ -643,6 +649,7 @@ function App() {
         retry_enabled: preferencesDraft.retryMode === "auto",
         retry_attempts: preferencesDraft.retryAttempts,
         retry_delay_seconds: preferencesDraft.retryDelaySeconds,
+        default_connection_count: preferencesDraft.defaultConnectionCount,
         default_download_speed_limit_kbps: preferencesDraft.defaultDownloadSpeedLimitKbps,
         bandwidth_schedule_enabled: preferencesDraft.bandwidthScheduleEnabled,
         bandwidth_schedule_start: preferencesDraft.bandwidthScheduleStart,
@@ -658,13 +665,14 @@ function App() {
       retryMode: updatedSettings.retry_enabled ? "auto" : "manual",
       retryAttempts: updatedSettings.retry_attempts,
       retryDelaySeconds: updatedSettings.retry_delay_seconds,
+      defaultConnectionCount: updatedSettings.default_connection_count,
       defaultDownloadSpeedLimitKbps: updatedSettings.default_download_speed_limit_kbps,
       bandwidthScheduleEnabled: updatedSettings.bandwidth_schedule_enabled,
       bandwidthScheduleStart: updatedSettings.bandwidth_schedule_start,
       bandwidthScheduleEnd: updatedSettings.bandwidth_schedule_end,
       bandwidthScheduleLimitKbps: updatedSettings.bandwidth_schedule_limit_kbps,
     }));
-    setPreferencesStatus("Saved live queue, retry, and bandwidth settings. Other sections remain local placeholders for now.");
+    setPreferencesStatus("Saved live queue, retry, bandwidth, and segmented connection settings. Other sections remain local placeholders for now.");
     await refreshJobs();
   }
 
@@ -676,6 +684,7 @@ function App() {
       retryMode: settings.retry_enabled ? "auto" : "manual",
       retryAttempts: settings.retry_attempts,
       retryDelaySeconds: settings.retry_delay_seconds,
+      defaultConnectionCount: settings.default_connection_count,
       defaultDownloadSpeedLimitKbps: settings.default_download_speed_limit_kbps,
       bandwidthScheduleEnabled: settings.bandwidth_schedule_enabled,
       bandwidthScheduleStart: settings.bandwidth_schedule_start,
@@ -979,8 +988,8 @@ function App() {
               Back to downloads
             </button>
             <span className="preferences-strip-note">
-              Supported today: queue limit. The rest are working placeholders for upcoming engine
-              features.
+              Supported today: queue, retry, bandwidth, and segmented connection controls. The rest
+              are still placeholders for upcoming engine features.
             </span>
           </section>
           <section className="preferences-layout">
@@ -1612,6 +1621,22 @@ function App() {
                   </div>
 
                   <div className="preferences-grid three-column">
+                    <label className="preferences-field live">
+                      <span>Default segmented connections</span>
+                      <input
+                        max={16}
+                        min={1}
+                        onChange={(event) =>
+                          setPreferenceValue(
+                            "defaultConnectionCount",
+                            Number(event.currentTarget.value || 0),
+                          )
+                        }
+                        type="number"
+                        value={preferencesDraft.defaultConnectionCount}
+                      />
+                      <small>Saved today and used for new downloads that support HTTP ranges.</small>
+                    </label>
                     <label className="preferences-field live">
                       <span>Default per-download speed limit</span>
                       <div className="preferences-unit-field">

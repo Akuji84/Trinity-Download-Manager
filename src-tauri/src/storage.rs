@@ -29,6 +29,7 @@ impl Storage {
                 state TEXT NOT NULL,
                 queue_position INTEGER NOT NULL DEFAULT 0,
                 priority INTEGER NOT NULL DEFAULT 1,
+                connection_count INTEGER NOT NULL DEFAULT 4,
                 speed_limit_kbps INTEGER NOT NULL DEFAULT 0,
                 downloaded_bytes INTEGER NOT NULL DEFAULT 0,
                 total_bytes INTEGER,
@@ -61,6 +62,11 @@ impl Storage {
             "downloads",
             "priority",
             "ALTER TABLE downloads ADD COLUMN priority INTEGER NOT NULL DEFAULT 1;",
+        )?;
+        self.add_column_if_missing(
+            "downloads",
+            "connection_count",
+            "ALTER TABLE downloads ADD COLUMN connection_count INTEGER NOT NULL DEFAULT 4;",
         )?;
         self.add_column_if_missing(
             "downloads",
@@ -155,6 +161,13 @@ impl Storage {
         self.connection.execute(
             "
             INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('default_connection_count', '4');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
             VALUES ('default_download_speed_limit_kbps', '0');
             ",
             [],
@@ -218,6 +231,7 @@ impl Storage {
                 state,
                 queue_position,
                 priority,
+                connection_count,
                 speed_limit_kbps,
                 downloaded_bytes,
                 total_bytes,
@@ -231,7 +245,7 @@ impl Storage {
                 next_retry_at,
                 error_message
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20);
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21);
             ",
             params![
                 job.id,
@@ -242,6 +256,7 @@ impl Storage {
                 job.state.as_str(),
                 job.queue_position,
                 job.priority,
+                job.connection_count,
                 job.speed_limit_kbps,
                 job.downloaded_bytes,
                 job.total_bytes,
@@ -272,6 +287,7 @@ impl Storage {
                 state,
                 queue_position,
                 priority,
+                connection_count,
                 speed_limit_kbps,
                 downloaded_bytes,
                 total_bytes,
@@ -331,20 +347,21 @@ impl Storage {
                     state,
                     queue_position: row.get(6)?,
                     priority: row.get(7)?,
-                    speed_limit_kbps: row.get::<_, i64>(8)? as u64,
-                    downloaded_bytes: row.get::<_, i64>(9)? as u64,
-                    total_bytes: row.get::<_, Option<i64>>(10)?.map(|value| value as u64),
-                    speed_bps: row.get::<_, i64>(11)? as u64,
-                    is_resumable: row.get::<_, i64>(12)? != 0,
-                    scheduler_enabled: row.get::<_, i64>(13)? != 0,
-                    schedule_days: schedule_days_from_text(row.get::<_, String>(14)?.as_str()),
-                    schedule_from: row.get(15)?,
-                    schedule_to: row.get(16)?,
-                    retry_count: row.get::<_, i64>(17)? as u32,
-                    next_retry_at: row.get(18)?,
-                    error_message: row.get(19)?,
-                    created_at: row.get(20)?,
-                    updated_at: row.get(21)?,
+                    connection_count: row.get::<_, i64>(8)? as u32,
+                    speed_limit_kbps: row.get::<_, i64>(9)? as u64,
+                    downloaded_bytes: row.get::<_, i64>(10)? as u64,
+                    total_bytes: row.get::<_, Option<i64>>(11)?.map(|value| value as u64),
+                    speed_bps: row.get::<_, i64>(12)? as u64,
+                    is_resumable: row.get::<_, i64>(13)? != 0,
+                    scheduler_enabled: row.get::<_, i64>(14)? != 0,
+                    schedule_days: schedule_days_from_text(row.get::<_, String>(15)?.as_str()),
+                    schedule_from: row.get(16)?,
+                    schedule_to: row.get(17)?,
+                    retry_count: row.get::<_, i64>(18)? as u32,
+                    next_retry_at: row.get(19)?,
+                    error_message: row.get(20)?,
+                    created_at: row.get(21)?,
+                    updated_at: row.get(22)?,
                 })
             })?
             .collect::<Result<Vec<_>>>()?;
@@ -364,6 +381,7 @@ impl Storage {
                 state,
                 queue_position,
                 priority,
+                connection_count,
                 speed_limit_kbps,
                 downloaded_bytes,
                 total_bytes,
@@ -409,20 +427,21 @@ impl Storage {
             state,
             queue_position: row.get(6)?,
             priority: row.get(7)?,
-            speed_limit_kbps: row.get::<_, i64>(8)? as u64,
-            downloaded_bytes: row.get::<_, i64>(9)? as u64,
-            total_bytes: row.get::<_, Option<i64>>(10)?.map(|value| value as u64),
-            speed_bps: row.get::<_, i64>(11)? as u64,
-            is_resumable: row.get::<_, i64>(12)? != 0,
-            scheduler_enabled: row.get::<_, i64>(13)? != 0,
-            schedule_days: schedule_days_from_text(row.get::<_, String>(14)?.as_str()),
-            schedule_from: row.get(15)?,
-            schedule_to: row.get(16)?,
-            retry_count: row.get::<_, i64>(17)? as u32,
-            next_retry_at: row.get(18)?,
-            error_message: row.get(19)?,
-            created_at: row.get(20)?,
-            updated_at: row.get(21)?,
+            connection_count: row.get::<_, i64>(8)? as u32,
+            speed_limit_kbps: row.get::<_, i64>(9)? as u64,
+            downloaded_bytes: row.get::<_, i64>(10)? as u64,
+            total_bytes: row.get::<_, Option<i64>>(11)?.map(|value| value as u64),
+            speed_bps: row.get::<_, i64>(12)? as u64,
+            is_resumable: row.get::<_, i64>(13)? != 0,
+            scheduler_enabled: row.get::<_, i64>(14)? != 0,
+            schedule_days: schedule_days_from_text(row.get::<_, String>(15)?.as_str()),
+            schedule_from: row.get(16)?,
+            schedule_to: row.get(17)?,
+            retry_count: row.get::<_, i64>(18)? as u32,
+            next_retry_at: row.get(19)?,
+            error_message: row.get(20)?,
+            created_at: row.get(21)?,
+            updated_at: row.get(22)?,
         }))
     }
 
@@ -438,6 +457,7 @@ impl Storage {
                 state,
                 queue_position,
                 priority,
+                connection_count,
                 speed_limit_kbps,
                 downloaded_bytes,
                 total_bytes,
@@ -470,20 +490,21 @@ impl Storage {
                     state: DownloadState::Queued,
                     queue_position: row.get(6)?,
                     priority: row.get(7)?,
-                    speed_limit_kbps: row.get::<_, i64>(8)? as u64,
-                    downloaded_bytes: row.get::<_, i64>(9)? as u64,
-                    total_bytes: row.get::<_, Option<i64>>(10)?.map(|value| value as u64),
-                    speed_bps: row.get::<_, i64>(11)? as u64,
-                    is_resumable: row.get::<_, i64>(12)? != 0,
-                    scheduler_enabled: row.get::<_, i64>(13)? != 0,
-                    schedule_days: schedule_days_from_text(row.get::<_, String>(14)?.as_str()),
-                    schedule_from: row.get(15)?,
-                    schedule_to: row.get(16)?,
-                    retry_count: row.get::<_, i64>(17)? as u32,
-                    next_retry_at: row.get(18)?,
-                    error_message: row.get(19)?,
-                    created_at: row.get(20)?,
-                    updated_at: row.get(21)?,
+                    connection_count: row.get::<_, i64>(8)? as u32,
+                    speed_limit_kbps: row.get::<_, i64>(9)? as u64,
+                    downloaded_bytes: row.get::<_, i64>(10)? as u64,
+                    total_bytes: row.get::<_, Option<i64>>(11)?.map(|value| value as u64),
+                    speed_bps: row.get::<_, i64>(12)? as u64,
+                    is_resumable: row.get::<_, i64>(13)? != 0,
+                    scheduler_enabled: row.get::<_, i64>(14)? != 0,
+                    schedule_days: schedule_days_from_text(row.get::<_, String>(15)?.as_str()),
+                    schedule_from: row.get(16)?,
+                    schedule_to: row.get(17)?,
+                    retry_count: row.get::<_, i64>(18)? as u32,
+                    next_retry_at: row.get(19)?,
+                    error_message: row.get(20)?,
+                    created_at: row.get(21)?,
+                    updated_at: row.get(22)?,
                 })
             })?
             .collect::<Result<Vec<_>>>()?
@@ -751,6 +772,11 @@ impl Storage {
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(defaults.retry_delay_seconds)
             .clamp(0, 3600);
+        let default_connection_count = self
+            .get_setting("default_connection_count")?
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(defaults.default_connection_count)
+            .clamp(1, 16);
         let default_download_speed_limit_kbps = self
             .get_setting("default_download_speed_limit_kbps")?
             .and_then(|value| value.parse::<u64>().ok())
@@ -778,6 +804,7 @@ impl Storage {
             retry_enabled,
             retry_attempts,
             retry_delay_seconds,
+            default_connection_count,
             default_download_speed_limit_kbps,
             bandwidth_schedule_enabled,
             bandwidth_schedule_start,
@@ -794,6 +821,10 @@ impl Storage {
         self.upsert_setting("retry_enabled", if settings.retry_enabled { "1" } else { "0" })?;
         self.upsert_setting("retry_attempts", settings.retry_attempts.to_string())?;
         self.upsert_setting("retry_delay_seconds", settings.retry_delay_seconds.to_string())?;
+        self.upsert_setting(
+            "default_connection_count",
+            settings.default_connection_count.to_string(),
+        )?;
         self.upsert_setting(
             "default_download_speed_limit_kbps",
             settings.default_download_speed_limit_kbps.to_string(),

@@ -164,6 +164,18 @@ fn create_download_job(
         .map_err(|_| "Storage lock is unavailable.".to_string())?;
     let queue_position = storage.next_queue_position().map_err(|error| error.to_string())?;
     let app_settings = storage.get_app_settings().map_err(|error| error.to_string())?;
+    let connection_count = parsed_url
+        .host_str()
+        .map(|hostname| {
+            storage
+                .recommended_connection_count_for_host(
+                    hostname,
+                    app_settings.default_connection_count,
+                )
+                .map_err(|error| error.to_string())
+        })
+        .transpose()?
+        .unwrap_or(app_settings.default_connection_count);
 
     let job = DownloadJob {
         id: Uuid::new_v4().to_string(),
@@ -174,7 +186,7 @@ fn create_download_job(
         state: DownloadState::Queued,
         queue_position,
         priority: 1,
-        connection_count: app_settings.default_connection_count,
+        connection_count,
         speed_limit_kbps: app_settings.default_download_speed_limit_kbps,
         downloaded_bytes: 0,
         total_bytes: None,
@@ -459,6 +471,10 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
     let state = app.state::<AppState>();
     let control = Arc::new(download_engine::DownloadControl::default());
     let id = job.id.clone();
+    let hostname = Url::parse(&job.url)
+        .ok()
+        .and_then(|url| url.host_str().map(|value| value.to_string()));
+    let connection_count = job.connection_count;
 
     {
         let mut active_downloads = state
@@ -484,6 +500,7 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
     tauri::async_runtime::spawn(async move {
         let job_id = job.id.clone();
         let output_path = job.output_path.clone();
+        let started_at = std::time::Instant::now();
         let app_for_progress = app.clone();
         let app_for_output = app.clone();
         let app_for_speed_limit = app.clone();
@@ -569,6 +586,21 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
                         total_bytes,
                         None,
                     );
+                    if let (Some(hostname), Some(downloaded_bytes)) =
+                        (hostname.as_deref(), total_bytes)
+                    {
+                        let elapsed_seconds = started_at.elapsed().as_secs_f64();
+                        let average_speed_bps = if elapsed_seconds > 0.0 {
+                            (downloaded_bytes as f64 / elapsed_seconds) as u64
+                        } else {
+                            downloaded_bytes
+                        };
+                        let _ = storage.record_host_download_success(
+                            hostname,
+                            connection_count,
+                            average_speed_bps,
+                        );
+                    }
                     true
                 }
                 Err(download_engine::DownloadError::Canceled) => {
@@ -641,6 +673,13 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
                             None,
                             Some(final_message.as_str()),
                         );
+                        if let Some(hostname) = hostname.as_deref() {
+                            let _ = storage.record_host_download_failure(
+                                hostname,
+                                connection_count,
+                                final_message.as_str(),
+                            );
+                        }
                         true
                     }
                 }

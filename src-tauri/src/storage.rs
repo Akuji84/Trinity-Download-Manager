@@ -50,6 +50,16 @@ impl Storage {
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS host_profiles (
+                hostname TEXT PRIMARY KEY,
+                recommended_connection_count INTEGER NOT NULL DEFAULT 4,
+                success_count INTEGER NOT NULL DEFAULT 0,
+                failure_count INTEGER NOT NULL DEFAULT 0,
+                last_average_speed_bps INTEGER NOT NULL DEFAULT 0,
+                last_failure_reason TEXT,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             ",
         )?;
 
@@ -737,6 +747,112 @@ impl Storage {
             WHERE id = ?1;
             ",
             params![id, downloaded_bytes, total_bytes, speed_bps],
+        )?;
+
+        Ok(())
+    }
+
+    pub fn recommended_connection_count_for_host(
+        &self,
+        hostname: &str,
+        fallback: u32,
+    ) -> Result<u32> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT recommended_connection_count
+            FROM host_profiles
+            WHERE hostname = ?1;
+            ",
+        )?;
+        let mut rows = statement.query(params![hostname])?;
+        let Some(row) = rows.next()? else {
+            return Ok(fallback.clamp(1, 16));
+        };
+
+        let recommended = row.get::<_, i64>(0)? as u32;
+        Ok(recommended.clamp(1, 16))
+    }
+
+    pub fn record_host_download_success(
+        &self,
+        hostname: &str,
+        used_connection_count: u32,
+        average_speed_bps: u64,
+    ) -> Result<()> {
+        let existing_recommendation =
+            self.recommended_connection_count_for_host(hostname, used_connection_count)?;
+        let recommended_connection_count = if average_speed_bps >= 4 * 1024 * 1024 {
+            existing_recommendation.max(used_connection_count).saturating_add(1)
+        } else if average_speed_bps >= 1024 * 1024 {
+            existing_recommendation.max(used_connection_count)
+        } else if average_speed_bps < 256 * 1024 {
+            existing_recommendation.min(used_connection_count).saturating_sub(1).max(1)
+        } else {
+            existing_recommendation
+        }
+        .clamp(1, 16);
+
+        self.connection.execute(
+            "
+            INSERT INTO host_profiles (
+                hostname,
+                recommended_connection_count,
+                success_count,
+                failure_count,
+                last_average_speed_bps,
+                last_failure_reason,
+                updated_at
+            )
+            VALUES (?1, ?2, 1, 0, ?3, NULL, CURRENT_TIMESTAMP)
+            ON CONFLICT(hostname) DO UPDATE SET
+                recommended_connection_count = ?2,
+                success_count = success_count + 1,
+                last_average_speed_bps = ?3,
+                last_failure_reason = NULL,
+                updated_at = CURRENT_TIMESTAMP;
+            ",
+            params![
+                hostname,
+                recommended_connection_count,
+                average_speed_bps.min(i64::MAX as u64) as i64,
+            ],
+        )?;
+
+        Ok(())
+    }
+
+    pub fn record_host_download_failure(
+        &self,
+        hostname: &str,
+        used_connection_count: u32,
+        failure_reason: &str,
+    ) -> Result<()> {
+        let existing_recommendation =
+            self.recommended_connection_count_for_host(hostname, used_connection_count)?;
+        let recommended_connection_count = existing_recommendation
+            .min(used_connection_count)
+            .saturating_sub(1)
+            .max(1);
+
+        self.connection.execute(
+            "
+            INSERT INTO host_profiles (
+                hostname,
+                recommended_connection_count,
+                success_count,
+                failure_count,
+                last_average_speed_bps,
+                last_failure_reason,
+                updated_at
+            )
+            VALUES (?1, ?2, 0, 1, 0, ?3, CURRENT_TIMESTAMP)
+            ON CONFLICT(hostname) DO UPDATE SET
+                recommended_connection_count = ?2,
+                failure_count = failure_count + 1,
+                last_failure_reason = ?3,
+                updated_at = CURRENT_TIMESTAMP;
+            ",
+            params![hostname, recommended_connection_count, failure_reason],
         )?;
 
         Ok(())

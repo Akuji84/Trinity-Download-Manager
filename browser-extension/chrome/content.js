@@ -11,14 +11,14 @@ window.addEventListener(PAGE_CAPTURE_EVENT, (event) => {
     return;
   }
 
-  chrome.runtime.sendMessage(
+  sendRuntimeMessage(
     {
       type: "capture-download-click",
       payload: detail.payload,
     },
     (response) => {
-      const captured = chrome.runtime.lastError ? false : response?.captured === true;
-      const fallbackToBrowser = chrome.runtime.lastError
+      const captured = hasRuntimeLastError() ? false : response?.captured === true;
+      const fallbackToBrowser = hasRuntimeLastError()
         ? true
         : response?.fallbackToBrowser !== false;
       window.dispatchEvent(
@@ -63,13 +63,13 @@ document.addEventListener(
     event.stopPropagation();
     event.stopImmediatePropagation();
 
-    chrome.runtime.sendMessage(
+    sendRuntimeMessage(
       {
         type: "capture-download-click",
         payload,
       },
       (response) => {
-        if (chrome.runtime.lastError) {
+        if (hasRuntimeLastError()) {
           fallbackToBrowser(candidate, payload.url);
           return;
         }
@@ -88,12 +88,37 @@ document.addEventListener(
 );
 
 function injectPageHook() {
+  if (!isExtensionContextAvailable()) {
+    return;
+  }
+
   const script = document.createElement("script");
   script.src = chrome.runtime.getURL("page-hook.js");
   script.async = false;
   script.dataset.trinityHook = "true";
   (document.documentElement || document.head || document.body).appendChild(script);
   script.remove();
+}
+
+function sendRuntimeMessage(message, callback) {
+  if (!isExtensionContextAvailable()) {
+    callback(undefined);
+    return;
+  }
+
+  try {
+    chrome.runtime.sendMessage(message, callback);
+  } catch {
+    callback(undefined);
+  }
+}
+
+function isExtensionContextAvailable() {
+  return typeof chrome !== "undefined" && !!chrome.runtime?.id;
+}
+
+function hasRuntimeLastError() {
+  return Boolean(chrome.runtime?.lastError);
 }
 
 function findDownloadCandidate(startNode) {

@@ -478,6 +478,8 @@ Exit criteria:
 - Added a drag handle to queue-manageable rows and visual drop-target feedback in the table.
 - Select-all now respects only the currently visible filtered rows instead of the whole dataset.
 - Verified drag-drop queue reordering and richer filters with `npm run build` and `cargo check`.
+- Clarified the speed-policy row text so `Unlimited` now explicitly means Trinity is not applying an app-side cap.
+- Completed downloads remain persisted in the download list until the user deletes them.
 
 ## Current Verification Status
 

@@ -3222,8 +3222,8 @@ function formatPriorityLabel(priority: number) {
 function formatSpeedPolicySummary(job: DownloadJob, settings: AppSettings, currentDate: Date) {
   const jobLimitLabel =
     job.speed_limit_kbps > 0
-      ? `Limit ${formatKbps(job.speed_limit_kbps)}`
-      : "Limit Unlimited";
+      ? `App limit: ${formatKbps(job.speed_limit_kbps)}`
+      : "App limit: Unlimited";
   if (
     settings.bandwidth_schedule_enabled &&
     settings.bandwidth_schedule_limit_kbps > 0 &&
@@ -3233,7 +3233,9 @@ function formatSpeedPolicySummary(job: DownloadJob, settings: AppSettings, curre
       currentDate,
     )
   ) {
-    return `${jobLimitLabel} / Scheduled cap ${formatKbps(settings.bandwidth_schedule_limit_kbps)}`;
+    return `${jobLimitLabel} / Scheduled app cap: ${formatKbps(
+      settings.bandwidth_schedule_limit_kbps,
+    )}`;
   }
 
   return jobLimitLabel;

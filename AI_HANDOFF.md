@@ -539,6 +539,7 @@ Exit criteria:
 - Added the new Trinity logo into the repo under `assets/branding/trinity-logo-source.png` and generated icon sizes from it for:
   - the Windows app bundle files in `src-tauri/icons/`
   - the Chrome extension icons in `browser-extension/chrome/icons/`
+- Removed the baked light background from the Trinity logo source with a border-connected alpha cut and regenerated the app/extension icon outputs so the icon corners are actually transparent.
 - Current segmented implementation is still conservative:
   - segmented jobs rebalance naturally through the chunk queue, but live splitting/merging of in-flight chunks is not implemented yet
   - segmented part state is persisted on a short interval, so an abrupt kill may lose only the most recent in-flight chunk progress instead of the whole job

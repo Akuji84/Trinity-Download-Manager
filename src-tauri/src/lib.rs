@@ -1556,18 +1556,19 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             if let Ok(exe) = std::env::current_exe() {
                 std::thread::spawn(move || {
-                    let exe_str = exe.to_string_lossy().replace('\'', "''");
+                    let exe_str = exe.to_string_lossy().into_owned();
                     let script = format!(
                         r#"$shell = New-Object -ComObject WScript.Shell
 $lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Trinity Download Manager.lnk'
 if (Test-Path $lnk) {{
     $s = $shell.CreateShortcut($lnk)
-    if ($s.IconLocation -ne "'{exe}',0") {{
-        $s.IconLocation = "'{exe}',0"
+    $icon = "{exe},0"
+    if ($s.IconLocation -ne $icon) {{
+        $s.IconLocation = $icon
         $s.Save()
     }}
 }}"#,
-                        exe = exe_str
+                        exe = exe_str.replace('"', r#"\""#)
                     );
                     let _ = std::process::Command::new("powershell")
                         .args(["-WindowStyle", "Hidden", "-NonInteractive", "-Command", &script])

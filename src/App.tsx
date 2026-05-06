@@ -9,12 +9,15 @@ import {
   Clock3,
   Flag,
   FolderInput,
+  GripVertical,
   MoreHorizontal,
   Play,
   Plus,
   RefreshCw,
   Save,
+  Search,
   Settings,
+  SlidersHorizontal,
   Square,
   Trash2,
   X,
@@ -45,6 +48,7 @@ type DownloadJob = {
   state: DownloadState;
   queue_position: number;
   priority: number;
+  speed_limit_kbps: number;
   downloaded_bytes: number;
   total_bytes: number | null;
   speed_bps: number;
@@ -65,12 +69,39 @@ type AppSettings = {
   retry_enabled: boolean;
   retry_attempts: number;
   retry_delay_seconds: number;
+  default_download_speed_limit_kbps: number;
+  bandwidth_schedule_enabled: boolean;
+  bandwidth_schedule_start: string;
+  bandwidth_schedule_end: string;
+  bandwidth_schedule_limit_kbps: number;
 };
 
 type DownloadUrlMetadata = {
   file_name: string;
   total_bytes: number | null;
 };
+
+type DownloadTabId =
+  | "all"
+  | "active"
+  | "queued"
+  | "completed"
+  | "uncompleted"
+  | "failed"
+  | "paused";
+
+type CategoryFilterId =
+  | "all"
+  | "compressed"
+  | "documents"
+  | "music"
+  | "programs"
+  | "video"
+  | "unfinished"
+  | "finished"
+  | "queues";
+
+type PriorityFilterId = "all" | "high" | "normal" | "low";
 
 const SCHEDULE_DAYS = ["Everyday", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const PREFERENCES_SECTIONS = [
@@ -123,6 +154,11 @@ type PreferencesDraft = {
   limitPresetLow: string;
   limitPresetMedium: string;
   limitPresetHigh: string;
+  defaultDownloadSpeedLimitKbps: number;
+  bandwidthScheduleEnabled: boolean;
+  bandwidthScheduleStart: string;
+  bandwidthScheduleEnd: string;
+  bandwidthScheduleLimitKbps: number;
   maxConnectionsLow: number;
   maxConnectionsMedium: number;
   maxConnectionsHigh: number;
@@ -217,6 +253,11 @@ function createPreferencesDraft(maxConcurrentDownloads: number): PreferencesDraf
     limitPresetLow: "256 KB/s",
     limitPresetMedium: "2 MB/s",
     limitPresetHigh: "Unlimited",
+    defaultDownloadSpeedLimitKbps: 0,
+    bandwidthScheduleEnabled: false,
+    bandwidthScheduleStart: "22:00",
+    bandwidthScheduleEnd: "06:00",
+    bandwidthScheduleLimitKbps: 512,
     maxConnectionsLow: 15,
     maxConnectionsMedium: 50,
     maxConnectionsHigh: 200,
@@ -318,6 +359,11 @@ function App() {
     retry_enabled: true,
     retry_attempts: 3,
     retry_delay_seconds: 5,
+    default_download_speed_limit_kbps: 0,
+    bandwidth_schedule_enabled: false,
+    bandwidth_schedule_start: "22:00",
+    bandwidth_schedule_end: "06:00",
+    bandwidth_schedule_limit_kbps: 512,
   });
   const [preferencesDraft, setPreferencesDraft] = useState<PreferencesDraft>(() =>
     createPreferencesDraft(3),
@@ -325,6 +371,13 @@ function App() {
   const [activePreferencesSection, setActivePreferencesSection] =
     useState<PreferencesSectionId>("general");
   const [preferencesStatus, setPreferencesStatus] = useState("");
+  const [activeTab, setActiveTab] = useState<DownloadTabId>("all");
+  const [activeCategory, setActiveCategory] = useState<CategoryFilterId>("all");
+  const [queueSearch, setQueueSearch] = useState("");
+  const [priorityFilter, setPriorityFilter] = useState<PriorityFilterId>("all");
+  const [queueScope, setQueueScope] = useState<"all" | "queueOnly" | "scheduled">("all");
+  const [draggedJobId, setDraggedJobId] = useState<string | null>(null);
+  const [dropTargetJobId, setDropTargetJobId] = useState<string | null>(null);
   const preferencesContentRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -339,6 +392,11 @@ function App() {
           retryMode: loadedSettings.retry_enabled ? "auto" : "manual",
           retryAttempts: loadedSettings.retry_attempts,
           retryDelaySeconds: loadedSettings.retry_delay_seconds,
+          defaultDownloadSpeedLimitKbps: loadedSettings.default_download_speed_limit_kbps,
+          bandwidthScheduleEnabled: loadedSettings.bandwidth_schedule_enabled,
+          bandwidthScheduleStart: loadedSettings.bandwidth_schedule_start,
+          bandwidthScheduleEnd: loadedSettings.bandwidth_schedule_end,
+          bandwidthScheduleLimitKbps: loadedSettings.bandwidth_schedule_limit_kbps,
         }));
       })
       .catch(console.error);
@@ -559,6 +617,29 @@ function App() {
     await refreshJobs();
   }
 
+  async function updateSelectedSpeedLimit(speedLimitKbps: number) {
+    const limitedJobs = selectedJobs.filter((job) => job.state !== "Running");
+    await Promise.all(
+      limitedJobs.map((job) =>
+        invoke<boolean>("update_download_speed_limit", {
+          request: { id: job.id, speed_limit_kbps: speedLimitKbps },
+        }),
+      ),
+    );
+    await refreshJobs();
+  }
+
+  async function reorderQueueJob(draggedId: string, targetId: string) {
+    if (draggedId === targetId) {
+      return;
+    }
+
+    await invoke<boolean>("reorder_download_job", {
+      request: { dragged_id: draggedId, target_id: targetId },
+    });
+    await refreshJobs();
+  }
+
   async function saveSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const updatedSettings = await invoke<AppSettings>("update_app_settings", {
@@ -567,6 +648,11 @@ function App() {
         retry_enabled: preferencesDraft.retryMode === "auto",
         retry_attempts: preferencesDraft.retryAttempts,
         retry_delay_seconds: preferencesDraft.retryDelaySeconds,
+        default_download_speed_limit_kbps: preferencesDraft.defaultDownloadSpeedLimitKbps,
+        bandwidth_schedule_enabled: preferencesDraft.bandwidthScheduleEnabled,
+        bandwidth_schedule_start: preferencesDraft.bandwidthScheduleStart,
+        bandwidth_schedule_end: preferencesDraft.bandwidthScheduleEnd,
+        bandwidth_schedule_limit_kbps: preferencesDraft.bandwidthScheduleLimitKbps,
       },
     });
     setSettings(updatedSettings);
@@ -577,8 +663,13 @@ function App() {
       retryMode: updatedSettings.retry_enabled ? "auto" : "manual",
       retryAttempts: updatedSettings.retry_attempts,
       retryDelaySeconds: updatedSettings.retry_delay_seconds,
+      defaultDownloadSpeedLimitKbps: updatedSettings.default_download_speed_limit_kbps,
+      bandwidthScheduleEnabled: updatedSettings.bandwidth_schedule_enabled,
+      bandwidthScheduleStart: updatedSettings.bandwidth_schedule_start,
+      bandwidthScheduleEnd: updatedSettings.bandwidth_schedule_end,
+      bandwidthScheduleLimitKbps: updatedSettings.bandwidth_schedule_limit_kbps,
     }));
-    setPreferencesStatus("Saved live queue and retry settings. Other sections remain local placeholders for now.");
+    setPreferencesStatus("Saved live queue, retry, and bandwidth settings. Other sections remain local placeholders for now.");
     await refreshJobs();
   }
 
@@ -590,6 +681,11 @@ function App() {
       retryMode: settings.retry_enabled ? "auto" : "manual",
       retryAttempts: settings.retry_attempts,
       retryDelaySeconds: settings.retry_delay_seconds,
+      defaultDownloadSpeedLimitKbps: settings.default_download_speed_limit_kbps,
+      bandwidthScheduleEnabled: settings.bandwidth_schedule_enabled,
+      bandwidthScheduleStart: settings.bandwidth_schedule_start,
+      bandwidthScheduleEnd: settings.bandwidth_schedule_end,
+      bandwidthScheduleLimitKbps: settings.bandwidth_schedule_limit_kbps,
     }));
     setPreferencesStatus("");
     setActivePreferencesSection("general");
@@ -697,8 +793,38 @@ function App() {
 
   function toggleAllJobs() {
     setSelectedJobIds((currentIds) =>
-      currentIds.length === jobs.length ? [] : jobs.map((job) => job.id),
+      visibleJobs.length > 0 && visibleJobs.every((job) => currentIds.includes(job.id))
+        ? currentIds.filter((id) => !visibleJobs.some((job) => job.id === id))
+        : Array.from(new Set([...currentIds, ...visibleJobs.map((job) => job.id)])),
     );
+  }
+
+  function handleRowDragStart(job: DownloadJob) {
+    if (!isQueueManageable(job)) {
+      return;
+    }
+
+    setDraggedJobId(job.id);
+    setDropTargetJobId(null);
+  }
+
+  function handleRowDrop(job: DownloadJob) {
+    if (!draggedJobId || draggedJobId === job.id) {
+      setDraggedJobId(null);
+      setDropTargetJobId(null);
+      return;
+    }
+
+    const draggedJob = jobs.find((candidate) => candidate.id === draggedJobId);
+    if (!draggedJob || !canDragOntoRow(draggedJob, job)) {
+      setDraggedJobId(null);
+      setDropTargetJobId(null);
+      return;
+    }
+
+    reorderQueueJob(draggedJobId, job.id).catch(console.error);
+    setDraggedJobId(null);
+    setDropTargetJobId(null);
   }
 
   const queuedCount = jobs.filter((job) => job.state === "Queued").length;
@@ -709,6 +835,13 @@ function App() {
   const incompleteCount = jobs.filter(
     (job) => job.state !== "Completed" && job.state !== "Canceled",
   ).length;
+  const visibleJobs = jobs.filter((job) =>
+    matchesMainTab(job, activeTab) &&
+    matchesCategoryFilter(job, activeCategory) &&
+    matchesPriorityFilter(job, priorityFilter) &&
+    matchesQueueScope(job, queueScope) &&
+    matchesSearchFilter(job, queueSearch),
+  );
   const globalSpeed = jobs
     .filter((job) => job.state === "Running")
     .reduce((total, job) => total + job.speed_bps, 0);
@@ -719,6 +852,7 @@ function App() {
   const canDeleteSelected = selectedJobs.some((job) => job.state !== "Running");
   const canMoveSelected = selectedJobs.length === 1 && isQueueManageable(selectedJobs[0]);
   const canChangePrioritySelected = selectedJobs.some(isQueueManageable);
+  const canChangeSpeedLimitSelected = selectedJobs.some((job) => job.state !== "Running");
   const scheduleNow = new Date(scheduleClock);
 
   return (
@@ -820,6 +954,36 @@ function App() {
             <Flag size={24} strokeWidth={2} />
           </span>
           Low
+        </button>
+        <button
+          className="tool-button"
+          disabled={!canChangeSpeedLimitSelected}
+          onClick={() => updateSelectedSpeedLimit(0)}
+        >
+          <span>
+            <SlidersHorizontal size={24} strokeWidth={2} />
+          </span>
+          Unlimit
+        </button>
+        <button
+          className="tool-button"
+          disabled={!canChangeSpeedLimitSelected}
+          onClick={() => updateSelectedSpeedLimit(512)}
+        >
+          <span>
+            <SlidersHorizontal size={24} strokeWidth={2} />
+          </span>
+          512 KB/s
+        </button>
+        <button
+          className="tool-button"
+          disabled={!canChangeSpeedLimitSelected}
+          onClick={() => updateSelectedSpeedLimit(2048)}
+        >
+          <span>
+            <SlidersHorizontal size={24} strokeWidth={2} />
+          </span>
+          2 MB/s
         </button>
         <button
           className="tool-button"
@@ -1376,9 +1540,9 @@ function App() {
                   <div className="preferences-section-head">
                     <div>
                       <h3>Traffic Limits</h3>
-                      <p>Connection presets, queue depth, retries, and future acceleration knobs.</p>
+                      <p>Connection presets, queue depth, retries, scheduled caps, and per-download speed limits.</p>
                     </div>
-                    <span className="preferences-badge live">Live + placeholders</span>
+                    <span className="preferences-badge live">Mostly live</span>
                   </div>
                   <div className="preferences-traffic-grid">
                     <div />
@@ -1485,6 +1649,24 @@ function App() {
 
                   <div className="preferences-grid three-column">
                     <label className="preferences-field live">
+                      <span>Default per-download speed limit</span>
+                      <div className="preferences-unit-field">
+                        <input
+                          min={0}
+                          onChange={(event) =>
+                            setPreferenceValue(
+                              "defaultDownloadSpeedLimitKbps",
+                              Number(event.currentTarget.value || 0),
+                            )
+                          }
+                          type="number"
+                          value={preferencesDraft.defaultDownloadSpeedLimitKbps}
+                        />
+                        <span>KB/s</span>
+                      </div>
+                      <small>`0` means unlimited for new downloads.</small>
+                    </label>
+                    <label className="preferences-field live">
                       <span>Maximum simultaneous downloads</span>
                       <input
                         max={10}
@@ -1534,6 +1716,19 @@ function App() {
                         <option value={4}>4</option>
                       </select>
                     </label>
+                    <label className="preferences-toggle align-end">
+                      <input
+                        checked={preferencesDraft.bandwidthScheduleEnabled}
+                        onChange={(event) =>
+                          setPreferenceValue(
+                            "bandwidthScheduleEnabled",
+                            event.currentTarget.checked,
+                          )
+                        }
+                        type="checkbox"
+                      />
+                      Enable scheduled bandwidth cap
+                    </label>
                     <label className="preferences-field">
                       <span>Retry attempts</span>
                       <input
@@ -1556,8 +1751,45 @@ function App() {
                           )
                         }
                         type="number"
-                        value={preferencesDraft.retryDelaySeconds}
+                      value={preferencesDraft.retryDelaySeconds}
+                    />
+                  </label>
+                    <label className="preferences-field">
+                      <span>Scheduled cap start</span>
+                      <input
+                        onChange={(event) =>
+                          setPreferenceValue("bandwidthScheduleStart", event.currentTarget.value)
+                        }
+                        type="time"
+                        value={preferencesDraft.bandwidthScheduleStart}
                       />
+                    </label>
+                    <label className="preferences-field">
+                      <span>Scheduled cap end</span>
+                      <input
+                        onChange={(event) =>
+                          setPreferenceValue("bandwidthScheduleEnd", event.currentTarget.value)
+                        }
+                        type="time"
+                        value={preferencesDraft.bandwidthScheduleEnd}
+                      />
+                    </label>
+                    <label className="preferences-field">
+                      <span>Scheduled cap limit</span>
+                      <div className="preferences-unit-field">
+                        <input
+                          min={0}
+                          onChange={(event) =>
+                            setPreferenceValue(
+                              "bandwidthScheduleLimitKbps",
+                              Number(event.currentTarget.value || 0),
+                            )
+                          }
+                          type="number"
+                          value={preferencesDraft.bandwidthScheduleLimitKbps}
+                        />
+                        <span>KB/s</span>
+                      </div>
                     </label>
                     <label className="preferences-toggle align-end">
                       <input
@@ -2201,36 +2433,150 @@ function App() {
       ) : (
         <>
           <nav className="tabs" aria-label="Download filters">
-            <button className="tab active">All ({jobs.length})</button>
-            <button className="tab">Active ({activeCount})</button>
-            <button className="tab">Queued ({queuedCount})</button>
-            <button className="tab">Completed ({completedCount})</button>
-            <button className="tab">Uncompleted ({incompleteCount})</button>
-            <button className="tab">Failed ({failedCount})</button>
-            <button className="tab">Paused ({pausedCount})</button>
+            <button
+              className={`tab ${activeTab === "all" ? "active" : ""}`}
+              onClick={() => setActiveTab("all")}
+            >
+              All ({jobs.length})
+            </button>
+            <button
+              className={`tab ${activeTab === "active" ? "active" : ""}`}
+              onClick={() => setActiveTab("active")}
+            >
+              Active ({activeCount})
+            </button>
+            <button
+              className={`tab ${activeTab === "queued" ? "active" : ""}`}
+              onClick={() => setActiveTab("queued")}
+            >
+              Queued ({queuedCount})
+            </button>
+            <button
+              className={`tab ${activeTab === "completed" ? "active" : ""}`}
+              onClick={() => setActiveTab("completed")}
+            >
+              Completed ({completedCount})
+            </button>
+            <button
+              className={`tab ${activeTab === "uncompleted" ? "active" : ""}`}
+              onClick={() => setActiveTab("uncompleted")}
+            >
+              Uncompleted ({incompleteCount})
+            </button>
+            <button
+              className={`tab ${activeTab === "failed" ? "active" : ""}`}
+              onClick={() => setActiveTab("failed")}
+            >
+              Failed ({failedCount})
+            </button>
+            <button
+              className={`tab ${activeTab === "paused" ? "active" : ""}`}
+              onClick={() => setActiveTab("paused")}
+            >
+              Paused ({pausedCount})
+            </button>
             <button className="tab">+</button>
           </nav>
 
           <section className="main-pane">
             <aside className="category-tree" aria-label="Categories">
               <div className="category-title">Categories</div>
-              <button className="tree-item active">All Downloads</button>
-              <button className="tree-item">Compressed</button>
-              <button className="tree-item">Documents</button>
-              <button className="tree-item">Music</button>
-              <button className="tree-item">Programs</button>
-              <button className="tree-item">Video</button>
-              <button className="tree-item">Unfinished</button>
-              <button className="tree-item">Finished</button>
-              <button className="tree-item">Queues</button>
+              <button
+                className={`tree-item ${activeCategory === "all" ? "active" : ""}`}
+                onClick={() => setActiveCategory("all")}
+              >
+                All Downloads
+              </button>
+              <button
+                className={`tree-item ${activeCategory === "compressed" ? "active" : ""}`}
+                onClick={() => setActiveCategory("compressed")}
+              >
+                Compressed
+              </button>
+              <button
+                className={`tree-item ${activeCategory === "documents" ? "active" : ""}`}
+                onClick={() => setActiveCategory("documents")}
+              >
+                Documents
+              </button>
+              <button
+                className={`tree-item ${activeCategory === "music" ? "active" : ""}`}
+                onClick={() => setActiveCategory("music")}
+              >
+                Music
+              </button>
+              <button
+                className={`tree-item ${activeCategory === "programs" ? "active" : ""}`}
+                onClick={() => setActiveCategory("programs")}
+              >
+                Programs
+              </button>
+              <button
+                className={`tree-item ${activeCategory === "video" ? "active" : ""}`}
+                onClick={() => setActiveCategory("video")}
+              >
+                Video
+              </button>
+              <button
+                className={`tree-item ${activeCategory === "unfinished" ? "active" : ""}`}
+                onClick={() => setActiveCategory("unfinished")}
+              >
+                Unfinished
+              </button>
+              <button
+                className={`tree-item ${activeCategory === "finished" ? "active" : ""}`}
+                onClick={() => setActiveCategory("finished")}
+              >
+                Finished
+              </button>
+              <button
+                className={`tree-item ${activeCategory === "queues" ? "active" : ""}`}
+                onClick={() => setActiveCategory("queues")}
+              >
+                Queues
+              </button>
             </aside>
 
             <section className="download-table">
+              <div className="table-filters">
+                <label className="table-search">
+                  <Search size={14} strokeWidth={2} />
+                  <input
+                    onChange={(event) => setQueueSearch(event.currentTarget.value)}
+                    placeholder="Search downloads"
+                    value={queueSearch}
+                  />
+                </label>
+                <select
+                  onChange={(event) =>
+                    setPriorityFilter(event.currentTarget.value as PriorityFilterId)
+                  }
+                  value={priorityFilter}
+                >
+                  <option value="all">All priorities</option>
+                  <option value="high">High priority</option>
+                  <option value="normal">Normal priority</option>
+                  <option value="low">Low priority</option>
+                </select>
+                <select
+                  onChange={(event) =>
+                    setQueueScope(event.currentTarget.value as "all" | "queueOnly" | "scheduled")
+                  }
+                  value={queueScope}
+                >
+                  <option value="all">All rows</option>
+                  <option value="queueOnly">Queue-manageable</option>
+                  <option value="scheduled">Scheduled only</option>
+                </select>
+              </div>
               <div className="table-head">
                 <span className="check-cell">
                   <input
                     aria-label="Select all downloads"
-                    checked={jobs.length > 0 && selectedJobIds.length === jobs.length}
+                    checked={
+                      visibleJobs.length > 0 &&
+                      visibleJobs.every((job) => selectedJobIds.includes(job.id))
+                    }
                     onChange={toggleAllJobs}
                     type="checkbox"
                   />
@@ -2243,13 +2589,13 @@ function App() {
                 <span>Actions</span>
               </div>
               <div className="download-list">
-                {jobs.length === 0 ? (
+                {visibleJobs.length === 0 ? (
                   <div className="empty-state">
-                    <h3>No downloads</h3>
-                    <p>Use Add URL to create the first download job.</p>
+                    <h3>No matching downloads</h3>
+                    <p>Adjust the active filters or create a new download job.</p>
                   </div>
                 ) : (
-                  jobs.map((job) => {
+                  visibleJobs.map((job) => {
                     const isSelected = selectedJobIds.includes(job.id);
                     const waitingForSchedule = isWaitingForSchedule(job, scheduleNow);
                     const scheduleSummary = job.scheduler_enabled
@@ -2262,12 +2608,39 @@ function App() {
                     const queuePolicySummary = isQueueManageable(job)
                       ? `Queue: ${formatPriorityLabel(job.priority)} / #${job.queue_position}`
                       : "";
+                    const speedPolicySummary = formatSpeedPolicySummary(job, settings, scheduleNow);
 
                     return (
                       <article
-                        className={`download-row ${isSelected ? "selected" : ""}`}
+                        className={`download-row ${isSelected ? "selected" : ""} ${
+                          dropTargetJobId === job.id ? "drop-target" : ""
+                        }`}
+                        draggable={isQueueManageable(job)}
                         key={job.id}
                         onClick={() => toggleJobSelection(job.id)}
+                        onDragEnd={() => {
+                          setDraggedJobId(null);
+                          setDropTargetJobId(null);
+                        }}
+                        onDragOver={(event) => {
+                          const draggedJob = jobs.find((candidate) => candidate.id === draggedJobId);
+                          if (!draggedJob || !canDragOntoRow(draggedJob, job)) {
+                            return;
+                          }
+                          event.preventDefault();
+                          if (dropTargetJobId !== job.id) {
+                            setDropTargetJobId(job.id);
+                          }
+                        }}
+                        onDragStart={(event) => {
+                          handleRowDragStart(job);
+                          event.dataTransfer.effectAllowed = "move";
+                          event.dataTransfer.setData("text/plain", job.id);
+                        }}
+                        onDrop={(event) => {
+                          event.preventDefault();
+                          handleRowDrop(job);
+                        }}
                       >
                         <div className="download-primary-row">
                           <span className="check-cell">
@@ -2280,7 +2653,24 @@ function App() {
                             />
                           </span>
                           <div className="download-name">
-                            <strong title={job.file_name}>{job.file_name}</strong>
+                            <div className="download-title-row">
+                              <button
+                                className={`drag-handle ${
+                                  isQueueManageable(job) ? "" : "disabled"
+                                }`}
+                                disabled={!isQueueManageable(job)}
+                                onClick={(event) => event.stopPropagation()}
+                                title={
+                                  isQueueManageable(job)
+                                    ? "Drag to reorder within the same priority"
+                                    : "Only queued, paused, failed, or canceled jobs can be reordered"
+                                }
+                                type="button"
+                              >
+                                <GripVertical size={14} strokeWidth={2} />
+                              </button>
+                              <strong title={job.file_name}>{job.file_name}</strong>
+                            </div>
                             <small title={job.url}>{job.url}</small>
                             {job.scheduler_enabled ? (
                               <small className="schedule-detail" title={scheduleSummary}>
@@ -2296,6 +2686,7 @@ function App() {
                             {queuePolicySummary ? (
                               <small className="queue-policy-detail">{queuePolicySummary}</small>
                             ) : null}
+                            <small className="speed-policy-detail">{speedPolicySummary}</small>
                             <small className="retry-policy-detail">{retryPolicySummary}</small>
                             {job.error_message ? (
                               <em title={job.error_message}>{job.error_message}</em>
@@ -2537,6 +2928,110 @@ function isQueueManageable(job: DownloadJob) {
   );
 }
 
+function canDragOntoRow(draggedJob: DownloadJob, targetJob: DownloadJob) {
+  return (
+    draggedJob.id !== targetJob.id &&
+    isQueueManageable(draggedJob) &&
+    isQueueManageable(targetJob) &&
+    draggedJob.priority === targetJob.priority
+  );
+}
+
+function matchesMainTab(job: DownloadJob, tab: DownloadTabId) {
+  switch (tab) {
+    case "active":
+      return job.state === "Running";
+    case "queued":
+      return job.state === "Queued";
+    case "completed":
+      return job.state === "Completed";
+    case "uncompleted":
+      return job.state !== "Completed" && job.state !== "Canceled";
+    case "failed":
+      return job.state === "Failed";
+    case "paused":
+      return job.state === "Paused";
+    default:
+      return true;
+  }
+}
+
+function matchesPriorityFilter(job: DownloadJob, priorityFilter: PriorityFilterId) {
+  switch (priorityFilter) {
+    case "high":
+      return job.priority === 2;
+    case "normal":
+      return job.priority === 1;
+    case "low":
+      return job.priority === 0;
+    default:
+      return true;
+  }
+}
+
+function matchesQueueScope(
+  job: DownloadJob,
+  queueScope: "all" | "queueOnly" | "scheduled",
+) {
+  switch (queueScope) {
+    case "queueOnly":
+      return isQueueManageable(job);
+    case "scheduled":
+      return job.scheduler_enabled;
+    default:
+      return true;
+  }
+}
+
+function matchesSearchFilter(job: DownloadJob, searchValue: string) {
+  const normalizedSearch = searchValue.trim().toLowerCase();
+  if (!normalizedSearch) {
+    return true;
+  }
+
+  return (
+    job.file_name.toLowerCase().includes(normalizedSearch) ||
+    job.url.toLowerCase().includes(normalizedSearch) ||
+    job.output_folder.toLowerCase().includes(normalizedSearch)
+  );
+}
+
+function matchesCategoryFilter(job: DownloadJob, category: CategoryFilterId) {
+  const extension = getFileExtension(job.file_name);
+
+  switch (category) {
+    case "compressed":
+      return [".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz"].includes(extension);
+    case "documents":
+      return [".pdf", ".doc", ".docx", ".txt", ".rtf", ".xlsx", ".pptx", ".csv"].includes(
+        extension,
+      );
+    case "music":
+      return [".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a"].includes(extension);
+    case "programs":
+      return [".exe", ".msi", ".zip", ".appx", ".msix", ".dmg"].includes(extension);
+    case "video":
+      return [".mp4", ".mkv", ".avi", ".mov", ".wmv", ".webm"].includes(extension);
+    case "unfinished":
+      return job.state !== "Completed" && job.state !== "Canceled";
+    case "finished":
+      return job.state === "Completed";
+    case "queues":
+      return isQueueManageable(job);
+    default:
+      return true;
+  }
+}
+
+function getFileExtension(fileName: string) {
+  const extensionIndex = fileName.lastIndexOf(".");
+  if (extensionIndex === -1) {
+    return "";
+  }
+
+  return fileName.slice(extensionIndex).toLowerCase();
+}
+
 function isWaitingForSchedule(job: DownloadJob, currentDate: Date) {
   return job.state === "Queued" && job.scheduler_enabled && !isScheduleWindowActive(job, currentDate);
 }
@@ -2724,6 +3219,34 @@ function formatPriorityLabel(priority: number) {
   }
 }
 
+function formatSpeedPolicySummary(job: DownloadJob, settings: AppSettings, currentDate: Date) {
+  const jobLimitLabel =
+    job.speed_limit_kbps > 0
+      ? `Limit ${formatKbps(job.speed_limit_kbps)}`
+      : "Limit Unlimited";
+  if (
+    settings.bandwidth_schedule_enabled &&
+    settings.bandwidth_schedule_limit_kbps > 0 &&
+    isClockWindowActive(
+      settings.bandwidth_schedule_start,
+      settings.bandwidth_schedule_end,
+      currentDate,
+    )
+  ) {
+    return `${jobLimitLabel} / Scheduled cap ${formatKbps(settings.bandwidth_schedule_limit_kbps)}`;
+  }
+
+  return jobLimitLabel;
+}
+
+function formatKbps(value: number) {
+  if (value >= 1024) {
+    return `${(value / 1024).toFixed(value % 1024 === 0 ? 0 : 1)} MB/s`;
+  }
+
+  return `${value} KB/s`;
+}
+
 function timeValueToMinutes(value: string | null) {
   if (!value) {
     return null;
@@ -2763,6 +3286,21 @@ function formatScheduleClock(value: string | null) {
 
 function formatWeekday(value: Date) {
   return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][value.getDay()];
+}
+
+function isClockWindowActive(start: string, end: string, currentDate: Date) {
+  const startMinutes = timeValueToMinutes(start);
+  const endMinutes = timeValueToMinutes(end);
+  if (startMinutes === null || endMinutes === null) {
+    return false;
+  }
+
+  const currentMinutes = currentDate.getHours() * 60 + currentDate.getMinutes();
+  if (startMinutes <= endMinutes) {
+    return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+  }
+
+  return currentMinutes >= startMinutes || currentMinutes <= endMinutes;
 }
 
 export default App;

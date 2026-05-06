@@ -29,6 +29,7 @@ impl Storage {
                 state TEXT NOT NULL,
                 queue_position INTEGER NOT NULL DEFAULT 0,
                 priority INTEGER NOT NULL DEFAULT 1,
+                speed_limit_kbps INTEGER NOT NULL DEFAULT 0,
                 downloaded_bytes INTEGER NOT NULL DEFAULT 0,
                 total_bytes INTEGER,
                 speed_bps INTEGER NOT NULL DEFAULT 0,
@@ -60,6 +61,11 @@ impl Storage {
             "downloads",
             "priority",
             "ALTER TABLE downloads ADD COLUMN priority INTEGER NOT NULL DEFAULT 1;",
+        )?;
+        self.add_column_if_missing(
+            "downloads",
+            "speed_limit_kbps",
+            "ALTER TABLE downloads ADD COLUMN speed_limit_kbps INTEGER NOT NULL DEFAULT 0;",
         )?;
         self.add_column_if_missing(
             "downloads",
@@ -146,6 +152,41 @@ impl Storage {
             ",
             [],
         )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('default_download_speed_limit_kbps', '0');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('bandwidth_schedule_enabled', '0');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('bandwidth_schedule_start', '22:00');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('bandwidth_schedule_end', '06:00');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('bandwidth_schedule_limit_kbps', '512');
+            ",
+            [],
+        )?;
 
         Ok(())
     }
@@ -177,6 +218,7 @@ impl Storage {
                 state,
                 queue_position,
                 priority,
+                speed_limit_kbps,
                 downloaded_bytes,
                 total_bytes,
                 speed_bps,
@@ -189,7 +231,7 @@ impl Storage {
                 next_retry_at,
                 error_message
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19);
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20);
             ",
             params![
                 job.id,
@@ -200,6 +242,7 @@ impl Storage {
                 job.state.as_str(),
                 job.queue_position,
                 job.priority,
+                job.speed_limit_kbps,
                 job.downloaded_bytes,
                 job.total_bytes,
                 job.speed_bps,
@@ -229,6 +272,7 @@ impl Storage {
                 state,
                 queue_position,
                 priority,
+                speed_limit_kbps,
                 downloaded_bytes,
                 total_bytes,
                 speed_bps,
@@ -287,19 +331,20 @@ impl Storage {
                     state,
                     queue_position: row.get(6)?,
                     priority: row.get(7)?,
-                    downloaded_bytes: row.get::<_, i64>(8)? as u64,
-                    total_bytes: row.get::<_, Option<i64>>(9)?.map(|value| value as u64),
-                    speed_bps: row.get::<_, i64>(10)? as u64,
-                    is_resumable: row.get::<_, i64>(11)? != 0,
-                    scheduler_enabled: row.get::<_, i64>(12)? != 0,
-                    schedule_days: schedule_days_from_text(row.get::<_, String>(13)?.as_str()),
-                    schedule_from: row.get(14)?,
-                    schedule_to: row.get(15)?,
-                    retry_count: row.get::<_, i64>(16)? as u32,
-                    next_retry_at: row.get(17)?,
-                    error_message: row.get(18)?,
-                    created_at: row.get(19)?,
-                    updated_at: row.get(20)?,
+                    speed_limit_kbps: row.get::<_, i64>(8)? as u64,
+                    downloaded_bytes: row.get::<_, i64>(9)? as u64,
+                    total_bytes: row.get::<_, Option<i64>>(10)?.map(|value| value as u64),
+                    speed_bps: row.get::<_, i64>(11)? as u64,
+                    is_resumable: row.get::<_, i64>(12)? != 0,
+                    scheduler_enabled: row.get::<_, i64>(13)? != 0,
+                    schedule_days: schedule_days_from_text(row.get::<_, String>(14)?.as_str()),
+                    schedule_from: row.get(15)?,
+                    schedule_to: row.get(16)?,
+                    retry_count: row.get::<_, i64>(17)? as u32,
+                    next_retry_at: row.get(18)?,
+                    error_message: row.get(19)?,
+                    created_at: row.get(20)?,
+                    updated_at: row.get(21)?,
                 })
             })?
             .collect::<Result<Vec<_>>>()?;
@@ -319,6 +364,7 @@ impl Storage {
                 state,
                 queue_position,
                 priority,
+                speed_limit_kbps,
                 downloaded_bytes,
                 total_bytes,
                 speed_bps,
@@ -363,19 +409,20 @@ impl Storage {
             state,
             queue_position: row.get(6)?,
             priority: row.get(7)?,
-            downloaded_bytes: row.get::<_, i64>(8)? as u64,
-            total_bytes: row.get::<_, Option<i64>>(9)?.map(|value| value as u64),
-            speed_bps: row.get::<_, i64>(10)? as u64,
-            is_resumable: row.get::<_, i64>(11)? != 0,
-            scheduler_enabled: row.get::<_, i64>(12)? != 0,
-            schedule_days: schedule_days_from_text(row.get::<_, String>(13)?.as_str()),
-            schedule_from: row.get(14)?,
-            schedule_to: row.get(15)?,
-            retry_count: row.get::<_, i64>(16)? as u32,
-            next_retry_at: row.get(17)?,
-            error_message: row.get(18)?,
-            created_at: row.get(19)?,
-            updated_at: row.get(20)?,
+            speed_limit_kbps: row.get::<_, i64>(8)? as u64,
+            downloaded_bytes: row.get::<_, i64>(9)? as u64,
+            total_bytes: row.get::<_, Option<i64>>(10)?.map(|value| value as u64),
+            speed_bps: row.get::<_, i64>(11)? as u64,
+            is_resumable: row.get::<_, i64>(12)? != 0,
+            scheduler_enabled: row.get::<_, i64>(13)? != 0,
+            schedule_days: schedule_days_from_text(row.get::<_, String>(14)?.as_str()),
+            schedule_from: row.get(15)?,
+            schedule_to: row.get(16)?,
+            retry_count: row.get::<_, i64>(17)? as u32,
+            next_retry_at: row.get(18)?,
+            error_message: row.get(19)?,
+            created_at: row.get(20)?,
+            updated_at: row.get(21)?,
         }))
     }
 
@@ -391,6 +438,7 @@ impl Storage {
                 state,
                 queue_position,
                 priority,
+                speed_limit_kbps,
                 downloaded_bytes,
                 total_bytes,
                 speed_bps,
@@ -422,19 +470,20 @@ impl Storage {
                     state: DownloadState::Queued,
                     queue_position: row.get(6)?,
                     priority: row.get(7)?,
-                    downloaded_bytes: row.get::<_, i64>(8)? as u64,
-                    total_bytes: row.get::<_, Option<i64>>(9)?.map(|value| value as u64),
-                    speed_bps: row.get::<_, i64>(10)? as u64,
-                    is_resumable: row.get::<_, i64>(11)? != 0,
-                    scheduler_enabled: row.get::<_, i64>(12)? != 0,
-                    schedule_days: schedule_days_from_text(row.get::<_, String>(13)?.as_str()),
-                    schedule_from: row.get(14)?,
-                    schedule_to: row.get(15)?,
-                    retry_count: row.get::<_, i64>(16)? as u32,
-                    next_retry_at: row.get(17)?,
-                    error_message: row.get(18)?,
-                    created_at: row.get(19)?,
-                    updated_at: row.get(20)?,
+                    speed_limit_kbps: row.get::<_, i64>(8)? as u64,
+                    downloaded_bytes: row.get::<_, i64>(9)? as u64,
+                    total_bytes: row.get::<_, Option<i64>>(10)?.map(|value| value as u64),
+                    speed_bps: row.get::<_, i64>(11)? as u64,
+                    is_resumable: row.get::<_, i64>(12)? != 0,
+                    scheduler_enabled: row.get::<_, i64>(13)? != 0,
+                    schedule_days: schedule_days_from_text(row.get::<_, String>(14)?.as_str()),
+                    schedule_from: row.get(15)?,
+                    schedule_to: row.get(16)?,
+                    retry_count: row.get::<_, i64>(17)? as u32,
+                    next_retry_at: row.get(18)?,
+                    error_message: row.get(19)?,
+                    created_at: row.get(20)?,
+                    updated_at: row.get(21)?,
                 })
             })?
             .collect::<Result<Vec<_>>>()?
@@ -480,6 +529,72 @@ impl Storage {
         self.move_download_job(id, 1)
     }
 
+    pub fn reorder_download_job(&self, dragged_id: &str, target_id: &str) -> Result<bool> {
+        let ordered_jobs = self.list_ordered_queue_jobs()?;
+        let Some(dragged_index) = ordered_jobs
+            .iter()
+            .position(|(job_id, _, _)| job_id == dragged_id)
+        else {
+            return Ok(false);
+        };
+        let Some(target_index) = ordered_jobs
+            .iter()
+            .position(|(job_id, _, _)| job_id == target_id)
+        else {
+            return Ok(false);
+        };
+
+        if dragged_index == target_index {
+            return Ok(false);
+        }
+
+        let dragged_priority = ordered_jobs[dragged_index].2;
+        let target_priority = ordered_jobs[target_index].2;
+        if dragged_priority != target_priority {
+            return Ok(false);
+        }
+
+        let mut priority_bucket = ordered_jobs
+            .iter()
+            .filter(|(_, _, priority)| *priority == dragged_priority)
+            .cloned()
+            .collect::<Vec<_>>();
+        let Some(dragged_bucket_index) = priority_bucket
+            .iter()
+            .position(|(job_id, _, _)| job_id == dragged_id)
+        else {
+            return Ok(false);
+        };
+        let Some(target_bucket_index) = priority_bucket
+            .iter()
+            .position(|(job_id, _, _)| job_id == target_id)
+        else {
+            return Ok(false);
+        };
+
+        let dragged_job = priority_bucket.remove(dragged_bucket_index);
+        let insertion_index = if dragged_bucket_index < target_bucket_index {
+            target_bucket_index.saturating_sub(1)
+        } else {
+            target_bucket_index
+        };
+        priority_bucket.insert(insertion_index, dragged_job);
+
+        for (offset, (job_id, _, _)) in priority_bucket.iter().enumerate() {
+            self.connection.execute(
+                "
+                UPDATE downloads
+                SET queue_position = ?2,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?1;
+                ",
+                params![job_id, (offset as i64) + 1],
+            )?;
+        }
+
+        Ok(true)
+    }
+
     pub fn update_download_priority(&self, id: &str, priority: i32) -> Result<bool> {
         let normalized_priority = priority.clamp(0, 2);
         let next_position = self.next_queue_position()?;
@@ -493,6 +608,21 @@ impl Storage {
               AND state IN ('queued', 'paused', 'failed', 'canceled');
             ",
             params![id, normalized_priority, next_position],
+        )?;
+
+        Ok(affected_rows > 0)
+    }
+
+    pub fn update_download_speed_limit(&self, id: &str, speed_limit_kbps: u64) -> Result<bool> {
+        let normalized_limit = speed_limit_kbps.min(1024 * 1024);
+        let affected_rows = self.connection.execute(
+            "
+            UPDATE downloads
+            SET speed_limit_kbps = ?2,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?1;
+            ",
+            params![id, normalized_limit],
         )?;
 
         Ok(affected_rows > 0)
@@ -621,12 +751,38 @@ impl Storage {
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(defaults.retry_delay_seconds)
             .clamp(0, 3600);
+        let default_download_speed_limit_kbps = self
+            .get_setting("default_download_speed_limit_kbps")?
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(defaults.default_download_speed_limit_kbps)
+            .min(1024 * 1024);
+        let bandwidth_schedule_enabled = self
+            .get_setting("bandwidth_schedule_enabled")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.bandwidth_schedule_enabled);
+        let bandwidth_schedule_start = self
+            .get_setting("bandwidth_schedule_start")?
+            .unwrap_or(defaults.bandwidth_schedule_start);
+        let bandwidth_schedule_end = self
+            .get_setting("bandwidth_schedule_end")?
+            .unwrap_or(defaults.bandwidth_schedule_end);
+        let bandwidth_schedule_limit_kbps = self
+            .get_setting("bandwidth_schedule_limit_kbps")?
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(defaults.bandwidth_schedule_limit_kbps)
+            .min(1024 * 1024);
 
         Ok(AppSettings {
             max_concurrent_downloads,
             retry_enabled,
             retry_attempts,
             retry_delay_seconds,
+            default_download_speed_limit_kbps,
+            bandwidth_schedule_enabled,
+            bandwidth_schedule_start,
+            bandwidth_schedule_end,
+            bandwidth_schedule_limit_kbps,
         })
     }
 
@@ -638,6 +794,20 @@ impl Storage {
         self.upsert_setting("retry_enabled", if settings.retry_enabled { "1" } else { "0" })?;
         self.upsert_setting("retry_attempts", settings.retry_attempts.to_string())?;
         self.upsert_setting("retry_delay_seconds", settings.retry_delay_seconds.to_string())?;
+        self.upsert_setting(
+            "default_download_speed_limit_kbps",
+            settings.default_download_speed_limit_kbps.to_string(),
+        )?;
+        self.upsert_setting(
+            "bandwidth_schedule_enabled",
+            if settings.bandwidth_schedule_enabled { "1" } else { "0" },
+        )?;
+        self.upsert_setting("bandwidth_schedule_start", &settings.bandwidth_schedule_start)?;
+        self.upsert_setting("bandwidth_schedule_end", &settings.bandwidth_schedule_end)?;
+        self.upsert_setting(
+            "bandwidth_schedule_limit_kbps",
+            settings.bandwidth_schedule_limit_kbps.to_string(),
+        )?;
 
         Ok(())
     }
@@ -668,23 +838,7 @@ impl Storage {
     }
 
     fn move_download_job(&self, id: &str, direction: i64) -> Result<bool> {
-        let mut statement = self.connection.prepare(
-            "
-            SELECT id, queue_position, priority
-            FROM downloads
-            WHERE state IN ('queued', 'paused', 'failed', 'canceled')
-            ORDER BY priority DESC, queue_position ASC, datetime(created_at) ASC;
-            ",
-        )?;
-        let ordered_jobs = statement
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, i32>(2)?,
-                ))
-            })?
-            .collect::<Result<Vec<_>>>()?;
+        let ordered_jobs = self.list_ordered_queue_jobs()?;
 
         let Some(current_index) = ordered_jobs.iter().position(|(job_id, _, _)| job_id == id) else {
             return Ok(false);
@@ -721,6 +875,29 @@ impl Storage {
         )?;
 
         Ok(true)
+    }
+
+    fn list_ordered_queue_jobs(&self) -> Result<Vec<(String, i64, i32)>> {
+        let mut statement = self.connection.prepare(
+            "
+            SELECT id, queue_position, priority
+            FROM downloads
+            WHERE state IN ('queued', 'paused', 'failed', 'canceled')
+            ORDER BY priority DESC, queue_position ASC, datetime(created_at) ASC;
+            ",
+        )?;
+
+        let ordered_jobs = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i32>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(ordered_jobs)
     }
 }
 

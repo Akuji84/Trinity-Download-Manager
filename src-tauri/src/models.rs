@@ -68,6 +68,7 @@ pub struct DownloadJob {
     pub state: DownloadState,
     pub queue_position: i64,
     pub priority: i32,
+    pub speed_limit_kbps: u64,
     pub downloaded_bytes: u64,
     pub total_bytes: Option<u64>,
     pub speed_bps: u64,
@@ -87,6 +88,18 @@ pub struct DownloadJob {
 pub struct UpdateDownloadPriorityRequest {
     pub id: String,
     pub priority: i32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateDownloadSpeedLimitRequest {
+    pub id: String,
+    pub speed_limit_kbps: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReorderDownloadJobRequest {
+    pub dragged_id: String,
+    pub target_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -111,6 +124,11 @@ pub struct AppSettings {
     pub retry_enabled: bool,
     pub retry_attempts: u32,
     pub retry_delay_seconds: u64,
+    pub default_download_speed_limit_kbps: u64,
+    pub bandwidth_schedule_enabled: bool,
+    pub bandwidth_schedule_start: String,
+    pub bandwidth_schedule_end: String,
+    pub bandwidth_schedule_limit_kbps: u64,
 }
 
 impl Default for AppSettings {
@@ -120,6 +138,11 @@ impl Default for AppSettings {
             retry_enabled: true,
             retry_attempts: 3,
             retry_delay_seconds: 5,
+            default_download_speed_limit_kbps: 0,
+            bandwidth_schedule_enabled: false,
+            bandwidth_schedule_start: "22:00".to_string(),
+            bandwidth_schedule_end: "06:00".to_string(),
+            bandwidth_schedule_limit_kbps: 512,
         }
     }
 }
@@ -130,4 +153,9 @@ pub struct UpdateAppSettingsRequest {
     pub retry_enabled: bool,
     pub retry_attempts: u32,
     pub retry_delay_seconds: u64,
+    pub default_download_speed_limit_kbps: u64,
+    pub bandwidth_schedule_enabled: bool,
+    pub bandwidth_schedule_start: String,
+    pub bandwidth_schedule_end: String,
+    pub bandwidth_schedule_limit_kbps: u64,
 }

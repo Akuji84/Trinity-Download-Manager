@@ -448,6 +448,36 @@ Exit criteria:
   - Low priority
 - Added queue detail text to download rows so resumable queued jobs now show their effective priority and queue slot.
 - Verified queue ordering and priority controls with `npm run build`, `cargo check`, and `npm run tauri dev`.
+- Added persisted bandwidth settings:
+  - `default_download_speed_limit_kbps`
+  - `bandwidth_schedule_enabled`
+  - `bandwidth_schedule_start`
+  - `bandwidth_schedule_end`
+  - `bandwidth_schedule_limit_kbps`
+- Added persisted per-download speed limit metadata on jobs:
+  - `speed_limit_kbps`
+- New downloads inherit the current default per-download speed limit from app settings.
+- Running downloads now throttle in the Rust engine using the effective minimum of:
+  - the job-specific speed limit
+  - the active scheduled bandwidth cap
+- Added toolbar controls to set selected job speed limits to:
+  - unlimited
+  - `512 KB/s`
+  - `2 MB/s`
+- Added row detail text to show each job's current speed limit policy and any active scheduled bandwidth cap.
+- Wired the Preferences traffic settings to the backend so default and scheduled bandwidth controls are now live.
+- Verified bandwidth scheduling and per-download limits with `npm run build`, `cargo check`, and `npm run tauri dev`.
+- Added backend drag-drop queue reordering with a new `reorder_download_job` command.
+- Drag-drop reordering is currently constrained to queue-manageable jobs inside the same priority bucket, so it stays consistent with the existing priority-first scheduler.
+- Added live main-list filters:
+  - top tab filters now actually change the table contents
+  - category sidebar filters now actually change the table contents
+  - search box across file name, URL, and output folder
+  - queue-only / scheduled-only scope filter
+  - priority filter
+- Added a drag handle to queue-manageable rows and visual drop-target feedback in the table.
+- Select-all now respects only the currently visible filtered rows instead of the whole dataset.
+- Verified drag-drop queue reordering and richer filters with `npm run build` and `cargo check`.
 
 ## Current Verification Status
 
@@ -460,7 +490,8 @@ Exit criteria:
 - Downloads are single-stream only.
 - Segmented downloads are not implemented yet.
 - Retry is configurable globally, but there is not yet per-download retry override support.
-- Queue ordering and priority exist, but there is not yet drag-and-drop reordering or multi-select move semantics beyond priority batch updates.
+- Queue ordering, priority, drag-drop reorder, and filterable queue views exist, but there is not yet multi-select drag reorder or saved custom views.
+- Global bandwidth scheduling and per-download limits are implemented, but there is not yet a visual calendar/profile editor or separate upload shaping.
 - Pause/resume currently works for single-stream downloads only when the server accepts byte ranges.
 - Scheduler controls are persisted, respected by queue start rules, and visible in the table, but the backend does not yet publish a formal computed `next_start_at` field.
 - Most Preferences sections are still frontend placeholders and are not yet persisted to SQLite.
@@ -469,4 +500,4 @@ Exit criteria:
 
 ## Next Step
 
-Add bandwidth scheduling and per-download limits so users can shape traffic by time of day and by job instead of only by queue order.
+Start the segmented download engine foundation: range planning, chunk workers, temporary part files, merge flow, and per-download connection settings so Trinity can begin moving beyond single-stream transfers.

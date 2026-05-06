@@ -14,7 +14,8 @@ use std::{
 
 use models::{
     AppSettings, AppStatus, CreateDownloadJobRequest, DownloadJob, DownloadState,
-    DownloadUrlMetadata, UpdateAppSettingsRequest, UpdateDownloadPriorityRequest,
+    DownloadUrlMetadata, ReorderDownloadJobRequest, UpdateAppSettingsRequest,
+    UpdateDownloadPriorityRequest, UpdateDownloadSpeedLimitRequest,
 };
 use reqwest::{
     header::{CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_RANGE, RANGE},
@@ -24,6 +25,7 @@ use storage::Storage;
 use tauri::{AppHandle, Manager, State};
 use url::Url;
 use uuid::Uuid;
+use chrono::Timelike;
 
 struct AppState {
     storage: Mutex<Storage>,
@@ -59,6 +61,11 @@ fn update_app_settings(
         retry_enabled: request.retry_enabled,
         retry_attempts: request.retry_attempts.clamp(0, 10),
         retry_delay_seconds: request.retry_delay_seconds.clamp(0, 3600),
+        default_download_speed_limit_kbps: request.default_download_speed_limit_kbps.min(1024 * 1024),
+        bandwidth_schedule_enabled: request.bandwidth_schedule_enabled,
+        bandwidth_schedule_start: normalize_time_setting(&request.bandwidth_schedule_start)?,
+        bandwidth_schedule_end: normalize_time_setting(&request.bandwidth_schedule_end)?,
+        bandwidth_schedule_limit_kbps: request.bandwidth_schedule_limit_kbps.min(1024 * 1024),
     };
 
     let storage = state
@@ -152,6 +159,7 @@ fn create_download_job(
         .lock()
         .map_err(|_| "Storage lock is unavailable.".to_string())?;
     let queue_position = storage.next_queue_position().map_err(|error| error.to_string())?;
+    let app_settings = storage.get_app_settings().map_err(|error| error.to_string())?;
 
     let job = DownloadJob {
         id: Uuid::new_v4().to_string(),
@@ -162,6 +170,7 @@ fn create_download_job(
         state: DownloadState::Queued,
         queue_position,
         priority: 1,
+        speed_limit_kbps: app_settings.default_download_speed_limit_kbps,
         downloaded_bytes: 0,
         total_bytes: None,
         speed_bps: 0,
@@ -239,6 +248,28 @@ fn move_download_job_down(
 }
 
 #[tauri::command]
+fn reorder_download_job(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: ReorderDownloadJobRequest,
+) -> Result<bool, String> {
+    let storage = state
+        .storage
+        .lock()
+        .map_err(|_| "Storage lock is unavailable.".to_string())?;
+    let reordered = storage
+        .reorder_download_job(&request.dragged_id, &request.target_id)
+        .map_err(|error| error.to_string())?;
+    drop(storage);
+
+    if reordered {
+        pump_queue(app)?;
+    }
+
+    Ok(reordered)
+}
+
+#[tauri::command]
 fn update_download_priority(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -258,6 +289,21 @@ fn update_download_priority(
     }
 
     Ok(updated)
+}
+
+#[tauri::command]
+fn update_download_speed_limit(
+    state: State<'_, AppState>,
+    request: UpdateDownloadSpeedLimitRequest,
+) -> Result<bool, String> {
+    let storage = state
+        .storage
+        .lock()
+        .map_err(|_| "Storage lock is unavailable.".to_string())?;
+
+    storage
+        .update_download_speed_limit(&request.id, request.speed_limit_kbps)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -429,8 +475,10 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
         let output_path = job.output_path.clone();
         let app_for_progress = app.clone();
         let app_for_output = app.clone();
+        let app_for_speed_limit = app.clone();
         let job_id_for_output = job_id.clone();
         let job_id_for_progress = job_id.clone();
+        let job_id_for_speed_limit = job_id.clone();
         let result = download_engine::download_to_disk(
             job,
             control,
@@ -464,6 +512,20 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
                         speed_bps,
                     )
                     .map_err(|error| error.to_string())
+            },
+            move || {
+                let state = app_for_speed_limit.state::<AppState>();
+                let storage = state
+                    .storage
+                    .lock()
+                    .map_err(|_| "Storage lock is unavailable.".to_string())?;
+                let app_settings = storage.get_app_settings().map_err(|error| error.to_string())?;
+                let latest_job = storage
+                    .get_download_job(&job_id_for_speed_limit)
+                    .map_err(|error| error.to_string())?
+                    .ok_or_else(|| "Download job no longer exists.".to_string())?;
+
+                Ok(effective_download_speed_limit_kbps(&app_settings, &latest_job))
             },
         )
         .await;
@@ -669,6 +731,62 @@ fn is_valid_schedule_time(value: &str) -> bool {
     )
 }
 
+fn normalize_time_setting(value: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    if !is_valid_schedule_time(trimmed) {
+        return Err("Enter valid schedule times in HH:MM format.".to_string());
+    }
+
+    Ok(trimmed.to_string())
+}
+
+fn effective_download_speed_limit_kbps(settings: &AppSettings, job: &DownloadJob) -> Option<u64> {
+    let job_limit = (job.speed_limit_kbps > 0).then_some(job.speed_limit_kbps);
+    let scheduled_limit = if settings.bandwidth_schedule_enabled
+        && settings.bandwidth_schedule_limit_kbps > 0
+        && is_time_window_active(
+            &settings.bandwidth_schedule_start,
+            &settings.bandwidth_schedule_end,
+        )
+    {
+        Some(settings.bandwidth_schedule_limit_kbps)
+    } else {
+        None
+    };
+
+    match (job_limit, scheduled_limit) {
+        (Some(job_limit), Some(scheduled_limit)) => Some(job_limit.min(scheduled_limit)),
+        (Some(job_limit), None) => Some(job_limit),
+        (None, Some(scheduled_limit)) => Some(scheduled_limit),
+        (None, None) => None,
+    }
+}
+
+fn is_time_window_active(start: &str, end: &str) -> bool {
+    let Some(start_minutes) = time_value_to_minutes(start) else {
+        return false;
+    };
+    let Some(end_minutes) = time_value_to_minutes(end) else {
+        return false;
+    };
+
+    let now = chrono::Local::now();
+    let now_minutes = now.hour() * 60 + now.minute();
+
+    if start_minutes <= end_minutes {
+        now_minutes >= start_minutes && now_minutes <= end_minutes
+    } else {
+        now_minutes >= start_minutes || now_minutes <= end_minutes
+    }
+}
+
+fn time_value_to_minutes(value: &str) -> Option<u32> {
+    let (hour, minute) = value.split_once(':')?;
+    let hour = hour.parse::<u32>().ok()?;
+    let minute = minute.parse::<u32>().ok()?;
+    (hour < 24 && minute < 60).then_some(hour * 60 + minute)
+}
+
 fn file_name_from_content_disposition(headers: &reqwest::header::HeaderMap) -> Option<String> {
     let value = headers.get(CONTENT_DISPOSITION)?.to_str().ok()?;
 
@@ -789,7 +907,9 @@ pub fn run() {
             delete_download_job,
             move_download_job_up,
             move_download_job_down,
+            reorder_download_job,
             update_download_priority,
+            update_download_speed_limit,
             start_download_job,
             cancel_download_job,
             pause_download_job,

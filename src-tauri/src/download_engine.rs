@@ -37,6 +37,7 @@ pub async fn download_to_disk(
     control: Arc<DownloadControl>,
     mut report_output: impl FnMut(String, String, Option<u64>, bool) -> Result<(), String>,
     mut report_progress: impl FnMut(u64, Option<u64>, u64) -> Result<(), String>,
+    mut resolve_speed_limit_kbps: impl FnMut() -> Result<Option<u64>, String>,
 ) -> Result<(), DownloadError> {
     let client = Client::new();
     let is_restartable = matches!(job.state, crate::models::DownloadState::Paused)
@@ -143,6 +144,8 @@ pub async fn download_to_disk(
     }
 
     let mut downloaded_bytes = start_bytes;
+    let mut session_downloaded_bytes = 0_u64;
+    let session_started_at = Instant::now();
     let mut last_reported_bytes = start_bytes;
     let mut last_reported_at = Instant::now();
     let mut stream = response.bytes_stream();
@@ -166,6 +169,22 @@ pub async fn download_to_disk(
             .await
             .map_err(|error| DownloadError::Failed(error.to_string()))?;
         downloaded_bytes += chunk.len() as u64;
+        session_downloaded_bytes += chunk.len() as u64;
+
+        if let Some(limit_kbps) = resolve_speed_limit_kbps().map_err(DownloadError::Failed)? {
+            let allowed_bytes_per_second = limit_kbps.saturating_mul(1024);
+            if allowed_bytes_per_second > 0 {
+                let expected_seconds =
+                    session_downloaded_bytes as f64 / allowed_bytes_per_second as f64;
+                let actual_seconds = session_started_at.elapsed().as_secs_f64();
+                if expected_seconds > actual_seconds {
+                    tokio::time::sleep(std::time::Duration::from_secs_f64(
+                        expected_seconds - actual_seconds,
+                    ))
+                    .await;
+                }
+            }
+        }
 
         let elapsed_seconds = last_reported_at.elapsed().as_secs_f64();
         let speed_bps = if elapsed_seconds > 0.0 {

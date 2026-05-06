@@ -190,10 +190,54 @@ button {
 
 .download-table {
   display: grid;
-  grid-template-rows: 26px minmax(0, 1fr);
+  grid-template-rows: 40px 26px minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   background: #303030;
+}
+
+.table-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid #494d51;
+  background: #2a2d30;
+}
+
+.table-filters select,
+.table-search input {
+  height: 26px;
+  padding: 4px 8px;
+  border: 1px solid #596068;
+  color: #f1f6fb;
+  background: #232629;
+  font-size: 12px;
+}
+
+.table-search {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+  padding: 0 8px;
+  border: 1px solid #596068;
+  background: #232629;
+}
+
+.table-search svg {
+  color: #8aa7bf;
+}
+
+.table-search input {
+  border: 0;
+  padding-left: 0;
+}
+
+.table-search input:focus {
+  outline: none;
 }
 
 .table-head,
@@ -255,6 +299,10 @@ button {
   background: #1b4664;
 }
 
+.download-row.drop-target {
+  box-shadow: inset 0 2px 0 #1aa3ed;
+}
+
 .download-primary-row {
   min-height: 36px;
 }
@@ -268,6 +316,33 @@ button {
 .download-name {
   display: grid;
   gap: 1px;
+}
+
+.download-title-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+
+.drag-handle {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  color: #8fb9d9;
+  background: transparent;
+  cursor: grab;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
+.drag-handle.disabled {
+  color: #5d6873;
+  cursor: default;
 }
 
 .download-name strong,
@@ -300,6 +375,10 @@ button {
 
 .download-name .queue-policy-detail {
   color: #b2d8ff;
+}
+
+.download-name .speed-policy-detail {
+  color: #b5dfb4;
 }
 
 .download-name .retry-policy-detail {

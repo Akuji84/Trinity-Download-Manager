@@ -1551,37 +1551,6 @@ pub fn run() {
                 }
             }
 
-            // Fix desktop shortcut icon: write a fresh app-icon.ico next to the exe
-            // and point the shortcut at it. A new file path has no stale cache entry,
-            // so Windows reads the correct icon immediately.
-            #[cfg(target_os = "windows")]
-            if let Ok(exe) = std::env::current_exe() {
-                std::thread::spawn(move || {
-                    const ICON_BYTES: &[u8] = include_bytes!("../icons/icon.ico");
-                    let icon_path = exe.parent()
-                        .map(|d| d.join("app-icon.ico"))
-                        .unwrap_or_default();
-                    let _ = std::fs::write(&icon_path, ICON_BYTES);
-                    let icon_str = icon_path.to_string_lossy().replace('"', "\\\"");
-                    let script = format!(
-                        r#"$shell = New-Object -ComObject WScript.Shell
-$lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Trinity Download Manager.lnk'
-if (Test-Path $lnk) {{
-    $s = $shell.CreateShortcut($lnk)
-    $s.IconLocation = "{icon},0"
-    $s.Save()
-    [System.Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null
-}}
-Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class SN{{[DllImport("shell32.dll")]public static extern void SHChangeNotify(int e,uint f,IntPtr a,IntPtr b);}}'
-[SN]::SHChangeNotify(0x08000000, 0x1000, [IntPtr]::Zero, [IntPtr]::Zero)"#,
-                        icon = icon_str
-                    );
-                    let _ = std::process::Command::new("powershell")
-                        .args(["-WindowStyle", "Hidden", "-NonInteractive", "-Command", &script])
-                        .spawn();
-                });
-            }
-
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

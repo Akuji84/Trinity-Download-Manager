@@ -10,7 +10,6 @@ import {
   Clock3,
   Flag,
   FolderInput,
-  GripVertical,
   MoreHorizontal,
   Play,
   Plus,
@@ -2674,25 +2673,10 @@ function App() {
                             <div className="download-name">
                               <div className="download-entry-row">
                                 <div className="download-title-block">
-                                <div className="download-title-row">
-                                  <button
-                                    className={`drag-handle ${
-                                      isQueueManageable(job) ? "" : "disabled"
-                                    }`}
-                                    disabled={!isQueueManageable(job)}
-                                    onClick={(event) => event.stopPropagation()}
-                                    title={
-                                      isQueueManageable(job)
-                                        ? "Drag to reorder within the same priority"
-                                        : "Only queued, paused, failed, or canceled jobs can be reordered"
-                                    }
-                                    type="button"
-                                  >
-                                    <GripVertical size={14} strokeWidth={2} />
-                                  </button>
-                                  <strong title={job.file_name}>{job.file_name}</strong>
-                                </div>
-                                <small title={job.url}>{job.url}</small>
+                                  <div className="download-title-row">
+                                    <strong title={job.file_name}>{job.file_name}</strong>
+                                  </div>
+                                  <small title={job.url}>{job.url}</small>
                               </div>
                             </div>
                             {job.scheduler_enabled ? (

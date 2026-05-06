@@ -365,29 +365,9 @@ button {
 
 .download-title-row {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: 6px;
-}
-
-.drag-handle {
-  display: inline-flex;
-  width: 16px;
-  height: 16px;
-  align-items: center;
-  justify-content: center;
-  color: #8fb9d9;
-  background: transparent;
-  cursor: grab;
-}
-
-.drag-handle:active {
-  cursor: grabbing;
-}
-
-.drag-handle.disabled {
-  color: #5d6873;
-  cursor: default;
 }
 
 .download-name strong,

@@ -526,6 +526,10 @@ Exit criteria:
   - added `GET /app/ping` for extension app detection
   - added `POST /downloads/create` for extension handoff
   - wired the frontend to open the Add Download dialog when the bridge receives an extension request
+- Added the first Chrome MV3 extension files in `browser-extension/chrome/`:
+  - `manifest.json` with the initial Chromium permissions and localhost host permission
+  - `background.js` service worker with toolbar action, right-click menu items, bridge ping, and POST handoff to Trinity
+  - toolbar badge feedback for invalid URLs, bridge unavailable, success, and handoff failure states
 - Current segmented implementation is still conservative:
   - segmented jobs rebalance naturally through the chunk queue, but live splitting/merging of in-flight chunks is not implemented yet
   - segmented part state is persisted on a short interval, so an abrupt kill may lose only the most recent in-flight chunk progress instead of the whole job
@@ -553,4 +557,4 @@ Exit criteria:
 
 ## Next Step
 
-Add host diagnostics and controls: show the learned per-host profile in the UI, let users reset or pin host connection counts, and explain why Trinity chose a given connection strategy.
+Load the unpacked Chrome extension, verify the context-menu and toolbar flows against a running Trinity instance, then add download-event interception as the next browser-side capability.

@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Trinity Download Manager",
+  "description": "Send links, media, and direct downloads from Chrome to Trinity Download Manager.",
+  "version": "0.1.0",
+  "permissions": [
+    "contextMenus",
+    "tabs"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:38491/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Send current page to Trinity"
+  }
+}

@@ -24,13 +24,6 @@ import {
 } from "lucide-react";
 import "./App.css";
 
-type AppStatus = {
-  app_name: string;
-  engine: string;
-  storage: string;
-  task_manager: string;
-};
-
 type DownloadState =
   | "Queued"
   | "Running"
@@ -337,7 +330,6 @@ function preferenceSectionLabel(sectionId: PreferencesSectionId) {
 }
 
 function App() {
-  const [status, setStatus] = useState<AppStatus | null>(null);
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
   const [url, setUrl] = useState("");
   const [outputFolder, setOutputFolder] = useState("");
@@ -381,7 +373,6 @@ function App() {
   const preferencesContentRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    invoke<AppStatus>("app_status").then(setStatus).catch(console.error);
     invoke<AppSettings>("get_app_settings")
       .then((loadedSettings) => {
         setSettings(loadedSettings);
@@ -2738,8 +2729,6 @@ function App() {
       )}
 
       <footer className="bottom-bar">
-        <span>Engine: {status?.engine ?? "loading"}</span>
-        <span>Storage: {status?.storage ?? "loading"}</span>
         <strong>Down {formatBytes(globalSpeed)}/s</strong>
         <strong>Up 0 B/s</strong>
       </footer>

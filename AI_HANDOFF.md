@@ -485,6 +485,7 @@ Exit criteria:
 - When Windows reports a completed file being removed or renamed, Trinity now prunes that job immediately and emits a UI refresh event so the row disappears without manual refresh.
 - Removed the three direct toolbar speed-limit buttons (`Unlimit`, `512 KB/s`, `2 MB/s`) to reduce command-bar clutter.
 - Updated toolbar button text styling so short labels such as `Queue Up` and `Queue Down` stay on a single line.
+- Removed the footer's bottom-left `Engine` and `Storage` status text, leaving only the live transfer totals.
 
 ## Current Verification Status
 

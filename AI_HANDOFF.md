@@ -520,6 +520,12 @@ Exit criteria:
 - Replaced the generic row icon mapping with Windows shell icon lookup so download rows can use Explorer-style file associations, and completed executables can render their real embedded app icon.
 - Moved the Windows shell icon into the leftmost row cell and removed the extra per-row gray checkbox square so each download row shows only one icon marker.
 - Removed the visible row drag handle from the filename line so the Explorer icon sits directly next to the filename without the extra gray marker.
+- Added the first browser-extension integration step:
+  - created the `browser-extension/chrome/` workspace folder in the repo
+  - started a local Trinity bridge on `http://127.0.0.1:38491`
+  - added `GET /app/ping` for extension app detection
+  - added `POST /downloads/create` for extension handoff
+  - wired the frontend to open the Add Download dialog when the bridge receives an extension request
 - Current segmented implementation is still conservative:
   - segmented jobs rebalance naturally through the chunk queue, but live splitting/merging of in-flight chunks is not implemented yet
   - segmented part state is persisted on a short interval, so an abrupt kill may lose only the most recent in-flight chunk progress instead of the whole job

@@ -6,6 +6,8 @@ mod task_manager;
 use std::{
     collections::HashMap,
     ffi::c_void,
+    io::{Read, Write},
+    net::{TcpListener, TcpStream},
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -17,7 +19,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use notify::{event::ModifyKind, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use models::{
     AppSettings, AppStatus, CreateDownloadJobRequest, DownloadJob, DownloadState,
-    DownloadUrlMetadata, ReorderDownloadJobRequest, UpdateAppSettingsRequest,
+    DownloadUrlMetadata, ExtensionDownloadRequest, ReorderDownloadJobRequest, UpdateAppSettingsRequest,
     UpdateDownloadPriorityRequest, UpdateDownloadSpeedLimitRequest,
 };
 use reqwest::{
@@ -57,6 +59,10 @@ struct AppState {
     watched_directories: Mutex<Vec<PathBuf>>,
     queue_running: AtomicBool,
 }
+
+const EXTENSION_BRIDGE_HOST: &str = "127.0.0.1";
+const EXTENSION_BRIDGE_PORT: u16 = 38491;
+const EXTENSION_DOWNLOAD_EVENT: &str = "extension-download-request";
 
 #[tauri::command]
 fn app_status() -> AppStatus {
@@ -1231,6 +1237,166 @@ fn handle_file_watch_event(app: &AppHandle, kind: &EventKind) -> Result<(), Stri
     Ok(())
 }
 
+fn start_extension_bridge(app: AppHandle) -> Result<(), String> {
+    let listener = match TcpListener::bind((EXTENSION_BRIDGE_HOST, EXTENSION_BRIDGE_PORT)) {
+        Ok(listener) => listener,
+        Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
+            eprintln!(
+                "Trinity extension bridge could not bind to {}:{} because the port is already in use.",
+                EXTENSION_BRIDGE_HOST, EXTENSION_BRIDGE_PORT
+            );
+            return Ok(());
+        }
+        Err(error) => {
+            return Err(format!(
+                "Could not start the Trinity extension bridge on {}:{}: {}",
+                EXTENSION_BRIDGE_HOST, EXTENSION_BRIDGE_PORT, error
+            ));
+        }
+    };
+
+    std::thread::spawn(move || {
+        for incoming in listener.incoming() {
+            match incoming {
+                Ok(stream) => {
+                    let _ = handle_extension_bridge_connection(&app, stream);
+                }
+                Err(error) => {
+                    eprintln!("Trinity extension bridge stopped accepting connections: {error}");
+                    break;
+                }
+            }
+        }
+    });
+
+    Ok(())
+}
+
+fn handle_extension_bridge_connection(app: &AppHandle, mut stream: TcpStream) -> Result<(), String> {
+    let (method, path, body) = read_http_request(&mut stream)?;
+
+    match (method.as_str(), path.as_str()) {
+        ("OPTIONS", _) => write_json_response(&mut stream, "204 No Content", &serde_json::json!({})),
+        ("GET", "/app/ping") => write_json_response(
+            &mut stream,
+            "200 OK",
+            &serde_json::json!({
+                "ok": true,
+                "appName": "Trinity Download Manager",
+                "bridgePort": EXTENSION_BRIDGE_PORT,
+                "endpoints": ["/app/ping", "/downloads/create"]
+            }),
+        ),
+        ("POST", "/downloads/create") => {
+            let request: ExtensionDownloadRequest = serde_json::from_slice(&body)
+                .map_err(|error| format!("Invalid Trinity extension payload: {error}"))?;
+            let parsed_url =
+                Url::parse(request.url.trim()).map_err(|_| "Invalid download URL.".to_string())?;
+            match parsed_url.scheme() {
+                "http" | "https" => {}
+                _ => return Err("Only HTTP and HTTPS URLs are supported.".to_string()),
+            }
+
+            app.emit(EXTENSION_DOWNLOAD_EVENT, request)
+                .map_err(|error| error.to_string())?;
+            write_json_response(
+                &mut stream,
+                "202 Accepted",
+                &serde_json::json!({
+                    "accepted": true
+                }),
+            )
+        }
+        _ => write_json_response(
+            &mut stream,
+            "404 Not Found",
+            &serde_json::json!({
+                "error": "Not found"
+            }),
+        ),
+    }
+}
+
+fn read_http_request(stream: &mut TcpStream) -> Result<(String, String, Vec<u8>), String> {
+    let mut buffer = Vec::new();
+    let mut chunk = [0_u8; 4096];
+    let header_end = loop {
+        let bytes_read = stream.read(&mut chunk).map_err(|error| error.to_string())?;
+        if bytes_read == 0 {
+            return Err("Connection closed before the request completed.".to_string());
+        }
+
+        buffer.extend_from_slice(&chunk[..bytes_read]);
+        if let Some(position) = find_header_end(&buffer) {
+            break position;
+        }
+
+        if buffer.len() > 1024 * 1024 {
+            return Err("Incoming request exceeded the maximum bridge size.".to_string());
+        }
+    };
+
+    let header_bytes = &buffer[..header_end];
+    let header_text = String::from_utf8(header_bytes.to_vec())
+        .map_err(|_| "Incoming bridge request headers were not valid UTF-8.".to_string())?;
+    let mut header_lines = header_text.split("\r\n");
+    let request_line = header_lines
+        .next()
+        .ok_or_else(|| "Incoming bridge request was missing the request line.".to_string())?;
+    let mut request_parts = request_line.split_whitespace();
+    let method = request_parts
+        .next()
+        .ok_or_else(|| "Incoming bridge request was missing the method.".to_string())?
+        .to_string();
+    let path = request_parts
+        .next()
+        .ok_or_else(|| "Incoming bridge request was missing the path.".to_string())?
+        .to_string();
+
+    let mut content_length = 0_usize;
+    for line in header_lines {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        if name.eq_ignore_ascii_case("Content-Length") {
+            content_length = value.trim().parse::<usize>().unwrap_or(0);
+        }
+    }
+
+    let body_start = header_end + 4;
+    while buffer.len().saturating_sub(body_start) < content_length {
+        let bytes_read = stream.read(&mut chunk).map_err(|error| error.to_string())?;
+        if bytes_read == 0 {
+            break;
+        }
+
+        buffer.extend_from_slice(&chunk[..bytes_read]);
+    }
+
+    let body_end = body_start.saturating_add(content_length).min(buffer.len());
+    Ok((method, path, buffer[body_start..body_end].to_vec()))
+}
+
+fn find_header_end(buffer: &[u8]) -> Option<usize> {
+    buffer.windows(4).position(|window| window == b"\r\n\r\n")
+}
+
+fn write_json_response(
+    stream: &mut TcpStream,
+    status: &str,
+    value: &serde_json::Value,
+) -> Result<(), String> {
+    let body = serde_json::to_vec(value).map_err(|error| error.to_string())?;
+    let response = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    stream
+        .write_all(response.as_bytes())
+        .and_then(|_| stream.write_all(&body))
+        .map_err(|error| error.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1284,6 +1450,12 @@ pub fn run() {
                 })?
             };
             sync_completed_file_watchers(&state, &jobs).map_err(|message| {
+                Box::<dyn std::error::Error>::from(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    message,
+                ))
+            })?;
+            start_extension_bridge(app.handle().clone()).map_err(|message| {
                 Box::<dyn std::error::Error>::from(std::io::Error::new(
                     std::io::ErrorKind::Other,
                     message,

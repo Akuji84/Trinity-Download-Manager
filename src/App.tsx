@@ -75,6 +75,16 @@ type DownloadUrlMetadata = {
   total_bytes: number | null;
 };
 
+type ExtensionDownloadRequest = {
+  url: string;
+  page_url?: string | null;
+  suggested_file_name?: string | null;
+  mime_type?: string | null;
+  referrer?: string | null;
+  browser?: string | null;
+  output_folder?: string | null;
+};
+
 type DownloadTabId =
   | "all"
   | "active"
@@ -406,6 +416,32 @@ function App() {
 
     listen("downloads-changed", () => {
       refreshJobs().catch(console.error);
+    })
+      .then((dispose) => {
+        unlisten = dispose;
+      })
+      .catch(console.error);
+
+    return () => {
+      unlisten?.();
+      };
+    }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+
+    listen<ExtensionDownloadRequest>("extension-download-request", (event) => {
+      const payload = event.payload;
+      setError("");
+      setUrl(payload.url ?? "");
+      setOutputFolder(payload.output_folder?.trim() ?? "");
+      setIsSchedulerEnabled(false);
+      setScheduleDays(SCHEDULE_DAYS);
+      setScheduleFrom("06:00");
+      setScheduleTo("10:00");
+      setUrlMetadata(null);
+      setUrlMetadataError("");
+      setIsAddOpen(true);
     })
       .then((dispose) => {
         unlisten = dispose;

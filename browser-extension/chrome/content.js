@@ -18,11 +18,15 @@ window.addEventListener(PAGE_CAPTURE_EVENT, (event) => {
     },
     (response) => {
       const captured = chrome.runtime.lastError ? false : response?.captured === true;
+      const fallbackToBrowser = chrome.runtime.lastError
+        ? true
+        : response?.fallbackToBrowser !== false;
       window.dispatchEvent(
         new CustomEvent(PAGE_CAPTURE_RESULT_EVENT, {
           detail: {
             requestId: detail.requestId,
             captured,
+            fallbackToBrowser,
           },
         }),
       );
@@ -74,7 +78,7 @@ document.addEventListener(
           return;
         }
 
-        if (response?.captured === false) {
+        if (response?.fallbackToBrowser !== false) {
           fallbackToBrowser(candidate, payload.url);
         }
       },

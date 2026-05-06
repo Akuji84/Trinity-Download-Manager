@@ -9,14 +9,13 @@
   <body>
     <main class="options-shell">
       <h1>Trinity Extension Options</h1>
-      <p>
-        This page is the placeholder for browser-capture settings, site rules, and bridge diagnostics.
-      </p>
-      <ul>
-        <li>Automatic interception rules will go here.</li>
-        <li>Site exclusions will be editable here.</li>
-        <li>Bridge diagnostics and reconnect tools will live here.</li>
-      </ul>
+      <p>Browser handoff behavior.</p>
+      <label class="setting-row">
+        <input id="browser-fallback" type="checkbox" />
+        <span>Use browser if Trinity is unavailable</span>
+      </label>
+      <p id="save-status" class="save-status"></p>
     </main>
+    <script src="options.js"></script>
   </body>
   </html>

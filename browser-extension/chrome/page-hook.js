@@ -123,7 +123,12 @@
       }
 
       window.removeEventListener(PAGE_CAPTURE_RESULT_EVENT, resultHandler);
-      finish(event.detail?.captured === true);
+      if (event.detail?.captured === true) {
+        finish(true);
+        return;
+      }
+
+      finish(event.detail?.fallbackToBrowser !== true);
     };
 
     window.addEventListener(PAGE_CAPTURE_RESULT_EVENT, resultHandler);

@@ -567,6 +567,7 @@ Exit criteria:
 - Hardened content-script bridge calls against extension reload/invalidation:
   - `content.js` now checks that the extension runtime context is still valid before calling `chrome.runtime.sendMessage(...)`
   - message sends are wrapped so an invalidated extension context falls back cleanly instead of throwing an uncaught page error
+  - the top-level click interception and page-capture event handlers are now wrapped in `try/catch` as well, because some invalidated-extension failures can occur before the inner message helper gets control
 - Rebuilt the full icon set from the new square branding asset:
   - added `scripts/regenerate_icons.py` to regenerate app and extension icons consistently from `assets/branding/trinity-logo-square.png`
   - refreshed `assets/branding/trinity-logo-source.png` from that square asset

@@ -496,10 +496,16 @@ Exit criteria:
   - downloads segment parts concurrently
   - merges part files into the final `.trinitydownload` temp file before rename
   - falls back to the existing single-stream path when range support is missing, the file is too small, the requested connection count is `1`, or the job is a resume case
-- Current segmented groundwork is intentionally conservative:
-  - segmented resume across app restarts is not implemented yet
-  - segmented pause currently behaves as a restart-required pause instead of true partial-range resume
-  - new segmented jobs report `is_resumable = false` for now so the UI does not over-promise resume support
+- Added segmented resume persistence:
+  - a `.segments.json` manifest is written alongside segmented temp files
+  - each segment persists its completed byte count and part-file path
+  - paused, retried, or restarted segmented jobs can resume from saved segment progress
+  - running jobs are converted to `Paused` during app startup recovery so interrupted segmented jobs can be resumed after restart
+- Delete cleanup now removes segmented manifests and part files in addition to the final file/temp file.
+- Current segmented implementation is still conservative:
+  - segmented jobs resume from saved part progress, but dynamic chunk rebalancing is not implemented yet
+  - segmented part state is persisted on a short interval, so an abrupt kill may lose only the most recent in-flight chunk progress instead of the whole job
+  - segmented range support still depends on the source actually honoring HTTP byte-range requests
 
 ## Current Verification Status
 
@@ -510,7 +516,7 @@ Exit criteria:
 ## Current Engine Limitations
 
 - Downloads are single-stream only.
-- Segmented downloads now exist for fresh range-capable sources, but segmented resume metadata and true paused-range continuation are not implemented yet.
+- Segmented downloads and segmented resume now exist for range-capable sources, but adaptive chunk balancing and host-specific connection tuning are not implemented yet.
 - Retry is configurable globally, but there is not yet per-download retry override support.
 - Queue ordering, priority, drag-drop reorder, and filterable queue views exist, but there is not yet multi-select drag reorder or saved custom views.
 - Global bandwidth scheduling and per-download limits are implemented, but there is not yet a visual calendar/profile editor or separate upload shaping.
@@ -522,4 +528,4 @@ Exit criteria:
 
 ## Next Step
 
-Build real segmented-resume persistence: manifest/part metadata on disk, resumed range continuation after pause/restart, and safer cleanup/recovery rules for interrupted segmented jobs.
+Add adaptive segmented scheduling: split and merge chunks dynamically, rebalance slow segments, and tune connection counts per host based on actual throughput and server behavior.

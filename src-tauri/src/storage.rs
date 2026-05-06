@@ -742,6 +742,22 @@ impl Storage {
         Ok(())
     }
 
+    pub fn recover_running_downloads(&self) -> Result<()> {
+        self.connection.execute(
+            "
+            UPDATE downloads
+            SET state = 'paused',
+                speed_bps = 0,
+                error_message = 'Download interrupted. Resume is available.',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE state = 'running';
+            ",
+            [],
+        )?;
+
+        Ok(())
+    }
+
     pub fn delete_download_job(&self, id: &str) -> Result<bool> {
         let affected_rows = self
             .connection

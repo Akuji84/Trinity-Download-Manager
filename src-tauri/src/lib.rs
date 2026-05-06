@@ -5,7 +5,6 @@ mod task_manager;
 
 use std::{
     collections::HashMap,
-    fs,
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -336,15 +335,7 @@ fn delete_download_job(state: State<'_, AppState>, id: String) -> Result<bool, S
 
     let output_path = existing_job.output_path.trim().to_string();
     if !output_path.is_empty() {
-        let final_path = PathBuf::from(&output_path);
-        if final_path.exists() {
-            fs::remove_file(&final_path).map_err(|error| error.to_string())?;
-        }
-
-        let partial_path = PathBuf::from(format!("{output_path}.trinitydownload"));
-        if partial_path.exists() {
-            fs::remove_file(&partial_path).map_err(|error| error.to_string())?;
-        }
+        download_engine::cleanup_download_artifacts(PathBuf::from(&output_path).as_path())?;
     }
 
     storage.delete_download_job(&id).map_err(|error| error.to_string())
@@ -1016,6 +1007,12 @@ pub fn run() {
                 Box::<dyn std::error::Error>::from(std::io::Error::new(
                     std::io::ErrorKind::Other,
                     message,
+                ))
+            })?;
+            storage.recover_running_downloads().map_err(|error| {
+                Box::<dyn std::error::Error>::from(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    error.to_string(),
                 ))
             })?;
             let app_handle = app.handle().clone();

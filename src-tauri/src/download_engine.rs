@@ -2,10 +2,11 @@
 
 use std::{
     ffi::OsStr,
+    fs,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc,
+        Arc, Mutex,
     },
     time::{Duration, Instant},
 };
@@ -15,12 +16,14 @@ use reqwest::{
     header::{HeaderMap, ACCEPT_RANGES, CONTENT_DISPOSITION, CONTENT_RANGE, RANGE},
     Client, StatusCode, Url,
 };
-use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use crate::models::DownloadJob;
 
 const MIN_SEGMENT_SIZE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_SEGMENT_CONNECTIONS: u32 = 16;
+const SEGMENT_MANIFEST_VERSION: u32 = 1;
 
 #[derive(Default)]
 pub struct DownloadEngine;
@@ -43,10 +46,28 @@ pub async fn download_to_disk(
     mut resolve_speed_limit_kbps: impl FnMut() -> Result<Option<u64>, String>,
 ) -> Result<(), DownloadError> {
     let client = Client::new();
+    let initial_output_path = PathBuf::from(&job.output_path);
+    let temp_path = temp_path_for(&initial_output_path);
+    let manifest_path = manifest_path_for(&temp_path);
+
+    if let Some(existing_manifest) = load_segment_manifest(&manifest_path).await? {
+        if existing_manifest.url == job.url {
+            return download_segmented(
+                &client,
+                job,
+                SegmentedMode::Resume(existing_manifest),
+                control,
+                &mut report_output,
+                &mut report_progress,
+                &mut resolve_speed_limit_kbps,
+            )
+            .await;
+        }
+    }
+
     let is_restartable = matches!(job.state, crate::models::DownloadState::Paused)
         && job.is_resumable
         && job.downloaded_bytes > 0;
-
     if is_restartable {
         return download_single_stream(
             &client,
@@ -69,7 +90,7 @@ pub async fn download_to_disk(
         return download_segmented(
             &client,
             job,
-            plan,
+            SegmentedMode::Fresh(plan),
             control,
             &mut report_output,
             &mut report_progress,
@@ -87,6 +108,28 @@ pub async fn download_to_disk(
         &mut resolve_speed_limit_kbps,
     )
     .await
+}
+
+pub fn cleanup_download_artifacts(output_path: &Path) -> Result<(), String> {
+    let temp_path = temp_path_for(output_path);
+    let manifest_path = manifest_path_for(&temp_path);
+    if let Ok(Some(manifest)) = load_segment_manifest_sync(&manifest_path) {
+        for segment in manifest.segments {
+            let _ = fs::remove_file(segment.part_path);
+        }
+    }
+
+    if output_path.exists() {
+        fs::remove_file(output_path).map_err(|error| error.to_string())?;
+    }
+    if temp_path.exists() {
+        fs::remove_file(&temp_path).map_err(|error| error.to_string())?;
+    }
+    if manifest_path.exists() {
+        fs::remove_file(&manifest_path).map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
 }
 
 async fn download_single_stream(
@@ -259,18 +302,23 @@ async fn download_single_stream(
 async fn download_segmented(
     client: &Client,
     job: DownloadJob,
-    plan: SegmentedPlan,
+    mode: SegmentedMode,
     control: Arc<DownloadControl>,
     report_output: &mut impl FnMut(String, String, Option<u64>, bool) -> Result<(), String>,
     report_progress: &mut impl FnMut(u64, Option<u64>, u64) -> Result<(), String>,
     resolve_speed_limit_kbps: &mut impl FnMut() -> Result<Option<u64>, String>,
 ) -> Result<(), DownloadError> {
-    let output_path = unique_output_path(Path::new(&job.output_folder).join(&plan.file_name));
+    let manifest = match mode {
+        SegmentedMode::Fresh(plan) => {
+            let output_path = unique_output_path(Path::new(&job.output_folder).join(&plan.file_name));
+            build_segment_manifest(&job.url, output_path, plan)
+        }
+        SegmentedMode::Resume(existing_manifest) => existing_manifest,
+    };
+
+    let output_path = PathBuf::from(&manifest.output_path);
     let temp_path = temp_path_for(&output_path);
-    let output_path_text = output_path.to_string_lossy().to_string();
-    let part_paths = (0..plan.ranges.len())
-        .map(|index| part_path_for(&temp_path, index))
-        .collect::<Vec<_>>();
+    let manifest_path = manifest_path_for(&temp_path);
 
     if let Some(parent) = output_path.parent() {
         tokio::fs::create_dir_all(parent)
@@ -278,18 +326,31 @@ async fn download_segmented(
             .map_err(|error| DownloadError::Failed(error.to_string()))?;
     }
 
-    cleanup_segment_artifacts(&temp_path, &part_paths).await;
+    let manifest = reconcile_manifest_with_disk(manifest).await?;
+    save_segment_manifest(&manifest_path, &manifest).await?;
+    let shared_manifest = Arc::new(Mutex::new(manifest));
+
+    let initial_manifest = shared_manifest
+        .lock()
+        .map_err(|_| DownloadError::Failed("Segment manifest lock is unavailable.".to_string()))?
+        .clone();
+    let initial_downloaded = initial_manifest
+        .segments
+        .iter()
+        .map(|segment| segment.downloaded_bytes)
+        .sum::<u64>();
 
     report_output(
-        plan.file_name.clone(),
-        output_path_text,
-        Some(plan.total_bytes),
-        false,
+        initial_manifest.file_name.clone(),
+        initial_manifest.output_path.clone(),
+        Some(initial_manifest.total_bytes),
+        true,
     )
     .map_err(DownloadError::Failed)?;
-    report_progress(0, Some(plan.total_bytes), 0).map_err(DownloadError::Failed)?;
+    report_progress(initial_downloaded, Some(initial_manifest.total_bytes), 0)
+        .map_err(DownloadError::Failed)?;
 
-    let downloaded_bytes = Arc::new(AtomicU64::new(0));
+    let downloaded_bytes = Arc::new(AtomicU64::new(initial_downloaded));
     let session_downloaded_bytes = Arc::new(AtomicU64::new(0));
     let shared_limit_kbps = Arc::new(AtomicU64::new(
         resolve_speed_limit_kbps()
@@ -297,34 +358,42 @@ async fn download_segmented(
             .unwrap_or(0),
     ));
     let session_started_at = Instant::now();
-    let mut worker_handles = Vec::with_capacity(plan.ranges.len());
+    let total_bytes = initial_manifest.total_bytes;
+    let mut worker_handles = Vec::new();
 
-    for (index, range) in plan.ranges.iter().copied().enumerate() {
+    for (index, segment) in initial_manifest.segments.iter().cloned().enumerate() {
+        let remaining_start = segment.start + segment.downloaded_bytes;
+        if remaining_start > segment.end {
+            continue;
+        }
+
         let client = client.clone();
         let url = job.url.clone();
         let control = Arc::clone(&control);
-        let part_path = part_paths[index].clone();
         let downloaded_bytes = Arc::clone(&downloaded_bytes);
         let session_downloaded_bytes = Arc::clone(&session_downloaded_bytes);
         let shared_limit_kbps = Arc::clone(&shared_limit_kbps);
+        let shared_manifest = Arc::clone(&shared_manifest);
 
         worker_handles.push(tokio::spawn(async move {
             download_segment_range(
                 client,
                 url,
-                range,
-                part_path,
+                index,
+                ByteRange { start: segment.start, end: segment.end },
+                PathBuf::from(&segment.part_path),
                 control,
                 downloaded_bytes,
                 session_downloaded_bytes,
                 shared_limit_kbps,
+                shared_manifest,
                 session_started_at,
             )
             .await
         }));
     }
 
-    let mut last_reported_bytes = 0_u64;
+    let mut last_reported_bytes = initial_downloaded;
     let mut last_reported_at = Instant::now();
 
     while worker_handles.iter().any(|handle| !handle.is_finished()) {
@@ -343,8 +412,14 @@ async fn download_segmented(
         };
         last_reported_at = Instant::now();
         last_reported_bytes = current_downloaded;
-        report_progress(current_downloaded, Some(plan.total_bytes), speed_bps)
+        report_progress(current_downloaded, Some(total_bytes), speed_bps)
             .map_err(DownloadError::Failed)?;
+
+        let manifest_snapshot = shared_manifest
+            .lock()
+            .map_err(|_| DownloadError::Failed("Segment manifest lock is unavailable.".to_string()))?
+            .clone();
+        save_segment_manifest(&manifest_path, &manifest_snapshot).await?;
     }
 
     let result = async {
@@ -359,18 +434,34 @@ async fn download_segmented(
     }
     .await;
 
-    if let Err(error) = result {
-        cleanup_segment_artifacts(&temp_path, &part_paths).await;
-        return Err(error);
+    match result {
+        Ok(()) => {
+            let manifest_snapshot = shared_manifest
+                .lock()
+                .map_err(|_| DownloadError::Failed("Segment manifest lock is unavailable.".to_string()))?
+                .clone();
+            save_segment_manifest(&manifest_path, &manifest_snapshot).await?;
+            merge_segment_parts(&temp_path, &manifest_snapshot.segments).await?;
+            tokio::fs::rename(&temp_path, &output_path)
+                .await
+                .map_err(|error| DownloadError::Failed(error.to_string()))?;
+            let _ = tokio::fs::remove_file(&manifest_path).await;
+            report_progress(total_bytes, Some(total_bytes), 0).map_err(DownloadError::Failed)?;
+            Ok(())
+        }
+        Err(DownloadError::Canceled) => {
+            cleanup_segment_artifacts(&output_path, &manifest_path, &shared_manifest).await;
+            Err(DownloadError::Canceled)
+        }
+        Err(error) => {
+            let manifest_snapshot = shared_manifest
+                .lock()
+                .map_err(|_| DownloadError::Failed("Segment manifest lock is unavailable.".to_string()))?
+                .clone();
+            save_segment_manifest(&manifest_path, &manifest_snapshot).await?;
+            Err(error)
+        }
     }
-
-    merge_segment_parts(&temp_path, &part_paths).await?;
-    tokio::fs::rename(&temp_path, &output_path)
-        .await
-        .map_err(|error| DownloadError::Failed(error.to_string()))?;
-    report_progress(plan.total_bytes, Some(plan.total_bytes), 0).map_err(DownloadError::Failed)?;
-
-    Ok(())
 }
 
 async fn probe_segmented_plan(
@@ -416,20 +507,33 @@ async fn probe_segmented_plan(
     }))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn download_segment_range(
     client: Client,
     url: String,
+    segment_index: usize,
     range: ByteRange,
     part_path: PathBuf,
     control: Arc<DownloadControl>,
     downloaded_bytes: Arc<AtomicU64>,
     session_downloaded_bytes: Arc<AtomicU64>,
     shared_limit_kbps: Arc<AtomicU64>,
+    shared_manifest: Arc<Mutex<SegmentManifest>>,
     session_started_at: Instant,
 ) -> Result<(), DownloadError> {
+    let existing_downloaded = tokio::fs::metadata(&part_path)
+        .await
+        .map(|metadata| metadata.len())
+        .unwrap_or(0)
+        .min(range.end.saturating_sub(range.start).saturating_add(1));
+    let request_start = range.start + existing_downloaded;
+    if request_start > range.end {
+        return Ok(());
+    }
+
     let response = client
         .get(url)
-        .header(RANGE, format!("bytes={}-{}", range.start, range.end))
+        .header(RANGE, format!("bytes={request_start}-{}", range.end))
         .send()
         .await
         .map_err(|error| DownloadError::Failed(error.to_string()))?;
@@ -443,8 +547,7 @@ async fn download_segment_range(
 
     let mut file = tokio::fs::OpenOptions::new()
         .create(true)
-        .write(true)
-        .truncate(true)
+        .append(true)
         .open(&part_path)
         .await
         .map_err(|error| DownloadError::Failed(error.to_string()))?;
@@ -452,8 +555,9 @@ async fn download_segment_range(
 
     while let Some(chunk) = stream.next().await {
         if control.cancel_requested.load(Ordering::Relaxed) {
-            drop(file);
-            let _ = tokio::fs::remove_file(&part_path).await;
+            file.flush()
+                .await
+                .map_err(|error| DownloadError::Failed(error.to_string()))?;
             return Err(DownloadError::Canceled);
         }
 
@@ -473,6 +577,11 @@ async fn download_segment_range(
         downloaded_bytes.fetch_add(chunk_len, Ordering::Relaxed);
         let total_session_bytes =
             session_downloaded_bytes.fetch_add(chunk_len, Ordering::Relaxed) + chunk_len;
+        if let Ok(mut manifest) = shared_manifest.lock() {
+            manifest.segments[segment_index].downloaded_bytes =
+                (manifest.segments[segment_index].downloaded_bytes + chunk_len)
+                    .min(range.end.saturating_sub(range.start).saturating_add(1));
+        }
         let limit_kbps = shared_limit_kbps.load(Ordering::Relaxed);
         if limit_kbps > 0 {
             maybe_throttle(limit_kbps, total_session_bytes, session_started_at).await;
@@ -487,7 +596,7 @@ async fn download_segment_range(
 
 async fn merge_segment_parts(
     temp_path: &Path,
-    part_paths: &[PathBuf],
+    segments: &[SegmentState],
 ) -> Result<(), DownloadError> {
     let mut output = tokio::fs::OpenOptions::new()
         .create(true)
@@ -497,14 +606,26 @@ async fn merge_segment_parts(
         .await
         .map_err(|error| DownloadError::Failed(error.to_string()))?;
 
-    for part_path in part_paths {
-        let bytes = tokio::fs::read(part_path)
+    for segment in segments {
+        let mut input = tokio::fs::OpenOptions::new()
+            .read(true)
+            .open(&segment.part_path)
             .await
             .map_err(|error| DownloadError::Failed(error.to_string()))?;
-        output
-            .write_all(&bytes)
-            .await
-            .map_err(|error| DownloadError::Failed(error.to_string()))?;
+        let mut buffer = vec![0_u8; 1024 * 256];
+        loop {
+            let read = input
+                .read(&mut buffer)
+                .await
+                .map_err(|error| DownloadError::Failed(error.to_string()))?;
+            if read == 0 {
+                break;
+            }
+            output
+                .write_all(&buffer[..read])
+                .await
+                .map_err(|error| DownloadError::Failed(error.to_string()))?;
+        }
     }
 
     output
@@ -512,18 +633,111 @@ async fn merge_segment_parts(
         .await
         .map_err(|error| DownloadError::Failed(error.to_string()))?;
 
-    for part_path in part_paths {
-        let _ = tokio::fs::remove_file(part_path).await;
+    for segment in segments {
+        let _ = tokio::fs::remove_file(&segment.part_path).await;
     }
 
     Ok(())
 }
 
-async fn cleanup_segment_artifacts(temp_path: &Path, part_paths: &[PathBuf]) {
-    let _ = tokio::fs::remove_file(temp_path).await;
+async fn cleanup_segment_artifacts(
+    output_path: &Path,
+    manifest_path: &Path,
+    shared_manifest: &Arc<Mutex<SegmentManifest>>,
+) {
+    let part_paths = shared_manifest
+        .lock()
+        .map(|manifest| {
+            manifest
+                .segments
+                .iter()
+                .map(|segment| segment.part_path.clone())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let temp_path = temp_path_for(output_path);
+    let _ = tokio::fs::remove_file(output_path).await;
+    let _ = tokio::fs::remove_file(&temp_path).await;
+    let _ = tokio::fs::remove_file(manifest_path).await;
     for part_path in part_paths {
         let _ = tokio::fs::remove_file(part_path).await;
     }
+}
+
+fn build_segment_manifest(url: &str, output_path: PathBuf, plan: SegmentedPlan) -> SegmentManifest {
+    let segments = plan
+        .ranges
+        .iter()
+        .enumerate()
+        .map(|(index, range)| SegmentState {
+            start: range.start,
+            end: range.end,
+            downloaded_bytes: 0,
+            part_path: part_path_for(&temp_path_for(&output_path), index)
+                .to_string_lossy()
+                .to_string(),
+        })
+        .collect::<Vec<_>>();
+
+    SegmentManifest {
+        version: SEGMENT_MANIFEST_VERSION,
+        url: url.to_string(),
+        file_name: plan.file_name,
+        output_path: output_path.to_string_lossy().to_string(),
+        total_bytes: plan.total_bytes,
+        segments,
+    }
+}
+
+async fn reconcile_manifest_with_disk(
+    mut manifest: SegmentManifest,
+) -> Result<SegmentManifest, DownloadError> {
+    for segment in &mut manifest.segments {
+        let max_segment_bytes = segment.end.saturating_sub(segment.start).saturating_add(1);
+        let actual_bytes = tokio::fs::metadata(&segment.part_path)
+            .await
+            .map(|metadata| metadata.len())
+            .unwrap_or(0)
+            .min(max_segment_bytes);
+        segment.downloaded_bytes = actual_bytes;
+    }
+
+    Ok(manifest)
+}
+
+async fn load_segment_manifest(path: &Path) -> Result<Option<SegmentManifest>, DownloadError> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let bytes = tokio::fs::read(path)
+        .await
+        .map_err(|error| DownloadError::Failed(error.to_string()))?;
+    serde_json::from_slice::<SegmentManifest>(&bytes)
+        .map(Some)
+        .map_err(|error| DownloadError::Failed(error.to_string()))
+}
+
+fn load_segment_manifest_sync(path: &Path) -> Result<Option<SegmentManifest>, String> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let bytes = fs::read(path).map_err(|error| error.to_string())?;
+    serde_json::from_slice::<SegmentManifest>(&bytes)
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+async fn save_segment_manifest(
+    path: &Path,
+    manifest: &SegmentManifest,
+) -> Result<(), DownloadError> {
+    let bytes =
+        serde_json::to_vec_pretty(manifest).map_err(|error| DownloadError::Failed(error.to_string()))?;
+    tokio::fs::write(path, bytes)
+        .await
+        .map_err(|error| DownloadError::Failed(error.to_string()))
 }
 
 async fn maybe_throttle(limit_kbps: u64, transferred_bytes: u64, session_started_at: Instant) {
@@ -551,6 +765,11 @@ pub struct DownloadControl {
     pub pause_requested: AtomicBool,
 }
 
+enum SegmentedMode {
+    Fresh(SegmentedPlan),
+    Resume(SegmentManifest),
+}
+
 #[derive(Clone)]
 struct SegmentedPlan {
     file_name: String,
@@ -564,8 +783,30 @@ struct ByteRange {
     end: u64,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct SegmentManifest {
+    version: u32,
+    url: String,
+    file_name: String,
+    output_path: String,
+    total_bytes: u64,
+    segments: Vec<SegmentState>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct SegmentState {
+    start: u64,
+    end: u64,
+    downloaded_bytes: u64,
+    part_path: String,
+}
+
 fn temp_path_for(output_path: &Path) -> PathBuf {
     PathBuf::from(format!("{}.trinitydownload", output_path.to_string_lossy()))
+}
+
+fn manifest_path_for(temp_path: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.segments.json", temp_path.to_string_lossy()))
 }
 
 fn part_path_for(temp_path: &Path, index: usize) -> PathBuf {

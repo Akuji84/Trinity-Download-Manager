@@ -18,7 +18,6 @@ import {
   Save,
   Search,
   Settings,
-  SlidersHorizontal,
   Square,
   Trash2,
   X,
@@ -634,18 +633,6 @@ function App() {
     await refreshJobs();
   }
 
-  async function updateSelectedSpeedLimit(speedLimitKbps: number) {
-    const limitedJobs = selectedJobs.filter((job) => job.state !== "Running");
-    await Promise.all(
-      limitedJobs.map((job) =>
-        invoke<boolean>("update_download_speed_limit", {
-          request: { id: job.id, speed_limit_kbps: speedLimitKbps },
-        }),
-      ),
-    );
-    await refreshJobs();
-  }
-
   async function reorderQueueJob(draggedId: string, targetId: string) {
     if (draggedId === targetId) {
       return;
@@ -869,7 +856,6 @@ function App() {
   const canDeleteSelected = selectedJobs.some((job) => job.state !== "Running");
   const canMoveSelected = selectedJobs.length === 1 && isQueueManageable(selectedJobs[0]);
   const canChangePrioritySelected = selectedJobs.some(isQueueManageable);
-  const canChangeSpeedLimitSelected = selectedJobs.some((job) => job.state !== "Running");
   const scheduleNow = new Date(scheduleClock);
 
   return (
@@ -971,36 +957,6 @@ function App() {
             <Flag size={24} strokeWidth={2} />
           </span>
           Low
-        </button>
-        <button
-          className="tool-button"
-          disabled={!canChangeSpeedLimitSelected}
-          onClick={() => updateSelectedSpeedLimit(0)}
-        >
-          <span>
-            <SlidersHorizontal size={24} strokeWidth={2} />
-          </span>
-          Unlimit
-        </button>
-        <button
-          className="tool-button"
-          disabled={!canChangeSpeedLimitSelected}
-          onClick={() => updateSelectedSpeedLimit(512)}
-        >
-          <span>
-            <SlidersHorizontal size={24} strokeWidth={2} />
-          </span>
-          512 KB/s
-        </button>
-        <button
-          className="tool-button"
-          disabled={!canChangeSpeedLimitSelected}
-          onClick={() => updateSelectedSpeedLimit(2048)}
-        >
-          <span>
-            <SlidersHorizontal size={24} strokeWidth={2} />
-          </span>
-          2 MB/s
         </button>
         <button
           className="tool-button"

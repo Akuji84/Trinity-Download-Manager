@@ -61,6 +61,7 @@ button {
   background: transparent;
   cursor: pointer;
   font-size: 12px;
+  white-space: nowrap;
 }
 
 .tool-button span {

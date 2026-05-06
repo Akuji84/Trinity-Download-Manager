@@ -483,6 +483,8 @@ Exit criteria:
 - Removed the extra per-row speed-limit and retry-policy text from the main download list to keep row details tighter.
 - Added backend filesystem watching for directories containing completed downloads.
 - When Windows reports a completed file being removed or renamed, Trinity now prunes that job immediately and emits a UI refresh event so the row disappears without manual refresh.
+- Removed the three direct toolbar speed-limit buttons (`Unlimit`, `512 KB/s`, `2 MB/s`) to reduce command-bar clutter.
+- Updated toolbar button text styling so short labels such as `Queue Up` and `Queue Down` stay on a single line.
 
 ## Current Verification Status
 

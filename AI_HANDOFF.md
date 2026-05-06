@@ -533,7 +533,7 @@ Exit criteria:
 - Added the first extension popup menu and app-launch fallback:
   - clicking the extension now opens a menu-style popup instead of sending immediately
   - the popup asks the background worker to find Trinity through the localhost bridge
-  - if the bridge is down, the popup now shows an explicit `Open Trinity` action instead of opening a browser tab
+  - if the bridge is down, the popup now auto-attempts the `trinity://launch` protocol from inside the popup without opening a browser tab
   - the app now registers the `trinity://` deep-link scheme through Tauri
   - the popup includes pause capture, per-site exclusion, options, and help/feedback entries
 - Current segmented implementation is still conservative:

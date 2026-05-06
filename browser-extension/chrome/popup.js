@@ -1,5 +1,4 @@
 const statusNode = document.getElementById("popup-status");
-const openTrinityButton = document.getElementById("open-trinity");
 const captureButton = document.getElementById("toggle-capture");
 const siteButton = document.getElementById("toggle-site");
 const optionsButton = document.getElementById("open-options");
@@ -15,18 +14,20 @@ let popupState = {
 async function initializePopup() {
   setStatus("Looking for Trinity...");
   const response = await chrome.runtime.sendMessage({ type: "get-popup-state" });
-  popupState = {
-    connected: response?.connected === true,
-    capturePaused: response?.capturePaused === true,
-    siteExcluded: response?.siteExcluded === true,
-    siteHost: response?.siteHost ?? "",
-  };
+  popupState = normalizePopupState(response);
+
+  if (!popupState.connected) {
+    setStatus("Opening Trinity...");
+    await launchTrinityFromPopup();
+    const retriedResponse = await chrome.runtime.sendMessage({ type: "bridge-status" });
+    popupState.connected = retriedResponse?.connected === true;
+  }
+
   render();
 }
 
 function render() {
   setStatus(popupState.connected ? "Trinity is connected." : "Trinity is not running.");
-  openTrinityButton.hidden = popupState.connected;
   captureButton.textContent = popupState.capturePaused
     ? "Resume catching downloads from all sites"
     : "Pause to catch downloads from all sites";
@@ -39,14 +40,6 @@ function render() {
 function setStatus(value) {
   statusNode.textContent = value;
 }
-
-openTrinityButton.addEventListener("click", async () => {
-  await launchTrinityFromPopup();
-  setStatus("Checking Trinity...");
-  const response = await chrome.runtime.sendMessage({ type: "bridge-status" });
-  popupState.connected = response?.connected === true;
-  render();
-});
 
 captureButton.addEventListener("click", async () => {
   const response = await chrome.runtime.sendMessage({ type: "toggle-capture-paused" });
@@ -75,12 +68,21 @@ helpButton.addEventListener("click", async () => {
   await chrome.runtime.sendMessage({ type: "open-help-page" });
 });
 
+function normalizePopupState(response) {
+  return {
+    connected: response?.connected === true,
+    capturePaused: response?.capturePaused === true,
+    siteExcluded: response?.siteExcluded === true,
+    siteHost: response?.siteHost ?? "",
+  };
+}
+
 async function launchTrinityFromPopup() {
   const launchFrame = document.createElement("iframe");
   launchFrame.style.display = "none";
   launchFrame.src = "trinity://launch";
   document.body.appendChild(launchFrame);
-  await new Promise((resolve) => setTimeout(resolve, 800));
+  await new Promise((resolve) => setTimeout(resolve, 1500));
   launchFrame.remove();
 }
 

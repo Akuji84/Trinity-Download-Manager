@@ -554,6 +554,11 @@ Exit criteria:
   - likely download candidates are detected from anchor `download` attributes and download/install/setup-style text or URLs
   - the content script asks the background worker to hand the URL to Trinity first and only falls back to the browser if Trinity capture is unavailable
   - recent pre-captured URLs are tracked so any later `chrome.downloads.onCreated` duplicate can be canceled and erased immediately
+- Rebuilt the full icon set from the new square branding asset:
+  - added `scripts/regenerate_icons.py` to regenerate app and extension icons consistently from `assets/branding/trinity-logo-square.png`
+  - refreshed `assets/branding/trinity-logo-source.png` from that square asset
+  - regenerated Tauri Windows/macOS/iOS/Android icon outputs under `src-tauri/icons/`
+  - regenerated Chrome extension icon outputs under `browser-extension/chrome/icons/`
 - Simplified the NSIS desktop shortcut icon fix:
   - the installer now ships a dedicated `trinity-shortcut.ico` into `$INSTDIR`
   - desktop shortcuts are recreated during the install section against that installed `.ico`
@@ -586,4 +591,4 @@ Exit criteria:
 
 ## Next Step
 
-Reload the unpacked Chrome extension and verify that clicking download-style links now hands off to Trinity without Chrome showing its own duplicate save/download flow.
+Reinstall/reload the app and unpacked Chrome extension so the regenerated square icon set is picked up everywhere, then verify any previously cut-off icon surfaces now render the full cropped asset cleanly.

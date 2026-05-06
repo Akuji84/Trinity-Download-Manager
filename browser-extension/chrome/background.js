@@ -10,6 +10,15 @@ const CONTEXT_MENU_IDS = {
 };
 const interceptedDownloadIds = new Set();
 
+// Cached bridge status so onCreated can cancel immediately without a network round-trip
+let cachedBridgeAlive = false;
+setInterval(refreshCachedBridgeStatus, 15000);
+refreshCachedBridgeStatus();
+
+async function refreshCachedBridgeStatus() {
+  cachedBridgeAlive = await pingBridge();
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
@@ -136,13 +145,7 @@ async function sendTabToTrinity(tab) {
 async function sendToTrinity(payload) {
   if (!isHttpUrl(payload.url)) {
     await showBridgeBadge("URL?", "#7a3f00");
-    return;
-  }
-
-  const bridgeReady = await pingBridge();
-  if (!bridgeReady) {
-    await showBridgeBadge("OFF", "#6a1b1b");
-    return;
+    return false;
   }
 
   try {
@@ -158,10 +161,12 @@ async function sendToTrinity(payload) {
       throw new Error(`Bridge returned HTTP ${response.status}`);
     }
 
+    cachedBridgeAlive = true;
     await showBridgeBadge("OK", "#145d29");
     return true;
   } catch (error) {
     console.error("Trinity bridge handoff failed", error);
+    cachedBridgeAlive = false;
     await showBridgeBadge("ERR", "#6a1b1b");
     return false;
   }
@@ -210,42 +215,65 @@ async function handleCreatedDownload(downloadItem) {
     return;
   }
 
-  const extensionState = await getExtensionCaptureState(downloadItem);
-  if (!extensionState.shouldCapture) {
+  // Use cached bridge status to make the capture decision without a network round-trip.
+  // This lets us cancel the Chrome download before it makes meaningful progress.
+  if (!cachedBridgeAlive) {
+    return;
+  }
+
+  const { capturePaused = false, excludedSites = [] } = await chrome.storage.local.get([
+    STORAGE_KEYS.capturePaused,
+    STORAGE_KEYS.excludedSites,
+  ]);
+
+  if (capturePaused) {
+    return;
+  }
+
+  // Quick site check using the referrer already present on the download item
+  const quickHost = extractHost(downloadItem.referrer || "");
+  if (quickHost && excludedSites.includes(quickHost)) {
+    return;
+  }
+
+  // Cancel the Chrome download immediately — before any further async work
+  interceptedDownloadIds.add(downloadItem.id);
+  try {
+    await chrome.downloads.cancel(downloadItem.id);
+  } catch (error) {
+    console.warn("Could not cancel the browser download before Trinity handoff", error);
+  }
+
+  // Resolve the page URL for Trinity metadata (fine to await after cancel)
+  const pageUrl = await resolveDownloadPageUrl(downloadItem);
+
+  // Re-check exclusion with the resolved page URL in case referrer wasn't set
+  const resolvedHost = extractHost(pageUrl || "");
+  if (resolvedHost && excludedSites.includes(resolvedHost)) {
+    interceptedDownloadIds.delete(downloadItem.id);
     return;
   }
 
   const sentToTrinity = await sendToTrinity({
     url: downloadItem.finalUrl || downloadItem.url,
-    page_url: extensionState.pageUrl,
+    page_url: pageUrl,
     suggested_file_name: deriveDownloadItemFileName(downloadItem),
     mime_type: downloadItem.mime || null,
-    referrer: downloadItem.referrer || extensionState.pageUrl || null,
+    referrer: downloadItem.referrer || pageUrl || null,
     browser: "chrome",
     output_folder: null,
   });
 
-  if (!sentToTrinity) {
-    return;
+  if (sentToTrinity) {
+    try {
+      await chrome.downloads.erase({ id: downloadItem.id });
+    } catch (error) {
+      console.warn("Could not erase the canceled browser download", error);
+    }
+    await showBridgeBadge("CAP", "#145d29");
   }
 
-  interceptedDownloadIds.add(downloadItem.id);
-
-  try {
-    await chrome.downloads.cancel(downloadItem.id);
-  } catch (error) {
-    console.warn("Could not cancel the browser download after Trinity handoff", error);
-  }
-
-  try {
-    await chrome.downloads.erase({ id: downloadItem.id });
-  } catch (error) {
-    console.warn("Could not erase the canceled browser download", error);
-  } finally {
-    setTimeout(() => interceptedDownloadIds.delete(downloadItem.id), 5000);
-  }
-
-  await showBridgeBadge("CAP", "#145d29");
+  setTimeout(() => interceptedDownloadIds.delete(downloadItem.id), 5000);
 }
 
 function shouldConsiderDownload(downloadItem) {
@@ -263,22 +291,6 @@ function shouldConsiderDownload(downloadItem) {
   }
 
   return true;
-}
-
-async function getExtensionCaptureState(downloadItem) {
-  const [{ capturePaused = false, excludedSites = [] }, pageUrl] = await Promise.all([
-    chrome.storage.local.get([STORAGE_KEYS.capturePaused, STORAGE_KEYS.excludedSites]),
-    resolveDownloadPageUrl(downloadItem),
-  ]);
-
-  const siteHost = extractHost(pageUrl || downloadItem.referrer || "");
-  const siteExcluded = siteHost ? excludedSites.includes(siteHost) : false;
-  const bridgeReady = await pingBridge();
-
-  return {
-    shouldCapture: !capturePaused && !siteExcluded && bridgeReady,
-    pageUrl,
-  };
 }
 
 async function resolveDownloadPageUrl(downloadItem) {

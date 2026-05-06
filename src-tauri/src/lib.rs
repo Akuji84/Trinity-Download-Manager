@@ -1299,6 +1299,13 @@ fn handle_extension_bridge_connection(app: &AppHandle, mut stream: TcpStream) ->
 
             app.emit(EXTENSION_DOWNLOAD_EVENT, request)
                 .map_err(|error| error.to_string())?;
+
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+
             write_json_response(
                 &mut stream,
                 "202 Accepted",

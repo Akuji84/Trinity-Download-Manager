@@ -2,8 +2,25 @@ const DOWNLOAD_HINT_PATTERN =
   /(download|installer|install|setup|exe|msi|zip|rar|7z|pkg|dmg|apk|iso|torrent)/i;
 const PAGE_CAPTURE_EVENT = "trinity-page-download-capture";
 const PAGE_CAPTURE_RESULT_EVENT = "trinity-page-download-result";
+let insertPressed = false;
 
 injectPageHook();
+
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Insert") {
+    insertPressed = true;
+  }
+}, true);
+
+window.addEventListener("keyup", (event) => {
+  if (event.key === "Insert") {
+    insertPressed = false;
+  }
+}, true);
+
+window.addEventListener("blur", () => {
+  insertPressed = false;
+});
 
 window.addEventListener(PAGE_CAPTURE_EVENT, (event) => {
   try {
@@ -168,6 +185,7 @@ function buildPayload(candidate) {
     suggested_file_name: deriveSuggestedFileName(url, candidate),
     mime_type: null,
     referrer: window.location.href,
+    insert_pressed: insertPressed,
   };
 }
 

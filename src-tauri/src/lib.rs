@@ -18,9 +18,10 @@ use std::{
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use notify::{event::ModifyKind, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use models::{
-    AppSettings, AppStatus, CreateDownloadJobRequest, DownloadJob, DownloadProgressEvent,
-    DownloadState, DownloadUrlMetadata, ExtensionDownloadRequest, ReorderDownloadJobRequest,
-    UpdateAppSettingsRequest, UpdateDownloadPriorityRequest, UpdateDownloadSpeedLimitRequest,
+    AppSettings, AppStatus, BrowserIntegrationSettings, CreateDownloadJobRequest, DownloadJob,
+    DownloadProgressEvent, DownloadState, DownloadUrlMetadata, ExtensionDownloadRequest,
+    ReorderDownloadJobRequest, UpdateAppSettingsRequest, UpdateDownloadPriorityRequest,
+    UpdateDownloadSpeedLimitRequest,
 };
 use reqwest::{
     header::{CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_RANGE, RANGE},
@@ -102,6 +103,14 @@ fn update_app_settings(
         bandwidth_schedule_limit_kbps: request.bandwidth_schedule_limit_kbps.min(1024 * 1024),
         close_to_tray: request.close_to_tray,
         start_minimized: request.start_minimized,
+        browser_intercept_downloads: request.browser_intercept_downloads,
+        browser_start_without_confirmation: request.browser_start_without_confirmation,
+        browser_skip_domains: request.browser_skip_domains.trim().to_string(),
+        browser_skip_extensions: request.browser_skip_extensions.trim().to_string(),
+        browser_capture_extensions: request.browser_capture_extensions.trim().to_string(),
+        browser_minimum_size_mb: request.browser_minimum_size_mb.min(1024 * 1024),
+        browser_use_native_fallback: request.browser_use_native_fallback,
+        browser_ignore_insert_key: request.browser_ignore_insert_key,
     };
     state.close_to_tray.store(request.close_to_tray, Ordering::Relaxed);
 
@@ -1300,9 +1309,28 @@ fn handle_extension_bridge_connection(app: &AppHandle, mut stream: TcpStream) ->
                 "ok": true,
                 "appName": "Trinity Download Manager",
                 "bridgePort": EXTENSION_BRIDGE_PORT,
-                "endpoints": ["/app/ping", "/downloads/create", "/app/open-options"]
+                "endpoints": ["/app/ping", "/app/browser-settings", "/downloads/create", "/app/open-options"]
             }),
         ),
+        ("GET", "/app/browser-settings") => {
+            let settings = {
+                let state = app.state::<AppState>();
+                let storage = state
+                    .storage
+                    .lock()
+                    .map_err(|_| "Storage lock is unavailable.".to_string())?;
+                let settings = storage
+                    .get_app_settings()
+                    .map_err(|error| error.to_string())?;
+                BrowserIntegrationSettings::from(&settings)
+            };
+
+            write_json_response(
+                &mut stream,
+                "200 OK",
+                &serde_json::json!(settings),
+            )
+        }
         ("POST", "/app/open-options") => {
             app.emit(EXTENSION_OPEN_OPTIONS_EVENT, ())
                 .map_err(|error| error.to_string())?;

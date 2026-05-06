@@ -70,6 +70,14 @@ type AppSettings = {
   bandwidth_schedule_limit_kbps: number;
   close_to_tray: boolean;
   start_minimized: boolean;
+  browser_intercept_downloads: boolean;
+  browser_start_without_confirmation: boolean;
+  browser_skip_domains: string;
+  browser_skip_extensions: string;
+  browser_capture_extensions: string;
+  browser_minimum_size_mb: number;
+  browser_use_native_fallback: boolean;
+  browser_ignore_insert_key: boolean;
 };
 
 type DownloadProgressEvent = {
@@ -382,6 +390,14 @@ function App() {
     bandwidth_schedule_limit_kbps: 512,
     close_to_tray: true,
     start_minimized: false,
+    browser_intercept_downloads: true,
+    browser_start_without_confirmation: false,
+    browser_skip_domains: "accounts.google.com, drive.google.com",
+    browser_skip_extensions: ".tmp, .part",
+    browser_capture_extensions: ".zip, .exe, .iso, .7z",
+    browser_minimum_size_mb: 1,
+    browser_use_native_fallback: true,
+    browser_ignore_insert_key: true,
   });
   const [preferencesDraft, setPreferencesDraft] = useState<PreferencesDraft>(() =>
     createPreferencesDraft(3),
@@ -398,6 +414,11 @@ function App() {
   const [dropTargetJobId, setDropTargetJobId] = useState<string | null>(null);
   const preferencesContentRef = useRef<HTMLElement | null>(null);
   const pendingIconKeysRef = useRef<Set<string>>(new Set());
+  const settingsRef = useRef(settings);
+
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
 
   useEffect(() => {
     invoke<AppSettings>("get_app_settings")
@@ -418,6 +439,14 @@ function App() {
           bandwidthScheduleLimitKbps: loadedSettings.bandwidth_schedule_limit_kbps,
           closeToTray: loadedSettings.close_to_tray,
           startMinimized: loadedSettings.start_minimized,
+          browserInterceptDownloads: loadedSettings.browser_intercept_downloads,
+          browserStartWithoutConfirmation: loadedSettings.browser_start_without_confirmation,
+          browserSkipDomains: loadedSettings.browser_skip_domains,
+          browserSkipExtensions: loadedSettings.browser_skip_extensions,
+          browserCaptureExtensions: loadedSettings.browser_capture_extensions,
+          browserMinimumSizeMb: loadedSettings.browser_minimum_size_mb,
+          browserUseNativeFallback: loadedSettings.browser_use_native_fallback,
+          browserIgnoreInsertKey: loadedSettings.browser_ignore_insert_key,
         }));
       })
       .catch(console.error);
@@ -445,6 +474,25 @@ function App() {
 
     listen<ExtensionDownloadRequest>("extension-download-request", (event) => {
       const payload = event.payload;
+      if (settingsRef.current.browser_start_without_confirmation) {
+        void invoke<DownloadJob>("create_download_job", {
+          request: {
+            url: payload.url ?? "",
+            output_folder: payload.output_folder?.trim() || null,
+            scheduler_enabled: false,
+            schedule_days: [],
+            schedule_from: null,
+            schedule_to: null,
+          },
+        })
+          .then(() => refreshJobs())
+          .catch((invokeError) => {
+            console.error(invokeError);
+            setError(typeof invokeError === "string" ? invokeError : "Could not add download.");
+          });
+        return;
+      }
+
       setError("");
       setUrl(payload.url ?? "");
       setOutputFolder(payload.output_folder?.trim() ?? "");
@@ -783,6 +831,15 @@ function App() {
         bandwidth_schedule_limit_kbps: preferencesDraft.bandwidthScheduleLimitKbps,
         close_to_tray: preferencesDraft.closeToTray,
         start_minimized: preferencesDraft.startMinimized,
+        browser_intercept_downloads: preferencesDraft.browserInterceptDownloads,
+        browser_start_without_confirmation:
+          preferencesDraft.browserStartWithoutConfirmation,
+        browser_skip_domains: preferencesDraft.browserSkipDomains,
+        browser_skip_extensions: preferencesDraft.browserSkipExtensions,
+        browser_capture_extensions: preferencesDraft.browserCaptureExtensions,
+        browser_minimum_size_mb: preferencesDraft.browserMinimumSizeMb,
+        browser_use_native_fallback: preferencesDraft.browserUseNativeFallback,
+        browser_ignore_insert_key: preferencesDraft.browserIgnoreInsertKey,
       },
     });
     setSettings(updatedSettings);
@@ -801,6 +858,14 @@ function App() {
       bandwidthScheduleLimitKbps: updatedSettings.bandwidth_schedule_limit_kbps,
       closeToTray: updatedSettings.close_to_tray,
       startMinimized: updatedSettings.start_minimized,
+      browserInterceptDownloads: updatedSettings.browser_intercept_downloads,
+      browserStartWithoutConfirmation: updatedSettings.browser_start_without_confirmation,
+      browserSkipDomains: updatedSettings.browser_skip_domains,
+      browserSkipExtensions: updatedSettings.browser_skip_extensions,
+      browserCaptureExtensions: updatedSettings.browser_capture_extensions,
+      browserMinimumSizeMb: updatedSettings.browser_minimum_size_mb,
+      browserUseNativeFallback: updatedSettings.browser_use_native_fallback,
+      browserIgnoreInsertKey: updatedSettings.browser_ignore_insert_key,
     }));
     setPreferencesStatus("Settings saved.");
     await refreshJobs();
@@ -822,6 +887,14 @@ function App() {
       bandwidthScheduleLimitKbps: settings.bandwidth_schedule_limit_kbps,
       closeToTray: settings.close_to_tray,
       startMinimized: settings.start_minimized,
+      browserInterceptDownloads: settings.browser_intercept_downloads,
+      browserStartWithoutConfirmation: settings.browser_start_without_confirmation,
+      browserSkipDomains: settings.browser_skip_domains,
+      browserSkipExtensions: settings.browser_skip_extensions,
+      browserCaptureExtensions: settings.browser_capture_extensions,
+      browserMinimumSizeMb: settings.browser_minimum_size_mb,
+      browserUseNativeFallback: settings.browser_use_native_fallback,
+      browserIgnoreInsertKey: settings.browser_ignore_insert_key,
     }));
     setPreferencesStatus("");
     setActivePreferencesSection("general");

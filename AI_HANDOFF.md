@@ -564,6 +564,12 @@ Exit criteria:
   - the browser extension options page was removed
   - the popup `Options` action now targets Trinity's own Preferences through the localhost bridge instead of opening a browser page
   - the bridge now exposes `/app/open-options`, which focuses the main window and opens Trinity Preferences
+- Wired Trinity's Browser Integration preferences into the actual extension capture pipeline:
+  - app settings now persist browser capture fields in SQLite and return them through Tauri `get_app_settings` / `update_app_settings`
+  - the localhost bridge now exposes `GET /app/browser-settings`
+  - the Chrome extension now fetches those settings from Trinity and enforces intercept enabled/disabled, skip domains, skip extensions, capture extensions, minimum known size, fixed native fallback, and INSERT-key bypass
+  - the popup `Options` action still routes into Trinity Preferences, but the extension-side dead browser options code path was removed
+  - extension-triggered downloads now honor `Start downloading without confirmation` by creating the job directly instead of always opening the Add Download dialog
 - Hardened content-script bridge calls against extension reload/invalidation:
   - `content.js` now checks that the extension runtime context is still valid before calling `chrome.runtime.sendMessage(...)`
   - message sends are wrapped so an invalidated extension context falls back cleanly instead of throwing an uncaught page error
@@ -599,10 +605,10 @@ Exit criteria:
 - Global bandwidth scheduling and per-download limits are implemented, but there is not yet a visual calendar/profile editor or separate upload shaping.
 - Pause/resume currently works for single-stream downloads only when the server accepts byte ranges.
 - Scheduler controls are persisted, respected by queue start rules, and visible in the table, but the backend does not yet publish a formal computed `next_start_at` field.
-- Most Preferences sections are still frontend placeholders and are not yet persisted to SQLite.
+- Most Preferences sections are still frontend placeholders and are not yet persisted to SQLite, but the Browser Integration controls are now persisted and active.
 - Running jobs cannot be deleted from the UI.
 - Cancellation is cooperative and is checked between received network chunks.
 
 ## Next Step
 
-Reload the unpacked Chrome extension and verify that the popup `Options` button opens Trinity Preferences directly while Chrome-side fallback remains fixed when Trinity is unavailable.
+Add end-to-end support for extension-provided suggested filenames so browser-triggered downloads can preserve the browser's filename both in the Add Download dialog flow and in silent `start without confirmation` captures.

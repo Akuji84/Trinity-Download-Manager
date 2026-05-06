@@ -224,6 +224,62 @@ impl Storage {
             ",
             [],
         )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('browser_intercept_downloads', '1');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('browser_start_without_confirmation', '0');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('browser_skip_domains', 'accounts.google.com, drive.google.com');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('browser_skip_extensions', '.tmp, .part');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('browser_capture_extensions', '.zip, .exe, .iso, .7z');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('browser_minimum_size_mb', '1');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('browser_use_native_fallback', '1');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('browser_ignore_insert_key', '1');
+            ",
+            [],
+        )?;
 
         Ok(())
     }
@@ -954,6 +1010,40 @@ impl Storage {
             .and_then(|value| value.parse::<u8>().ok())
             .map(|value| value != 0)
             .unwrap_or(defaults.start_minimized);
+        let browser_intercept_downloads = self
+            .get_setting("browser_intercept_downloads")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.browser_intercept_downloads);
+        let browser_start_without_confirmation = self
+            .get_setting("browser_start_without_confirmation")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.browser_start_without_confirmation);
+        let browser_skip_domains = self
+            .get_setting("browser_skip_domains")?
+            .unwrap_or(defaults.browser_skip_domains);
+        let browser_skip_extensions = self
+            .get_setting("browser_skip_extensions")?
+            .unwrap_or(defaults.browser_skip_extensions);
+        let browser_capture_extensions = self
+            .get_setting("browser_capture_extensions")?
+            .unwrap_or(defaults.browser_capture_extensions);
+        let browser_minimum_size_mb = self
+            .get_setting("browser_minimum_size_mb")?
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(defaults.browser_minimum_size_mb)
+            .min(1024 * 1024);
+        let browser_use_native_fallback = self
+            .get_setting("browser_use_native_fallback")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.browser_use_native_fallback);
+        let browser_ignore_insert_key = self
+            .get_setting("browser_ignore_insert_key")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.browser_ignore_insert_key);
 
         Ok(AppSettings {
             max_concurrent_downloads,
@@ -968,6 +1058,14 @@ impl Storage {
             bandwidth_schedule_limit_kbps,
             close_to_tray,
             start_minimized,
+            browser_intercept_downloads,
+            browser_start_without_confirmation,
+            browser_skip_domains,
+            browser_skip_extensions,
+            browser_capture_extensions,
+            browser_minimum_size_mb,
+            browser_use_native_fallback,
+            browser_ignore_insert_key,
         })
     }
 
@@ -1004,6 +1102,37 @@ impl Storage {
         self.upsert_setting(
             "start_minimized",
             if settings.start_minimized { "1" } else { "0" },
+        )?;
+        self.upsert_setting(
+            "browser_intercept_downloads",
+            if settings.browser_intercept_downloads { "1" } else { "0" },
+        )?;
+        self.upsert_setting(
+            "browser_start_without_confirmation",
+            if settings.browser_start_without_confirmation {
+                "1"
+            } else {
+                "0"
+            },
+        )?;
+        self.upsert_setting("browser_skip_domains", &settings.browser_skip_domains)?;
+        self.upsert_setting("browser_skip_extensions", &settings.browser_skip_extensions)?;
+        self.upsert_setting("browser_capture_extensions", &settings.browser_capture_extensions)?;
+        self.upsert_setting(
+            "browser_minimum_size_mb",
+            settings.browser_minimum_size_mb.to_string(),
+        )?;
+        self.upsert_setting(
+            "browser_use_native_fallback",
+            if settings.browser_use_native_fallback {
+                "1"
+            } else {
+                "0"
+            },
+        )?;
+        self.upsert_setting(
+            "browser_ignore_insert_key",
+            if settings.browser_ignore_insert_key { "1" } else { "0" },
         )?;
 
         Ok(())

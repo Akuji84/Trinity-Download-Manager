@@ -131,6 +131,18 @@ pub struct ExtensionDownloadRequest {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct BrowserIntegrationSettings {
+    pub intercept_downloads: bool,
+    pub start_without_confirmation: bool,
+    pub skip_domains: String,
+    pub skip_extensions: String,
+    pub capture_extensions: String,
+    pub minimum_size_mb: u64,
+    pub use_native_fallback: bool,
+    pub ignore_insert_key: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct AppSettings {
     pub max_concurrent_downloads: usize,
     pub retry_enabled: bool,
@@ -144,6 +156,14 @@ pub struct AppSettings {
     pub bandwidth_schedule_limit_kbps: u64,
     pub close_to_tray: bool,
     pub start_minimized: bool,
+    pub browser_intercept_downloads: bool,
+    pub browser_start_without_confirmation: bool,
+    pub browser_skip_domains: String,
+    pub browser_skip_extensions: String,
+    pub browser_capture_extensions: String,
+    pub browser_minimum_size_mb: u64,
+    pub browser_use_native_fallback: bool,
+    pub browser_ignore_insert_key: bool,
 }
 
 impl Default for AppSettings {
@@ -161,6 +181,14 @@ impl Default for AppSettings {
             bandwidth_schedule_limit_kbps: 512,
             close_to_tray: true,
             start_minimized: false,
+            browser_intercept_downloads: true,
+            browser_start_without_confirmation: false,
+            browser_skip_domains: "accounts.google.com, drive.google.com".to_string(),
+            browser_skip_extensions: ".tmp, .part".to_string(),
+            browser_capture_extensions: ".zip, .exe, .iso, .7z".to_string(),
+            browser_minimum_size_mb: 1,
+            browser_use_native_fallback: true,
+            browser_ignore_insert_key: true,
         }
     }
 }
@@ -179,6 +207,29 @@ pub struct UpdateAppSettingsRequest {
     pub bandwidth_schedule_limit_kbps: u64,
     pub close_to_tray: bool,
     pub start_minimized: bool,
+    pub browser_intercept_downloads: bool,
+    pub browser_start_without_confirmation: bool,
+    pub browser_skip_domains: String,
+    pub browser_skip_extensions: String,
+    pub browser_capture_extensions: String,
+    pub browser_minimum_size_mb: u64,
+    pub browser_use_native_fallback: bool,
+    pub browser_ignore_insert_key: bool,
+}
+
+impl From<&AppSettings> for BrowserIntegrationSettings {
+    fn from(value: &AppSettings) -> Self {
+        Self {
+            intercept_downloads: value.browser_intercept_downloads,
+            start_without_confirmation: value.browser_start_without_confirmation,
+            skip_domains: value.browser_skip_domains.clone(),
+            skip_extensions: value.browser_skip_extensions.clone(),
+            capture_extensions: value.browser_capture_extensions.clone(),
+            minimum_size_mb: value.browser_minimum_size_mb,
+            use_native_fallback: value.browser_use_native_fallback,
+            ignore_insert_key: value.browser_ignore_insert_key,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

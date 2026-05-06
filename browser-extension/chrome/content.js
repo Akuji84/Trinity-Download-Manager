@@ -74,7 +74,9 @@ document.addEventListener(
           return;
         }
 
-        fallbackToBrowser(candidate, payload.url);
+        if (response?.captured === false) {
+          fallbackToBrowser(candidate, payload.url);
+        }
       },
     );
   },

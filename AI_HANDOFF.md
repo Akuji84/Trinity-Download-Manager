@@ -558,6 +558,7 @@ Exit criteria:
   - `page-hook.js` is injected into the page world so site JavaScript calls to `window.open(...)`, programmatic anchor clicks, and `location.assign/replace(...)` can be intercepted before Chrome starts its own download UI
   - the page hook relays likely download URLs to the content script, which asks the background worker to hand them to Trinity first
   - browser fallback is preserved if Trinity capture is unavailable or rejected
+  - the fallback path is now biased against Chrome duplicates: page-hook capture waits longer and defaults to suppressing Chrome if the handoff result is merely delayed instead of explicitly rejected
 - Rebuilt the full icon set from the new square branding asset:
   - added `scripts/regenerate_icons.py` to regenerate app and extension icons consistently from `assets/branding/trinity-logo-square.png`
   - refreshed `assets/branding/trinity-logo-source.png` from that square asset

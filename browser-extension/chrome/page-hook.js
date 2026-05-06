@@ -138,8 +138,8 @@
 
     setTimeout(() => {
       window.removeEventListener(PAGE_CAPTURE_RESULT_EVENT, resultHandler);
-      finish(false);
-    }, 1500);
+      finish(true);
+    }, 5000);
   }
 
   function shouldCaptureAnchor(anchor) {

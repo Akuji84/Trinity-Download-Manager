@@ -2673,7 +2673,7 @@ function App() {
                             {queuePolicySummary ? (
                               <small className="queue-policy-detail">{queuePolicySummary}</small>
                             ) : null}
-                            {job.error_message ? (
+                            {job.error_message && job.state !== "Paused" ? (
                               <em title={job.error_message}>{job.error_message}</em>
                             ) : null}
                             {job.next_retry_at ? (

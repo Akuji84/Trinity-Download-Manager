@@ -629,7 +629,7 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
                         &id,
                         DownloadState::Paused,
                         total_bytes,
-                        Some("Download paused. Partial file kept for resume."),
+                        None,
                     );
                     true
                 }

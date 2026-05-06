@@ -542,7 +542,7 @@ Exit criteria:
 - Removed the baked light background from the Trinity logo source with a border-connected alpha cut and regenerated the app/extension icon outputs so the icon corners are actually transparent.
 - Per user feedback, also cut the three enclosed circular interior regions to transparent alpha and regenerated the app/extension icon outputs from that hollowed source.
 - Replaced the prior Trinity emblem source with the new user-provided branding image, renamed it to `assets/branding/trinity-logo-source.png`, and regenerated all Windows app and Chrome extension icon outputs from that new source.
-- Per user preference, the Chrome extension now points its manifest icon slots directly at a copied base source image (`browser-extension/chrome/icons/icon-base.png`) instead of using separate resized extension icon files.
+- Per user feedback, the Chrome extension was switched back to dedicated icon files and those extension icons were regenerated from a tighter square crop of the base logo source so they read larger and more naturally in Chrome's toolbar and extension surfaces.
 - Current segmented implementation is still conservative:
   - segmented jobs rebalance naturally through the chunk queue, but live splitting/merging of in-flight chunks is not implemented yet
   - segmented part state is persisted on a short interval, so an abrupt kill may lose only the most recent in-flight chunk progress instead of the whole job

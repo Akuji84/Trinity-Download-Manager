@@ -1551,6 +1551,30 @@ pub fn run() {
                 }
             }
 
+            // Fix desktop shortcut icon: explicitly set IconLocation so Windows
+            // creates a fresh icon cache entry, bypassing any stale cached icon.
+            #[cfg(target_os = "windows")]
+            if let Ok(exe) = std::env::current_exe() {
+                std::thread::spawn(move || {
+                    let exe_str = exe.to_string_lossy().replace('\'', "''");
+                    let script = format!(
+                        r#"$shell = New-Object -ComObject WScript.Shell
+$lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Trinity Download Manager.lnk'
+if (Test-Path $lnk) {{
+    $s = $shell.CreateShortcut($lnk)
+    if ($s.IconLocation -ne "'{exe}',0") {{
+        $s.IconLocation = "'{exe}',0"
+        $s.Save()
+    }}
+}}"#,
+                        exe = exe_str
+                    );
+                    let _ = std::process::Command::new("powershell")
+                        .args(["-WindowStyle", "Hidden", "-NonInteractive", "-Command", &script])
+                        .spawn();
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

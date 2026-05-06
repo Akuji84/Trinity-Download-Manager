@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use std::{
+    collections::VecDeque,
     ffi::OsStr,
     fs,
     path::{Path, PathBuf},
@@ -23,6 +24,8 @@ use crate::models::DownloadJob;
 
 const MIN_SEGMENT_SIZE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_SEGMENT_CONNECTIONS: u32 = 16;
+const TARGET_SEGMENTS_PER_CONNECTION: u32 = 3;
+const MAX_TOTAL_SEGMENTS: u32 = 64;
 const SEGMENT_MANIFEST_VERSION: u32 = 1;
 
 #[derive(Default)]
@@ -328,9 +331,22 @@ async fn download_segmented(
 
     let manifest = reconcile_manifest_with_disk(manifest).await?;
     save_segment_manifest(&manifest_path, &manifest).await?;
-    let shared_manifest = Arc::new(Mutex::new(manifest));
+    let initial_queue = manifest
+        .segments
+        .iter()
+        .enumerate()
+        .filter_map(|(index, segment)| {
+            let remaining_start = segment.start + segment.downloaded_bytes;
+            (remaining_start <= segment.end).then_some(index)
+        })
+        .collect::<VecDeque<_>>();
+    let runtime = Arc::new(SegmentRuntime {
+        manifest: Mutex::new(manifest),
+        available_segments: Mutex::new(initial_queue),
+    });
 
-    let initial_manifest = shared_manifest
+    let initial_manifest = runtime
+        .manifest
         .lock()
         .map_err(|_| DownloadError::Failed("Segment manifest lock is unavailable.".to_string()))?
         .clone();
@@ -360,33 +376,29 @@ async fn download_segmented(
     let session_started_at = Instant::now();
     let total_bytes = initial_manifest.total_bytes;
     let mut worker_handles = Vec::new();
+    let worker_count = job
+        .connection_count
+        .clamp(1, MAX_SEGMENT_CONNECTIONS)
+        .min(initial_manifest.segments.len().max(1) as u32);
 
-    for (index, segment) in initial_manifest.segments.iter().cloned().enumerate() {
-        let remaining_start = segment.start + segment.downloaded_bytes;
-        if remaining_start > segment.end {
-            continue;
-        }
-
+    for _ in 0..worker_count {
         let client = client.clone();
         let url = job.url.clone();
         let control = Arc::clone(&control);
         let downloaded_bytes = Arc::clone(&downloaded_bytes);
         let session_downloaded_bytes = Arc::clone(&session_downloaded_bytes);
         let shared_limit_kbps = Arc::clone(&shared_limit_kbps);
-        let shared_manifest = Arc::clone(&shared_manifest);
+        let runtime = Arc::clone(&runtime);
 
         worker_handles.push(tokio::spawn(async move {
-            download_segment_range(
+            run_segment_worker(
                 client,
                 url,
-                index,
-                ByteRange { start: segment.start, end: segment.end },
-                PathBuf::from(&segment.part_path),
                 control,
                 downloaded_bytes,
                 session_downloaded_bytes,
                 shared_limit_kbps,
-                shared_manifest,
+                runtime,
                 session_started_at,
             )
             .await
@@ -415,7 +427,8 @@ async fn download_segmented(
         report_progress(current_downloaded, Some(total_bytes), speed_bps)
             .map_err(DownloadError::Failed)?;
 
-        let manifest_snapshot = shared_manifest
+        let manifest_snapshot = runtime
+            .manifest
             .lock()
             .map_err(|_| DownloadError::Failed("Segment manifest lock is unavailable.".to_string()))?
             .clone();
@@ -436,7 +449,8 @@ async fn download_segmented(
 
     match result {
         Ok(()) => {
-            let manifest_snapshot = shared_manifest
+            let manifest_snapshot = runtime
+                .manifest
                 .lock()
                 .map_err(|_| DownloadError::Failed("Segment manifest lock is unavailable.".to_string()))?
                 .clone();
@@ -450,11 +464,12 @@ async fn download_segmented(
             Ok(())
         }
         Err(DownloadError::Canceled) => {
-            cleanup_segment_artifacts(&output_path, &manifest_path, &shared_manifest).await;
+            cleanup_segment_artifacts(&output_path, &manifest_path, &runtime).await;
             Err(DownloadError::Canceled)
         }
         Err(error) => {
-            let manifest_snapshot = shared_manifest
+            let manifest_snapshot = runtime
+                .manifest
                 .lock()
                 .map_err(|_| DownloadError::Failed("Segment manifest lock is unavailable.".to_string()))?
                 .clone();
@@ -507,6 +522,38 @@ async fn probe_segmented_plan(
     }))
 }
 
+async fn run_segment_worker(
+    client: Client,
+    url: String,
+    control: Arc<DownloadControl>,
+    downloaded_bytes: Arc<AtomicU64>,
+    session_downloaded_bytes: Arc<AtomicU64>,
+    shared_limit_kbps: Arc<AtomicU64>,
+    runtime: Arc<SegmentRuntime>,
+    session_started_at: Instant,
+) -> Result<(), DownloadError> {
+    loop {
+        let Some(segment_assignment) = claim_next_segment(&runtime)? else {
+            return Ok(());
+        };
+
+        download_segment_range(
+            client.clone(),
+            url.clone(),
+            segment_assignment.index,
+            segment_assignment.range,
+            PathBuf::from(segment_assignment.part_path),
+            Arc::clone(&control),
+            Arc::clone(&downloaded_bytes),
+            Arc::clone(&session_downloaded_bytes),
+            Arc::clone(&shared_limit_kbps),
+            Arc::clone(&runtime),
+            session_started_at,
+        )
+        .await?;
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn download_segment_range(
     client: Client,
@@ -518,7 +565,7 @@ async fn download_segment_range(
     downloaded_bytes: Arc<AtomicU64>,
     session_downloaded_bytes: Arc<AtomicU64>,
     shared_limit_kbps: Arc<AtomicU64>,
-    shared_manifest: Arc<Mutex<SegmentManifest>>,
+    runtime: Arc<SegmentRuntime>,
     session_started_at: Instant,
 ) -> Result<(), DownloadError> {
     let existing_downloaded = tokio::fs::metadata(&part_path)
@@ -577,7 +624,7 @@ async fn download_segment_range(
         downloaded_bytes.fetch_add(chunk_len, Ordering::Relaxed);
         let total_session_bytes =
             session_downloaded_bytes.fetch_add(chunk_len, Ordering::Relaxed) + chunk_len;
-        if let Ok(mut manifest) = shared_manifest.lock() {
+        if let Ok(mut manifest) = runtime.manifest.lock() {
             manifest.segments[segment_index].downloaded_bytes =
                 (manifest.segments[segment_index].downloaded_bytes + chunk_len)
                     .min(range.end.saturating_sub(range.start).saturating_add(1));
@@ -643,9 +690,10 @@ async fn merge_segment_parts(
 async fn cleanup_segment_artifacts(
     output_path: &Path,
     manifest_path: &Path,
-    shared_manifest: &Arc<Mutex<SegmentManifest>>,
+    runtime: &Arc<SegmentRuntime>,
 ) {
-    let part_paths = shared_manifest
+    let part_paths = runtime
+        .manifest
         .lock()
         .map(|manifest| {
             manifest
@@ -662,6 +710,35 @@ async fn cleanup_segment_artifacts(
     for part_path in part_paths {
         let _ = tokio::fs::remove_file(part_path).await;
     }
+}
+
+fn claim_next_segment(runtime: &SegmentRuntime) -> Result<Option<SegmentAssignment>, DownloadError> {
+    let next_index = runtime
+        .available_segments
+        .lock()
+        .map_err(|_| DownloadError::Failed("Segment queue lock is unavailable.".to_string()))?
+        .pop_front();
+    let Some(index) = next_index else {
+        return Ok(None);
+    };
+
+    let manifest = runtime
+        .manifest
+        .lock()
+        .map_err(|_| DownloadError::Failed("Segment manifest lock is unavailable.".to_string()))?;
+    let segment = manifest
+        .segments
+        .get(index)
+        .ok_or_else(|| DownloadError::Failed("Segment assignment is out of range.".to_string()))?;
+
+    Ok(Some(SegmentAssignment {
+        index,
+        range: ByteRange {
+            start: segment.start,
+            end: segment.end,
+        },
+        part_path: segment.part_path.clone(),
+    }))
 }
 
 fn build_segment_manifest(url: &str, output_path: PathBuf, plan: SegmentedPlan) -> SegmentManifest {
@@ -783,6 +860,17 @@ struct ByteRange {
     end: u64,
 }
 
+struct SegmentRuntime {
+    manifest: Mutex<SegmentManifest>,
+    available_segments: Mutex<VecDeque<usize>>,
+}
+
+struct SegmentAssignment {
+    index: usize,
+    range: ByteRange,
+    part_path: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct SegmentManifest {
     version: u32,
@@ -817,7 +905,10 @@ fn recommend_segment_count(total_bytes: u64, requested_connections: u32) -> u32 
     let size_limited_segments = (total_bytes / MIN_SEGMENT_SIZE_BYTES).max(1) as u32;
     requested_connections
         .clamp(1, MAX_SEGMENT_CONNECTIONS)
+        .saturating_mul(TARGET_SEGMENTS_PER_CONNECTION)
+        .min(MAX_TOTAL_SEGMENTS)
         .min(size_limited_segments)
+        .max(1)
 }
 
 fn plan_ranges(total_bytes: u64, segment_count: u32) -> Vec<ByteRange> {

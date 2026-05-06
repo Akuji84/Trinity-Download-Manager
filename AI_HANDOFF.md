@@ -501,9 +501,13 @@ Exit criteria:
   - each segment persists its completed byte count and part-file path
   - paused, retried, or restarted segmented jobs can resume from saved segment progress
   - running jobs are converted to `Paused` during app startup recovery so interrupted segmented jobs can be resumed after restart
+- Added adaptive segmented scheduling:
+  - the engine now plans more persisted chunks than active connections
+  - a worker pool equal to the active connection count consumes those chunks dynamically
+  - faster connections finish chunks and immediately pick up more work instead of being stuck with one fixed byte range
 - Delete cleanup now removes segmented manifests and part files in addition to the final file/temp file.
 - Current segmented implementation is still conservative:
-  - segmented jobs resume from saved part progress, but dynamic chunk rebalancing is not implemented yet
+  - segmented jobs rebalance naturally through the chunk queue, but live splitting/merging of in-flight chunks is not implemented yet
   - segmented part state is persisted on a short interval, so an abrupt kill may lose only the most recent in-flight chunk progress instead of the whole job
   - segmented range support still depends on the source actually honoring HTTP byte-range requests
 
@@ -516,7 +520,7 @@ Exit criteria:
 ## Current Engine Limitations
 
 - Downloads are single-stream only.
-- Segmented downloads and segmented resume now exist for range-capable sources, but adaptive chunk balancing and host-specific connection tuning are not implemented yet.
+- Segmented downloads, segmented resume, and adaptive chunk-pool scheduling now exist for range-capable sources, but host-specific connection tuning and in-flight chunk splitting/merging are not implemented yet.
 - Retry is configurable globally, but there is not yet per-download retry override support.
 - Queue ordering, priority, drag-drop reorder, and filterable queue views exist, but there is not yet multi-select drag reorder or saved custom views.
 - Global bandwidth scheduling and per-download limits are implemented, but there is not yet a visual calendar/profile editor or separate upload shaping.
@@ -528,4 +532,4 @@ Exit criteria:
 
 ## Next Step
 
-Add adaptive segmented scheduling: split and merge chunks dynamically, rebalance slow segments, and tune connection counts per host based on actual throughput and server behavior.
+Add host-aware transfer tuning: observe throughput and failures per host, choose safer default connection counts automatically, and surface those rules in Preferences later.

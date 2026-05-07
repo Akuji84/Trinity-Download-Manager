@@ -1564,25 +1564,32 @@ pub fn run() {
             // System tray
             let open_item = tauri::menu::MenuItem::with_id(app, "open", "Open Trinity", true, None::<&str>)?;
             let separator = tauri::menu::PredefinedMenuItem::separator(app)?;
-            let quit_item = tauri::menu::MenuItem::with_id(app, "quit", "Quit Trinity", true, None::<&str>)?;
-            let tray_menu = tauri::menu::Menu::with_items(app, &[&open_item, &separator, &quit_item])?;
+            let close_item = tauri::menu::MenuItem::with_id(app, "close", "Close Trinity", true, None::<&str>)?;
+            let tray_menu = tauri::menu::Menu::with_items(app, &[&open_item, &separator, &close_item])?;
             let mut tray_builder = tauri::tray::TrayIconBuilder::new()
                 .menu(&tray_menu)
                 .tooltip("Trinity Download Manager")
                 .on_tray_icon_event(|tray, event| {
-                    if matches!(
-                        event,
-                        tauri::tray::TrayIconEvent::Click { .. }
-                            | tauri::tray::TrayIconEvent::DoubleClick { .. }
-                    ) {
-                        focus_main_window(&tray.app_handle());
+                    match event {
+                        tauri::tray::TrayIconEvent::Click { button, button_state, .. }
+                            if button == tauri::tray::MouseButton::Left
+                                && button_state == tauri::tray::MouseButtonState::Up =>
+                        {
+                            focus_main_window(&tray.app_handle());
+                        }
+                        tauri::tray::TrayIconEvent::DoubleClick { button, .. }
+                            if button == tauri::tray::MouseButton::Left =>
+                        {
+                            focus_main_window(&tray.app_handle());
+                        }
+                        _ => {}
                     }
                 })
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => {
                         focus_main_window(app);
                     }
-                    "quit" => {
+                    "close" => {
                         app.exit(0);
                     }
                     _ => {}

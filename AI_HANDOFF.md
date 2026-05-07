@@ -621,6 +621,10 @@ Exit criteria:
   - the NSIS postinstall hook had still been copying `src-tauri/icons/icon.ico` into `$INSTDIR\\trinity-shortcut.ico`
   - that meant the desktop and Start menu shortcuts were still using the tighter main app icon instead of the padded shortcut-specific icon
   - the hook now ships `src-tauri/icons/shortcut-icon.ico` directly, so shortcut rendering uses the padded icon path that was generated for Windows desktop/search sizes
+- Fixed tray right-click behavior:
+  - the tray icon click handler had been treating any click as a restore/focus action, which could interfere with the context menu behavior
+  - the tray now only restores on left-click / left double-click
+  - the tray menu action is now labeled `Close Trinity` and exits the app fully from the tray menu
 - Current segmented implementation is still conservative:
   - segmented jobs rebalance naturally through the chunk queue, but live splitting/merging of in-flight chunks is not implemented yet
   - segmented part state is persisted on a short interval, so an abrupt kill may lose only the most recent in-flight chunk progress instead of the whole job

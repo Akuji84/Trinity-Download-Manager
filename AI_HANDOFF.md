@@ -710,6 +710,23 @@ Exit criteria:
 - Result: Steam → Chrome follows with session cookies → CDN .exe URL → Trinity downloads ✓. Discord → direct extension (has .exe in final URL after pre-capture) or same path ✓.
 - The HTML content-type guard in `download_engine.rs` remains as a safety net for any HTML that slips through.
 
+### 2026-05-07 — Fix Discord dialog and Steam navigation (three-part fix)
+**Commit:** `5d43e4b` — "Fix Discord dialog and Steam navigation"
+
+**Problem:** The `chrome.downloads.download()` branch introduced in 2e2d48e caused two regressions:
+1. Discord: Chrome showed a save/install dialog because `chrome.downloads.download()` creates a visible managed download (`.exe` triggers Chrome's installer prompt before `handleCreatedDownload` can cancel it).
+2. Steam: Still grabbed HTML because `chrome.downloads.download()` sends a raw HTTP request without browser page rendering or JavaScript execution — Steam requires a real Chrome page navigation with session cookies to reach the CDN installer URL.
+
+**Fix (three changes):**
+
+1. `content.js` `shouldCaptureCandidate`: restored the `hasDownloadExtension` guard — non-extension URLs (e.g. Steam's `/about/?snr=...`) skip `event.preventDefault()` so Chrome navigates the page naturally. Direct file URLs (e.g. Discord CDN `.exe`) are still pre-captured as before.
+
+2. `background.js` `handleCreatedDownload`: when `cachedBridgeAlive` is false, now falls back to a live `pingBridge()` call before giving up. This fixes the startup race condition where the extension is freshly loaded, `cachedBridgeAlive` hasn't been populated yet, but the bridge is actually running — causing Discord's `onCreated` event to be missed.
+
+3. `background.js` `captureDownloadClick`: removed the entire `chrome.downloads.download()` block. Non-extension URL clicks now let Chrome navigate; when the server redirects to the real file, `onCreated` fires with `downloadItem.finalUrl` (the actual `.exe`/CDN URL), and `handleCreatedDownload` cancels Chrome and sends to Trinity.
+
+**Result:** Steam → Chrome follows the page naturally with session cookies → CDN `.exe` URL fires `onCreated` → Trinity intercepts ✓. Discord → pre-captured via extension match → Trinity downloads directly ✓. No Chrome save dialogs. No HTML downloads.
+
 ## Next Step
 
 Show browser-capture state more clearly inside Trinity Preferences so users can see that Chrome capture is live, what rules are active, and whether Trinity is currently reachable from the extension bridge.

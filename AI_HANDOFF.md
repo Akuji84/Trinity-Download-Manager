@@ -671,6 +671,9 @@ Exit criteria:
 - Updated the Add Download modal for browser-fetched downloads:
   - when Trinity opens the modal from an extension/browser handoff with a suggested filename, the dialog now shows `File name` and the browser-provided filename instead of exposing the raw URL in the main field
   - manual Add URL flow remains unchanged and still shows an editable `URL` field
+- Fixed browser-prefilled modal detection for redirected downloads such as Steam:
+  - the Add Download modal now tracks browser-origin separately from whether the extension already supplied a filename
+  - this means redirected browser downloads can still render `File name` and use fetched metadata like `SteamSetup.exe` even if the suggested filename was initially empty
 
 ## Current Verification Status
 

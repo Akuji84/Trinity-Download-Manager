@@ -365,6 +365,7 @@ function App() {
   const [url, setUrl] = useState("");
   const [outputFolder, setOutputFolder] = useState("");
   const [pendingSuggestedFileName, setPendingSuggestedFileName] = useState("");
+  const [isBrowserPrefilledDownload, setIsBrowserPrefilledDownload] = useState(false);
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isAddAnimatingOut, setIsAddAnimatingOut] = useState(false);
   const [newestJobId, setNewestJobId] = useState<string | null>(null);
@@ -419,7 +420,8 @@ function App() {
   const preferencesContentRef = useRef<HTMLElement | null>(null);
   const pendingIconKeysRef = useRef<Set<string>>(new Set());
   const settingsRef = useRef(settings);
-  const isExtensionPrefilledDownload = pendingSuggestedFileName.trim().length > 0;
+  const isExtensionPrefilledDownload =
+    isBrowserPrefilledDownload || pendingSuggestedFileName.trim().length > 0;
   const extensionDisplayFileName =
     pendingSuggestedFileName.trim() || urlMetadata?.file_name || "";
 
@@ -507,6 +509,7 @@ function App() {
       setError("");
       setUrl(payload.url ?? "");
       setPendingSuggestedFileName(payload.suggested_file_name?.trim() ?? "");
+      setIsBrowserPrefilledDownload(true);
       setOutputFolder(payload.output_folder?.trim() ?? "");
       setIsSchedulerEnabled(false);
       setScheduleDays(SCHEDULE_DAYS);
@@ -730,6 +733,7 @@ function App() {
       setNewestJobId(job.id);
       setUrl("");
       setPendingSuggestedFileName("");
+      setIsBrowserPrefilledDownload(false);
       setOutputFolder("");
       setIsSchedulerEnabled(false);
       setScheduleDays(SCHEDULE_DAYS);
@@ -754,6 +758,7 @@ function App() {
     setError("");
     setUrl("");
     setPendingSuggestedFileName("");
+    setIsBrowserPrefilledDownload(false);
     setOutputFolder("");
     setIsSchedulerEnabled(false);
     setScheduleDays(SCHEDULE_DAYS);
@@ -770,6 +775,7 @@ function App() {
       setIsAddOpen(false);
       setIsAddAnimatingOut(false);
       setPendingSuggestedFileName("");
+      setIsBrowserPrefilledDownload(false);
     }, 220);
   }
 
@@ -3056,6 +3062,7 @@ function App() {
                     onChange={(event) => {
                       setUrl(event.currentTarget.value);
                       setPendingSuggestedFileName("");
+                      setIsBrowserPrefilledDownload(false);
                     }}
                     placeholder="https://example.com/file.zip"
                     required

@@ -11,21 +11,6 @@ const CONTEXT_MENU_IDS = {
 const interceptedDownloadIds = new Set();
 const RECENT_CAPTURE_WINDOW_MS = 8000;
 const recentCapturedUrls = new Map();
-const BROWSER_SETTINGS_CACHE_TTL_MS = 10000;
-const DEFAULT_BROWSER_SETTINGS = {
-  intercept_downloads: true,
-  start_without_confirmation: false,
-  skip_domains: "accounts.google.com, drive.google.com",
-  skip_extensions: ".tmp, .part",
-  capture_extensions: ".zip, .exe, .iso, .7z",
-  minimum_size_mb: 1,
-  use_native_fallback: true,
-  ignore_insert_key: true,
-};
-let cachedBrowserSettings = {
-  expiresAt: 0,
-  value: DEFAULT_BROWSER_SETTINGS,
-};
 
 // Cached bridge status so onCreated can cancel immediately without a network round-trip
 let cachedBridgeAlive = false;
@@ -139,6 +124,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === "get-options-state") {
+    sendResponse({ browserFallbackWhenUnavailable: true });
+    return false;
+  }
+
   if (message?.type === "open-trinity-options") {
     openTrinityOptions()
       .then((state) => sendResponse(state))
@@ -147,6 +137,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ ok: false });
       });
     return true;
+  }
+
+  if (message?.type === "set-browser-fallback-when-unavailable") {
+    sendResponse({ browserFallbackWhenUnavailable: true });
+    return false;
+  }
+
+  if (message?.type === "open-options-page") {
+    chrome.runtime.openOptionsPage();
+    sendResponse({ ok: true });
+    return false;
   }
 
   if (message?.type === "open-help-page") {
@@ -252,15 +253,6 @@ async function handleCreatedDownload(downloadItem) {
     return;
   }
 
-  const browserSettings = await getBrowserSettings();
-  if (!cachedBridgeAlive) {
-    return;
-  }
-
-  if (!browserSettings.intercept_downloads) {
-    return;
-  }
-
   const targetUrl = downloadItem.finalUrl || downloadItem.url || "";
   if (wasRecentlyCaptured(targetUrl)) {
     interceptedDownloadIds.add(downloadItem.id);
@@ -289,21 +281,13 @@ async function handleCreatedDownload(downloadItem) {
     return;
   }
 
-  const pageUrl = await resolveDownloadPageUrl(downloadItem);
-  const pageHost = extractHost(pageUrl || downloadItem.referrer || "");
-  if (pageHost && excludedSites.includes(pageHost)) {
+  // Quick site check using the referrer already present on the download item
+  const quickHost = extractHost(downloadItem.referrer || "");
+  if (quickHost && excludedSites.includes(quickHost)) {
     return;
   }
 
-  if (!(await shouldCaptureWithBrowserSettings(browserSettings, {
-    url: targetUrl,
-    page_url: pageUrl,
-    mime_type: downloadItem.mime || null,
-    suggested_file_name: deriveDownloadItemFileName(downloadItem),
-  }))) {
-    return;
-  }
-
+  // Cancel the Chrome download immediately — before any further async work
   interceptedDownloadIds.add(downloadItem.id);
   try {
     await chrome.downloads.cancel(downloadItem.id);
@@ -311,8 +295,18 @@ async function handleCreatedDownload(downloadItem) {
     console.warn("Could not cancel the browser download before Trinity handoff", error);
   }
 
+  // Resolve the page URL for Trinity metadata (fine to await after cancel)
+  const pageUrl = await resolveDownloadPageUrl(downloadItem);
+
+  // Re-check exclusion with the resolved page URL in case referrer wasn't set
+  const resolvedHost = extractHost(pageUrl || "");
+  if (resolvedHost && excludedSites.includes(resolvedHost)) {
+    interceptedDownloadIds.delete(downloadItem.id);
+    return;
+  }
+
   const sentToTrinity = await sendToTrinity({
-    url: targetUrl,
+    url: downloadItem.finalUrl || downloadItem.url,
     page_url: pageUrl,
     suggested_file_name: deriveDownloadItemFileName(downloadItem),
     mime_type: downloadItem.mime || null,
@@ -424,27 +418,11 @@ async function captureDownloadClick(payload) {
     return { captured: false, fallbackToBrowser: true };
   }
 
-  const browserSettings = await getBrowserSettings();
-  if (!browserSettings.intercept_downloads) {
-    return {
-      captured: false,
-      fallbackToBrowser: true,
-    };
-  }
-
-  if (!(await shouldCaptureWithBrowserSettings(browserSettings, payload))) {
-    return {
-      captured: false,
-      fallbackToBrowser: true,
-    };
-  }
-
   if (!cachedBridgeAlive && !(await pingBridge())) {
     cachedBridgeAlive = false;
     return {
       captured: false,
-      fallbackToBrowser: false,
-      retryAfterLaunch: true,
+      fallbackToBrowser: true,
     };
   }
 
@@ -461,7 +439,7 @@ async function captureDownloadClick(payload) {
   if (!sentToTrinity) {
     return {
       captured: false,
-      fallbackToBrowser: browserSettings.use_native_fallback !== false,
+      fallbackToBrowser: true,
     };
   }
 
@@ -494,188 +472,6 @@ async function openTrinityOptions() {
 
   cachedBridgeAlive = true;
   return { ok: true };
-}
-
-async function getBrowserSettings() {
-  if (
-    cachedBrowserSettings.expiresAt > Date.now() &&
-    cachedBrowserSettings.value
-  ) {
-    return cachedBrowserSettings.value;
-  }
-
-  if (!cachedBridgeAlive && !(await pingBridge())) {
-    cachedBridgeAlive = false;
-    cachedBrowserSettings = {
-      expiresAt: Date.now() + BROWSER_SETTINGS_CACHE_TTL_MS,
-      value: DEFAULT_BROWSER_SETTINGS,
-    };
-    return cachedBrowserSettings.value;
-  }
-
-  try {
-    const response = await fetch(`${BRIDGE_BASE_URL}/app/browser-settings`, {
-      method: "GET",
-      cache: "no-store",
-    });
-    if (response.status === 404) {
-      cachedBridgeAlive = true;
-      cachedBrowserSettings = {
-        expiresAt: Date.now() + BROWSER_SETTINGS_CACHE_TTL_MS,
-        value: DEFAULT_BROWSER_SETTINGS,
-      };
-      return cachedBrowserSettings.value;
-    }
-
-    if (!response.ok) {
-      throw new Error(`Bridge returned HTTP ${response.status}`);
-    }
-
-    const payload = await response.json();
-    cachedBridgeAlive = true;
-    cachedBrowserSettings = {
-      expiresAt: Date.now() + BROWSER_SETTINGS_CACHE_TTL_MS,
-      value: {
-        ...DEFAULT_BROWSER_SETTINGS,
-        ...payload,
-      },
-    };
-    return cachedBrowserSettings.value;
-  } catch (error) {
-    console.error("Loading Trinity browser settings failed", error);
-    cachedBridgeAlive = false;
-    cachedBrowserSettings = {
-      expiresAt: Date.now() + BROWSER_SETTINGS_CACHE_TTL_MS,
-      value: DEFAULT_BROWSER_SETTINGS,
-    };
-    return cachedBrowserSettings.value;
-  }
-}
-
-async function shouldCaptureWithBrowserSettings(settings, payload) {
-  if (!settings.intercept_downloads) {
-    return false;
-  }
-
-  if (settings.ignore_insert_key && payload.insert_pressed) {
-    return false;
-  }
-
-  const pageHost = extractHost(payload.page_url || payload.referrer || "");
-  if (matchesDomainRule(settings.skip_domains, pageHost)) {
-    return false;
-  }
-
-  const normalizedExtension = getNormalizedExtension(
-    payload.suggested_file_name || payload.url || "",
-  );
-  if (matchesExtensionRule(settings.skip_extensions, normalizedExtension)) {
-    return false;
-  }
-
-  if (
-    hasExtensionRules(settings.capture_extensions) &&
-    !matchesExtensionRule(settings.capture_extensions, normalizedExtension)
-  ) {
-    return false;
-  }
-
-  if (settings.minimum_size_mb > 0) {
-    const totalBytes = await probeContentLength(payload.url);
-    const minimumBytes = settings.minimum_size_mb * 1024 * 1024;
-    if (typeof totalBytes === "number" && totalBytes > 0 && totalBytes < minimumBytes) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-async function probeContentLength(targetUrl) {
-  try {
-    const headResponse = await fetch(targetUrl, {
-      method: "HEAD",
-      redirect: "follow",
-    });
-    const headLength = contentLengthFromHeaders(headResponse.headers);
-    if (typeof headLength === "number") {
-      return headLength;
-    }
-  } catch (error) {
-    console.warn("HEAD size probe failed", error);
-  }
-
-  try {
-    const rangeResponse = await fetch(targetUrl, {
-      method: "GET",
-      headers: {
-        Range: "bytes=0-0",
-      },
-      redirect: "follow",
-    });
-    return contentLengthFromHeaders(rangeResponse.headers);
-  } catch (error) {
-    console.warn("Range size probe failed", error);
-    return null;
-  }
-}
-
-function contentLengthFromHeaders(headers) {
-  const contentRange = headers.get("content-range");
-  if (contentRange) {
-    const match = contentRange.match(/\/(\d+)$/);
-    if (match) {
-      return Number(match[1]);
-    }
-  }
-
-  const contentLength = headers.get("content-length");
-  if (contentLength) {
-    const parsed = Number(contentLength);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
-  }
-
-  return null;
-}
-
-function hasExtensionRules(value) {
-  return normalizeRuleList(value).length > 0;
-}
-
-function matchesExtensionRule(ruleText, extension) {
-  if (!extension) {
-    return false;
-  }
-
-  return normalizeRuleList(ruleText).includes(extension);
-}
-
-function matchesDomainRule(ruleText, host) {
-  if (!host) {
-    return false;
-  }
-
-  const normalizedHost = host.toLowerCase();
-  return normalizeRuleList(ruleText).some((rule) => normalizedHost === rule || normalizedHost.endsWith(`.${rule}`));
-}
-
-function normalizeRuleList(value) {
-  return String(value || "")
-    .split(",")
-    .map((entry) => entry.trim().toLowerCase())
-    .filter(Boolean);
-}
-
-function getNormalizedExtension(value) {
-  const source = String(value || "");
-  const dotIndex = source.lastIndexOf(".");
-  if (dotIndex === -1) {
-    return "";
-  }
-
-  return source.slice(dotIndex).toLowerCase();
 }
 
 async function getActiveTab() {

@@ -2830,7 +2830,6 @@ function App() {
                 <span>Status</span>
                 <span>Size</span>
                 <span>Transfer rate</span>
-                <span>Resume</span>
                 <span>Actions</span>
               </div>
               <div className="download-list" key={activeTab}>
@@ -2930,10 +2929,6 @@ function App() {
                           </span>
                           <span>{formatSize(job)}</span>
                           <span>{formatBytes(job.speed_bps)}/s</span>
-                          <span>
-                            {job.is_resumable ? "Yes" : "Unknown"}
-                            {job.retry_count > 0 ? ` / Retry ${job.retry_count}` : ""}
-                          </span>
                           <div className="row-actions">
                             {job.state === "Running" ? (
                               <>
@@ -2968,6 +2963,17 @@ function App() {
                                 Start
                               </button>
                             ) : null}
+                            <button
+                              className="icon-only"
+                              disabled={!job.output_path}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                invoke("reveal_in_folder", { path: job.output_path }).catch(() => {});
+                              }}
+                              title="Show in folder"
+                            >
+                              <FolderInput size={14} strokeWidth={2} />
+                            </button>
                             <button
                               disabled={job.state === "Running"}
                               onClick={(event) => {

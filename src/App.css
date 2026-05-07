@@ -250,7 +250,7 @@ button {
 .table-head,
 .download-primary-row {
   display: grid;
-  grid-template-columns: 28px minmax(230px, 1.8fr) 92px 94px 118px 82px 190px;
+  grid-template-columns: 28px minmax(230px, 1.8fr) 92px 94px 118px 190px;
   align-items: center;
 }
 
@@ -491,6 +491,14 @@ button {
 .row-actions button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
+}
+
+.row-actions button.icon-only {
+  display: grid;
+  width: 26px;
+  padding: 0;
+  place-items: center;
+  color: #93c5fd;
 }
 
 .progress-track {

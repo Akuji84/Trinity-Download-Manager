@@ -477,6 +477,42 @@ fn pause_download_job(state: State<'_, AppState>, id: String) -> Result<(), Stri
 }
 
 #[tauri::command]
+fn reveal_in_folder(path: String) -> Result<(), String> {
+    let path = std::path::Path::new(&path);
+    if !path.exists() {
+        return Err("File does not exist.".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .args(["/select,", &path.to_string_lossy()])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .args(["-R", &path.to_string_lossy()])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // xdg-open the parent folder; no universal "select file" on Linux
+        let parent = path.parent().unwrap_or(path);
+        std::process::Command::new("xdg-open")
+            .arg(parent)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 fn stop_queue(state: State<'_, AppState>) -> Result<(), String> {
     state.queue_running.store(false, Ordering::Relaxed);
 
@@ -1625,7 +1661,8 @@ pub fn run() {
             start_download_job,
             cancel_download_job,
             pause_download_job,
-            stop_queue
+            stop_queue,
+            reveal_in_folder
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

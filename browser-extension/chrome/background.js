@@ -731,69 +731,10 @@ async function captureDownloadClick(payload) {
   if (!payload || !isHttpUrl(payload.url)) {
     return { captured: false, fallbackToBrowser: true };
   }
-
-  const {
-    capturePaused = false,
-    excludedSites = [],
-  } = await chrome.storage.local.get([
-    STORAGE_KEYS.capturePaused,
-    STORAGE_KEYS.excludedSites,
-  ]);
-
-  if (capturePaused) {
-    return { captured: false, fallbackToBrowser: true };
-  }
-
-  const pageHost = extractHost(payload.page_url || payload.referrer || "");
-  if (pageHost && excludedSites.includes(pageHost)) {
-    return { captured: false, fallbackToBrowser: true };
-  }
-
-  if (!cachedBridgeAlive && !(await pingBridge())) {
-    cachedBridgeAlive = false;
-    return {
-      captured: false,
-      fallbackToBrowser: true,
-    };
-  }
-
-  const shouldCaptureDirectly = await shouldUseDirectCapture(payload);
-  if (!shouldCaptureDirectly) {
-    return {
-      captured: false,
-      fallbackToBrowser: true,
-    };
-  }
-
-  const sentToTrinity = await sendToTrinity({
-    url: payload.url,
-    final_url: payload.final_url ?? payload.url,
-    request_method: payload.request_method ?? "GET",
-    request_body: payload.request_body ?? null,
-    page_url: payload.page_url ?? null,
-    suggested_file_name: payload.suggested_file_name ?? deriveSuggestedFileName(payload.url),
-    mime_type: payload.mime_type ?? null,
-    referrer: payload.referrer ?? payload.page_url ?? null,
-    browser: "chrome",
-    user_agent: payload.user_agent ?? navigator.userAgent,
-    cookies: payload.cookies ?? null,
-    output_folder: null,
-  });
-
-  if (!sentToTrinity) {
-    return {
-      captured: false,
-      fallbackToBrowser: true,
-    };
-  }
-
-  markRecentlyCaptured(payload.url);
-  if (payload.page_url) {
-    markRecentlyCaptured(payload.page_url);
-  }
-
-  await showBridgeBadge("CAP", "#145d29");
-  return { captured: true };
+  // Browser-resolved capture is now the primary architecture.
+  // Click/path pre-capture is intentionally disabled so Chrome can resolve
+  // final URLs, filenames, redirects, and gated download flows first.
+  return { captured: false, fallbackToBrowser: true };
 }
 
 async function shouldUseDirectCapture(payload) {

@@ -820,6 +820,24 @@ Exit criteria:
 - The extension now uses a generic response-based probe for likely direct-file clicks instead of relying on host-specific carveouts.
 - This keeps the architecture aligned with the longer-term IDM/FDM-style model: prefer browser resolution for ambiguous flows, and use direct pre-capture only for low-risk direct-file cases.
 
+### 2026-05-07 - Switch browser extension to browser-resolved-first capture
+**Commit:** `pending`
+
+- The direct pre-capture lane was still too optimistic for gated and intermediate endpoints because it classified URLs too early from path/file-extension signals and a shallow probe.
+- The extension now treats the browser-resolved download path as the primary architecture:
+  - page click interception is disabled
+  - programmatic page-hook interception is disabled
+  - stale/legacy `capture-download-click` messages are forced to fall back to the browser instead of direct-capturing
+- Trinity now relies on Chrome's real download resolution first, then takes over from the browser-managed `chrome.downloads.onCreated` flow with the resolved URL, filename, and request/session context.
+- This is the scalable direction we want:
+  - no hardcoded website paths
+  - no guessing from click URLs
+  - prefer actual browser-resolved download metadata over early URL-shape heuristics
+
 ## Next Step
 
-Test and close the remaining site-specific gaps: identify any download flows that still fail after the current method/body/header/cookie/form replay stack, then add only the missing targeted browser request context those sites actually require.
+Test the browser-resolved-first capture path across a few download styles and tighten the browser-managed takeover only if needed:
+- direct CDN file
+- redirected page-to-file download
+- gated/session-bound download
+- JS-triggered browser download

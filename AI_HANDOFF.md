@@ -630,6 +630,39 @@ Exit criteria:
   - segmented part state is persisted on a short interval, so an abrupt kill may lose only the most recent in-flight chunk progress instead of the whole job
   - segmented range support still depends on the source actually honoring HTTP byte-range requests
   - learned host tuning exists only in the backend for now; there is not yet a Preferences or diagnostics UI for inspecting/editing host profiles
+- Fixed extension Options button so it reliably opens Trinity Preferences:
+  - the popup now tries `open-trinity-options` first, then launches via `trinity://launch`, waits for the bridge, and retries
+  - the Rust `/app/open-options` bridge handler focuses/unminimizes the main window then emits an `extension-open-options` event
+  - the React frontend added a `listen("extension-open-options", ...)` useEffect that sets `isSettingsOpen(true)`
+- Added smooth settings slide animation:
+  - both the downloads panel and settings panel are always in the DOM (`position: absolute; inset: 0` inside an `overflow: hidden` view-slot)
+  - settings panel slides in from the right with `transform: translateX(100%)` → `translateX(0)` (320ms spring curve)
+  - fixed a z-index stacking bug where the modal was hidden behind view panels; `.modal-backdrop` now uses `z-index: 200`
+- Added modal open/close animations and new-row entrance animation:
+  - `backdrop-in/out` and `modal-in/out` keyframes animate the add-download dialog
+  - `isAddAnimatingOut` state keeps the modal mounted for 220ms after close to let the exit animation play
+  - `job-row-in` keyframe slides new rows in from the left with a blue left-border accent; `newestJobId` state drives the trigger
+- Added tray right-click context menu:
+  - right-click shows "Open Trinity" / separator / "Close Trinity"
+  - "Close Trinity" calls `app.exit(0)` for a full exit
+  - left-click only (`MouseButton::Left + MouseButtonState::Up`) focuses the main window
+- Added 8 UI micro-animations:
+  - row delete: `job-row-out` keyframe (slide left + fade, 260ms); `deletingJobIds: Set<string>` delays the actual invoke by 280ms
+  - state pill transitions: `transition: background 220ms, border-color 220ms, color 220ms` on `.state-pill`
+  - progress bar shimmer: `shimmer` keyframe sweeps a lighter highlight across the fill bar while `job.state === "Running"`
+  - tab switch fade: `key={activeTab}` on `.download-list` forces remount on tab change; `tab-list-in` keyframe (180ms)
+  - empty state entrance: `empty-state-in` keyframe fires on mount (320ms)
+  - button press feedback: `.tool-button:active, .icon-button:active { transform: scale(0.95) }`
+  - bottom bar speed counter: `font-variant-numeric: tabular-nums` prevents layout shift as digits change
+  - form error slide-in: `form-error-in` keyframe (fade down from -5px, 180ms)
+- Removed Resume column from download table:
+  - removed "Resume" header and the `is_resumable` / retry-count cell from every download row
+  - table grid updated from 7 to 6 columns: `28px minmax(230px, 1.8fr) 92px 94px 118px 190px`
+- Added Show in Folder button to each download row:
+  - a `FolderInput` icon button sits at the left of the Actions area
+  - clicking calls a new `reveal_in_folder` Tauri command with `job.output_path`
+  - Rust implementation: `explorer /select,<path>` on Windows, `open -R` on macOS, `xdg-open <parent>` on Linux
+  - button is disabled when `output_path` is empty (job not yet started/completed)
 
 ## Current Verification Status
 

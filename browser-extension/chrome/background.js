@@ -9,6 +9,14 @@ const CONTEXT_MENU_IDS = {
   page: "trinity-download-page",
 };
 const interceptedDownloadIds = new Set();
+const DOWNLOAD_EXTENSIONS = new Set([
+  "exe", "msi", "pkg", "dmg", "deb", "rpm", "apk",
+  "zip", "rar", "7z", "tar", "gz", "bz2", "xz", "zst",
+  "iso", "img", "torrent",
+  "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm",
+  "mp3", "flac", "aac", "ogg", "wav", "m4a",
+  "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+]);
 const RECENT_CAPTURE_WINDOW_MS = 8000;
 const recentCapturedUrls = new Map();
 
@@ -426,6 +434,29 @@ async function captureDownloadClick(payload) {
     };
   }
 
+  // URLs without a recognized file extension (e.g. page-redirect downloads like
+  // Steam or package manager pages) need Chrome to follow the server's redirect
+  // chain with full session cookies to resolve the real file URL.
+  // We trigger a Chrome download — which includes the browser's cookies — then
+  // handleCreatedDownload intercepts the onCreated event, cancels Chrome's copy,
+  // and hands the resolved final URL over to Trinity.
+  if (!hasDownloadExtension(payload.url)) {
+    try {
+      await new Promise((resolve, reject) => {
+        chrome.downloads.download({ url: payload.url, saveAs: false }, (id) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+          } else {
+            resolve(id);
+          }
+        });
+      });
+      return { captured: true };
+    } catch {
+      // Fall through to direct Trinity capture if browser download API fails
+    }
+  }
+
   const sentToTrinity = await sendToTrinity({
     url: payload.url,
     page_url: payload.page_url ?? null,
@@ -495,6 +526,18 @@ function deriveSuggestedFileName(targetUrl) {
     return finalSegment || null;
   } catch {
     return null;
+  }
+}
+
+function hasDownloadExtension(url) {
+  try {
+    const pathname = new URL(url).pathname;
+    const lastSegment = pathname.split("/").filter(Boolean).at(-1) ?? "";
+    const dotIndex = lastSegment.lastIndexOf(".");
+    if (dotIndex === -1) return false;
+    return DOWNLOAD_EXTENSIONS.has(lastSegment.slice(dotIndex + 1).toLowerCase());
+  } catch {
+    return false;
   }
 }
 

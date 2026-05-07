@@ -61,7 +61,12 @@ siteButton.addEventListener("click", async () => {
 });
 
 optionsButton.addEventListener("click", async () => {
-  await chrome.runtime.sendMessage({ type: "open-trinity-options" });
+  optionsButton.disabled = true;
+  try {
+    await openTrinityOptionsFromPopup();
+  } finally {
+    optionsButton.disabled = false;
+  }
 });
 
 helpButton.addEventListener("click", async () => {
@@ -84,6 +89,45 @@ async function launchTrinityFromPopup() {
   document.body.appendChild(launchFrame);
   await new Promise((resolve) => setTimeout(resolve, 1500));
   launchFrame.remove();
+}
+
+async function openTrinityOptionsFromPopup() {
+  let bridgeStatus = await chrome.runtime.sendMessage({ type: "bridge-status" });
+  if (bridgeStatus?.connected !== true) {
+    setStatus("Opening Trinity...");
+    await launchTrinityFromPopup();
+    bridgeStatus = await waitForBridgeConnection();
+  }
+
+  if (bridgeStatus?.connected !== true) {
+    setStatus("Could not reach Trinity.");
+    return;
+  }
+
+  setStatus("Opening Preferences...");
+  const response = await chrome.runtime.sendMessage({ type: "open-trinity-options" });
+  if (response?.ok === true) {
+    popupState.connected = true;
+    setStatus("Opening Preferences...");
+    window.close();
+    return;
+  }
+
+  setStatus("Could not open Preferences.");
+}
+
+async function waitForBridgeConnection() {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 6000) {
+    const response = await chrome.runtime.sendMessage({ type: "bridge-status" });
+    if (response?.connected === true) {
+      return response;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  }
+
+  return { connected: false };
 }
 
 initializePopup().catch((error) => {

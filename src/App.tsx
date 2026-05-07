@@ -366,6 +366,8 @@ function App() {
   const [outputFolder, setOutputFolder] = useState("");
   const [pendingSuggestedFileName, setPendingSuggestedFileName] = useState("");
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [isAddAnimatingOut, setIsAddAnimatingOut] = useState(false);
+  const [newestJobId, setNewestJobId] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -487,7 +489,10 @@ function App() {
             schedule_to: null,
           },
         })
-          .then(() => refreshJobs())
+          .then((job) => {
+            setNewestJobId(job.id);
+            return refreshJobs();
+          })
           .catch((invokeError) => {
             console.error(invokeError);
             setError(typeof invokeError === "string" ? invokeError : "Could not add download.");
@@ -532,6 +537,12 @@ function App() {
       unlisten?.();
     };
   }, []);
+
+  useEffect(() => {
+    if (!newestJobId) return;
+    const timer = setTimeout(() => setNewestJobId(null), 450);
+    return () => clearTimeout(timer);
+  }, [newestJobId]);
 
   useEffect(() => {
     if (!isSettingsOpen) {
@@ -712,6 +723,7 @@ function App() {
         },
       });
       setJobs((currentJobs) => [job, ...currentJobs]);
+      setNewestJobId(job.id);
       setUrl("");
       setPendingSuggestedFileName("");
       setOutputFolder("");
@@ -721,7 +733,11 @@ function App() {
       setScheduleTo("10:00");
       setUrlMetadata(null);
       setUrlMetadataError("");
-      setIsAddOpen(false);
+      setIsAddAnimatingOut(true);
+      setTimeout(() => {
+        setIsAddOpen(false);
+        setIsAddAnimatingOut(false);
+      }, 220);
       await refreshJobs();
     } catch (caughtError) {
       setError(String(caughtError));
@@ -745,8 +761,12 @@ function App() {
   }
 
   function closeAddDialog() {
-    setIsAddOpen(false);
-    setPendingSuggestedFileName("");
+    setIsAddAnimatingOut(true);
+    setTimeout(() => {
+      setIsAddOpen(false);
+      setIsAddAnimatingOut(false);
+      setPendingSuggestedFileName("");
+    }, 220);
   }
 
   async function deleteJob(id: string) {
@@ -2827,7 +2847,7 @@ function App() {
 
                     return (
                       <article
-                        className={`download-row ${isSelected ? "selected" : ""} ${
+                        className={`download-row ${job.id === newestJobId ? "new-job " : ""}${isSelected ? "selected" : ""} ${
                           dropTargetJobId === job.id ? "drop-target" : ""
                         }`}
                         draggable={isQueueManageable(job)}
@@ -2970,10 +2990,10 @@ function App() {
       </footer>
 
       {isAddOpen ? (
-        <div className="modal-backdrop" role="presentation">
+        <div className={`modal-backdrop${isAddAnimatingOut ? " closing" : ""}`} role="presentation">
           <section
             aria-labelledby="add-download-title"
-            className="modal new-download-modal"
+            className={`modal new-download-modal${isAddAnimatingOut ? " closing" : ""}`}
             role="dialog"
           >
             <div className="modal-header">

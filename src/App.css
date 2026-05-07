@@ -950,6 +950,56 @@ button {
   align-self: end;
 }
 
+@keyframes backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes backdrop-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes modal-out {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.97) translateY(8px);
+  }
+}
+
+@keyframes job-row-in {
+  0% {
+    opacity: 0;
+    transform: translateX(-18px);
+    box-shadow: inset 3px 0 0 #1aa3ed;
+  }
+  55% {
+    opacity: 1;
+    transform: translateX(0);
+    box-shadow: inset 3px 0 0 #1aa3ed;
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+    box-shadow: none;
+  }
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -957,6 +1007,11 @@ button {
   place-items: center;
   padding: 24px;
   background: rgba(0, 0, 0, 0.58);
+  animation: backdrop-in 180ms ease forwards;
+}
+
+.modal-backdrop.closing {
+  animation: backdrop-out 200ms ease forwards;
 }
 
 .modal {
@@ -965,6 +1020,15 @@ button {
   border-radius: 2px;
   background: #2c2f32;
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  animation: modal-in 240ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.modal.closing {
+  animation: modal-out 200ms ease forwards;
+}
+
+.download-row.new-job {
+  animation: job-row-in 420ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
 .new-download-modal {

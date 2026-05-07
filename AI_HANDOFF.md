@@ -700,6 +700,16 @@ Exit criteria:
 - Added Content-Type guard in `download_engine.rs` (`download_single_stream`): if the server responds with `text/html`, the job immediately fails with "URL returned a web page, not a downloadable file. Use the direct file URL." instead of saving HTML as `download.bin`. This catches the Steam/page-redirect case with a meaningful error.
 - Result: Discord ✓ (pre-captured, Trinity follows redirect to CDN exe), Steam: clear error instead of silent junk download.
 
+### 2026-05-07 — Browser-assisted redirect capture for page-redirect downloads
+**Commit:** `2e2d48e` — "Use browser redirect for no-extension downloads"
+
+- For URLs without a recognized file extension (Steam, package manager pages, etc.), `captureDownloadClick` in `background.js` now calls `chrome.downloads.download()` instead of sending to Trinity directly. Chrome follows the server's redirect chain with full session cookies, resolving the real CDN/file URL.
+- `handleCreatedDownload` intercepts the `onCreated` event for that Chrome download, immediately cancels Chrome's copy, and sends `downloadItem.finalUrl` (the resolved file URL) to Trinity.
+- For URLs WITH a recognized file extension (Discord CDN, direct .exe/.zip links), the existing direct Trinity path is used unchanged.
+- `DOWNLOAD_EXTENSIONS` set and `hasDownloadExtension()` added to `background.js` (mirrors content.js).
+- Result: Steam → Chrome follows with session cookies → CDN .exe URL → Trinity downloads ✓. Discord → direct extension (has .exe in final URL after pre-capture) or same path ✓.
+- The HTML content-type guard in `download_engine.rs` remains as a safety net for any HTML that slips through.
+
 ## Next Step
 
 Show browser-capture state more clearly inside Trinity Preferences so users can see that Chrome capture is live, what rules are active, and whether Trinity is currently reachable from the extension bridge.

@@ -518,6 +518,15 @@ async function getBrowserSettings() {
       method: "GET",
       cache: "no-store",
     });
+    if (response.status === 404) {
+      cachedBridgeAlive = true;
+      cachedBrowserSettings = {
+        expiresAt: Date.now() + BROWSER_SETTINGS_CACHE_TTL_MS,
+        value: DEFAULT_BROWSER_SETTINGS,
+      };
+      return cachedBrowserSettings.value;
+    }
+
     if (!response.ok) {
       throw new Error(`Bridge returned HTTP ${response.status}`);
     }

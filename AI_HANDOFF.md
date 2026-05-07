@@ -589,6 +589,9 @@ Exit criteria:
   - if click/page capture cannot reach Trinity through the bridge, the content script now launches `trinity://launch`, waits for the bridge to come up, then retries the same capture request
   - only after that retry fails does the extension allow the browser's native download/save flow to continue
   - this is the fix for the regression where reinstalling the app/extension caused Chrome `Save As` to win immediately instead of Trinity taking over
+- Hardened extension/browser-settings compatibility:
+  - if the bridge is alive but `/app/browser-settings` returns `404`, the extension now treats that as an older Trinity build and falls back to default browser settings
+  - that `404` no longer marks the bridge as dead or blocks capture
 - Hardened content-script bridge calls against extension reload/invalidation:
   - `content.js` now checks that the extension runtime context is still valid before calling `chrome.runtime.sendMessage(...)`
   - message sends are wrapped so an invalidated extension context falls back cleanly instead of throwing an uncaught page error

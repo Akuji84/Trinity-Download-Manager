@@ -142,6 +142,12 @@ function shouldCaptureCandidate(candidate, payload) {
     return true;
   }
 
+  // Non-extension URLs (page-redirect downloads like Steam) must not be pre-captured.
+  // Let Chrome navigate naturally; handleCreatedDownload will intercept the resolved download.
+  if (!hasDownloadExtension(payload.url)) {
+    return false;
+  }
+
   const url = payload.url;
   const combinedText = [
     candidate.textContent || "",

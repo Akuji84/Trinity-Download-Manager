@@ -256,9 +256,14 @@ async function handleCreatedDownload(downloadItem) {
   }
 
   // Use cached bridge status to make the capture decision without a network round-trip.
-  // This lets us cancel the Chrome download before it makes meaningful progress.
+  // Fall back to a live ping when the cache says false — handles the startup race where
+  // cachedBridgeAlive hasn't been populated yet but the bridge is actually running.
   if (!cachedBridgeAlive) {
-    return;
+    const alive = await pingBridge();
+    cachedBridgeAlive = alive;
+    if (!alive) {
+      return;
+    }
   }
 
   const targetUrl = downloadItem.finalUrl || downloadItem.url || "";
@@ -432,29 +437,6 @@ async function captureDownloadClick(payload) {
       captured: false,
       fallbackToBrowser: true,
     };
-  }
-
-  // URLs without a recognized file extension (e.g. page-redirect downloads like
-  // Steam or package manager pages) need Chrome to follow the server's redirect
-  // chain with full session cookies to resolve the real file URL.
-  // We trigger a Chrome download — which includes the browser's cookies — then
-  // handleCreatedDownload intercepts the onCreated event, cancels Chrome's copy,
-  // and hands the resolved final URL over to Trinity.
-  if (!hasDownloadExtension(payload.url)) {
-    try {
-      await new Promise((resolve, reject) => {
-        chrome.downloads.download({ url: payload.url, saveAs: false }, (id) => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-          } else {
-            resolve(id);
-          }
-        });
-      });
-      return { captured: true };
-    } catch {
-      // Fall through to direct Trinity capture if browser download API fails
-    }
   }
 
   const sentToTrinity = await sendToTrinity({

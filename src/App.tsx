@@ -419,6 +419,9 @@ function App() {
   const preferencesContentRef = useRef<HTMLElement | null>(null);
   const pendingIconKeysRef = useRef<Set<string>>(new Set());
   const settingsRef = useRef(settings);
+  const isExtensionPrefilledDownload = pendingSuggestedFileName.trim().length > 0;
+  const extensionDisplayFileName =
+    pendingSuggestedFileName.trim() || urlMetadata?.file_name || "";
 
   useEffect(() => {
     settingsRef.current = settings;
@@ -3044,18 +3047,22 @@ function App() {
                 </div>
               </label>
               <label className="field-block">
-                <span>URL</span>
-                <input
-                  autoFocus
-                  onChange={(event) => {
-                    setUrl(event.currentTarget.value);
-                    setPendingSuggestedFileName("");
-                  }}
-                  placeholder="https://example.com/file.zip"
-                  required
-                  type="url"
-                  value={url}
-                />
+                <span>{isExtensionPrefilledDownload ? "File name" : "URL"}</span>
+                {isExtensionPrefilledDownload ? (
+                  <input readOnly type="text" value={extensionDisplayFileName} />
+                ) : (
+                  <input
+                    autoFocus
+                    onChange={(event) => {
+                      setUrl(event.currentTarget.value);
+                      setPendingSuggestedFileName("");
+                    }}
+                    placeholder="https://example.com/file.zip"
+                    required
+                    type="url"
+                    value={url}
+                  />
+                )}
               </label>
 
               <div className="scheduler-row">

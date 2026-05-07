@@ -668,6 +668,9 @@ Exit criteria:
   - this keeps Steam-style landing pages from being swallowed before the browser can navigate to the real redirected download
   - `page-hook.js` now uses the same strong-URL rules instead of broad `download/install` text matching for programmatic navigation
   - the page hook also tracks in-flight and recently successful capture URLs so duplicate JS-triggered download calls for the same URL do not reopen Chrome's own download flow after Trinity already accepted the job
+- Updated the Add Download modal for browser-fetched downloads:
+  - when Trinity opens the modal from an extension/browser handoff with a suggested filename, the dialog now shows `File name` and the browser-provided filename instead of exposing the raw URL in the main field
+  - manual Add URL flow remains unchanged and still shows an editable `URL` field
 
 ## Current Verification Status
 

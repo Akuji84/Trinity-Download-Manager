@@ -1,4 +1,5 @@
 const statusNode = document.getElementById("popup-status");
+const debugPathNode = document.getElementById("popup-debug-path");
 const captureButton = document.getElementById("toggle-capture");
 const siteButton = document.getElementById("toggle-site");
 const debugButton = document.getElementById("toggle-debug");
@@ -11,6 +12,7 @@ let popupState = {
   siteExcluded: false,
   siteHost: "",
   debugMode: false,
+  debugLogPath: "",
 };
 
 async function initializePopup() {
@@ -36,6 +38,9 @@ function render() {
         ? "Trinity is connected."
         : "Trinity is not running.",
   );
+  debugPathNode.textContent = popupState.debugMode && popupState.debugLogPath
+    ? `Debug log file: ${popupState.debugLogPath}`
+    : "";
   captureButton.textContent = popupState.capturePaused
     ? "Resume catching downloads from all sites"
     : "Pause to catch downloads from all sites";
@@ -102,6 +107,7 @@ function normalizePopupState(response) {
     siteExcluded: response?.siteExcluded === true,
     siteHost: response?.siteHost ?? "",
     debugMode: response?.debugMode === true,
+    debugLogPath: response?.debugLogPath ?? "",
   };
 }
 

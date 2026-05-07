@@ -870,6 +870,10 @@ Exit criteria:
   - `chrome.downloads.onCreated`
   - resolver entry/probe results
   - final Trinity handoff payloads if a handoff path is exercised
+- Debug events are now also persisted to a real file through Trinity's local bridge:
+  - extension debug events POST to `/debug/log`
+  - Trinity appends line-delimited JSON entries to `browser-capture-debug.log` in the app data directory
+  - the extension popup shows the current resolved log-file path while debug mode is enabled
 - This mode exists specifically to observe what the browser actually does for difficult sites before changing capture logic again.
 
 ## Next Step

@@ -26,12 +26,41 @@ const MAX_CAPTURE_RESOLUTION_DEPTH = 4;
 const MIN_CONFIDENT_FILE_SIZE_BYTES = 64 * 1024;
 const recentCapturedUrls = new Map();
 const recentRequestMetadata = new Map();
+let debugLogFlushInFlight = false;
+
+function shouldSkipDebugUrl(url) {
+  return typeof url === "string" && url.startsWith(BRIDGE_BASE_URL);
+}
 
 function debugLog(stage, details = {}) {
-  console.log(`[Trinity Debug] ${stage}`, {
+  const entry = {
     timestamp: new Date().toISOString(),
+    stage,
     ...details,
-  });
+  };
+  console.log(`[Trinity Debug] ${stage}`, entry);
+  void postDebugLog(entry);
+}
+
+async function postDebugLog(entry) {
+  if (debugLogFlushInFlight) {
+    return;
+  }
+
+  debugLogFlushInFlight = true;
+  try {
+    await fetch(`${BRIDGE_BASE_URL}/debug/log`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(entry),
+    });
+  } catch (error) {
+    console.warn("Could not persist Trinity debug log entry", error);
+  } finally {
+    debugLogFlushInFlight = false;
+  }
 }
 
 // Cached bridge status so onCreated can cancel immediately without a network round-trip
@@ -41,6 +70,9 @@ refreshCachedBridgeStatus();
 
 chrome.webRequest.onBeforeRequest.addListener(
   async (details) => {
+    if (shouldSkipDebugUrl(details?.url || "")) {
+      return;
+    }
     if (await isDebugModeEnabled()) {
       debugLog("webRequest.onBeforeRequest", {
         url: details?.url || "",
@@ -58,6 +90,9 @@ chrome.webRequest.onBeforeRequest.addListener(
 
 chrome.webRequest.onBeforeSendHeaders.addListener(
   async (details) => {
+    if (shouldSkipDebugUrl(details?.url || "")) {
+      return;
+    }
     if (await isDebugModeEnabled()) {
       debugLog("webRequest.onBeforeSendHeaders", {
         url: details?.url || "",
@@ -73,6 +108,9 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
 
 chrome.webRequest.onHeadersReceived.addListener(
   async (details) => {
+    if (shouldSkipDebugUrl(details?.url || "")) {
+      return;
+    }
     if (await isDebugModeEnabled()) {
       debugLog("webRequest.onHeadersReceived", {
         url: details?.url || "",
@@ -90,6 +128,9 @@ chrome.webRequest.onHeadersReceived.addListener(
 
 chrome.webRequest.onResponseStarted.addListener(
   async (details) => {
+    if (shouldSkipDebugUrl(details?.url || "")) {
+      return;
+    }
     if (await isDebugModeEnabled()) {
       debugLog("webRequest.onResponseStarted", {
         url: details?.url || "",
@@ -683,6 +724,7 @@ async function getPopupState() {
     siteExcluded: siteHost ? excludedSites.includes(siteHost) : false,
     siteHost,
     debugMode,
+    debugLogPath: await getDebugLogPath(),
   };
 }
 
@@ -860,6 +902,22 @@ async function toggleDebugMode() {
   await chrome.storage.local.set({ [STORAGE_KEYS.debugMode]: nextValue });
   debugLog("debug-mode-toggle", { enabled: nextValue });
   return { debugMode: nextValue };
+}
+
+async function getDebugLogPath() {
+  try {
+    const response = await fetch(`${BRIDGE_BASE_URL}/app/debug-log-path`, {
+      method: "GET",
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return "";
+    }
+    const payload = await response.json();
+    return payload?.path || "";
+  } catch {
+    return "";
+  }
 }
 
 async function toggleSiteExclusion(siteHost) {

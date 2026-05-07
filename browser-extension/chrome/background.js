@@ -355,6 +355,9 @@ async function sendToTrinity(payload) {
         pageUrl: enrichedPayload.page_url,
         suggestedFileName: enrichedPayload.suggested_file_name,
         mimeType: enrichedPayload.mime_type,
+        observedFileName: enrichedPayload.observed_file_name || null,
+        observedContentType: enrichedPayload.observed_content_type || null,
+        observedContentLength: enrichedPayload.observed_content_length ?? null,
         requestMethod: enrichedPayload.request_method,
         requestHeaders: enrichedPayload.request_headers || null,
         cookieCount: Array.isArray(enrichedPayload.cookies) ? enrichedPayload.cookies.length : 0,
@@ -719,6 +722,32 @@ function summarizeDownloadTransaction(transaction) {
   };
 }
 
+function deriveObservedFileNameFromHeaders(responseHeaders) {
+  const contentDisposition = String(responseHeaders?.["content-disposition"] || "").trim();
+  if (!contentDisposition) {
+    return null;
+  }
+
+  for (const part of contentDisposition.split(";")) {
+    const trimmedPart = part.trim();
+    if (trimmedPart.toLowerCase().startsWith("filename*=")) {
+      const rawValue = trimmedPart.slice("filename*=".length).trim();
+      const encodedValue = rawValue.replace(/^UTF-8''/i, "").replace(/^["']|["']$/g, "");
+      try {
+        return decodeURIComponent(encodedValue);
+      } catch {
+        return encodedValue;
+      }
+    }
+
+    if (trimmedPart.toLowerCase().startsWith("filename=")) {
+      return trimmedPart.slice("filename=".length).trim().replace(/^["']|["']$/g, "");
+    }
+  }
+
+  return null;
+}
+
 function extractReplayHeaders(requestHeaders) {
   if (!Array.isArray(requestHeaders) || requestHeaders.length === 0) {
     return null;
@@ -1022,6 +1051,16 @@ async function handleCreatedDownload(downloadItem) {
     page_url: pageUrl,
     suggested_file_name: deriveDownloadItemFileName(downloadItem),
     mime_type: transaction?.responseHeaders?.["content-type"] || downloadItem.mime || null,
+    response_status: transaction?.statusCode ?? null,
+    response_headers: transaction?.responseHeaders || null,
+    observed_file_name:
+      deriveObservedFileNameFromHeaders(transaction?.responseHeaders) ||
+      deriveDownloadItemFileName(downloadItem),
+    observed_content_type: transaction?.responseHeaders?.["content-type"] || downloadItem.mime || null,
+    observed_content_length: transaction?.responseHeaders?.["content-length"]
+      ? Number(transaction.responseHeaders["content-length"]) || null
+      : null,
+    observed_accept_ranges: transaction?.responseHeaders?.["accept-ranges"] || null,
     referrer: downloadItem.referrer || pageUrl || null,
     browser: "chrome",
     user_agent: navigator.userAgent,

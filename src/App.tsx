@@ -103,6 +103,12 @@ type ExtensionDownloadRequest = {
   page_url?: string | null;
   suggested_file_name?: string | null;
   mime_type?: string | null;
+  response_status?: number | null;
+  response_headers?: Record<string, string> | null;
+  observed_file_name?: string | null;
+  observed_content_type?: string | null;
+  observed_content_length?: number | null;
+  observed_accept_ranges?: string | null;
   referrer?: string | null;
   browser?: string | null;
   user_agent?: string | null;
@@ -494,11 +500,22 @@ function App() {
     listen<ExtensionDownloadRequest>("extension-download-request", (event) => {
       const payload = event.payload;
       const resolvedUrl = payload.final_url?.trim() || (payload.url ?? "");
+      const observedFileName =
+        payload.observed_file_name?.trim() ||
+        payload.suggested_file_name?.trim() ||
+        deriveFileNameFromUrl(resolvedUrl);
+      const observedMetadata =
+        observedFileName || payload.observed_content_length != null
+          ? {
+              file_name: observedFileName || deriveFileNameFromUrl(resolvedUrl),
+              total_bytes: payload.observed_content_length ?? null,
+            }
+          : null;
       if (settingsRef.current.browser_start_without_confirmation) {
         void invoke<DownloadJob>("create_download_job", {
           request: {
             url: resolvedUrl,
-            suggested_file_name: payload.suggested_file_name?.trim() || null,
+            suggested_file_name: observedFileName || null,
             output_folder: payload.output_folder?.trim() || null,
             scheduler_enabled: false,
             schedule_days: [],
@@ -519,13 +536,13 @@ function App() {
 
       setError("");
       setUrl(resolvedUrl);
-      setPendingSuggestedFileName(payload.suggested_file_name?.trim() ?? "");
+      setPendingSuggestedFileName(observedFileName ?? "");
       setOutputFolder(payload.output_folder?.trim() ?? "");
       setIsSchedulerEnabled(false);
       setScheduleDays(SCHEDULE_DAYS);
       setScheduleFrom("06:00");
       setScheduleTo("10:00");
-      setUrlMetadata(null);
+      setUrlMetadata(observedMetadata);
       setUrlMetadataError("");
       setIsAddOpen(true);
     })

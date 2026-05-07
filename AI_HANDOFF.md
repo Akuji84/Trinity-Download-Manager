@@ -918,6 +918,22 @@ Exit criteria:
   - the browser download item still drives takeover timing
   - the extension is now beginning to trust the browser's real request/response transaction instead of rebuilding everything from looser URL-based guesses
 
+### 2026-05-07 - Carry browser-observed response metadata through the handoff
+**Commit:** `pending`
+
+- Extended the browser handoff contract with browser-observed response-side metadata:
+  - `response_status`
+  - `response_headers`
+  - `observed_file_name`
+  - `observed_content_type`
+  - `observed_content_length`
+  - `observed_accept_ranges`
+- `downloads.onCreated` now sends those observed values from the matched browser transaction when available.
+- The app-side browser download modal now trusts browser-observed values first:
+  - prefilled file name prefers `observed_file_name`
+  - initial modal size metadata prefers `observed_content_length`
+- Trinity-side inspect still exists, but for browser-originated downloads it is now secondary validation instead of the first source of truth for what Chrome already observed.
+
 ## Next Step
 
 Test the deferred resolver against a few download styles and tighten the generic file-proof rules if needed:

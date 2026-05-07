@@ -23,6 +23,9 @@
     requestCapture(
       {
         url: toAbsoluteHttpUrl(url),
+        final_url: toAbsoluteHttpUrl(url),
+        request_method: "GET",
+        request_body: null,
         page_url: window.location.href,
         suggested_file_name: deriveSuggestedFileName(url),
         mime_type: null,
@@ -46,6 +49,9 @@
     requestCapture(
       {
         url: this.href,
+        final_url: this.href,
+        request_method: "GET",
+        request_body: null,
         page_url: window.location.href,
         suggested_file_name: this.download || deriveSuggestedFileName(this.href),
         mime_type: null,
@@ -67,6 +73,9 @@
     requestCapture(
       {
         url: toAbsoluteHttpUrl(url),
+        final_url: toAbsoluteHttpUrl(url),
+        request_method: "GET",
+        request_body: null,
         page_url: window.location.href,
         suggested_file_name: deriveSuggestedFileName(url),
         mime_type: null,
@@ -88,6 +97,9 @@
     requestCapture(
       {
         url: toAbsoluteHttpUrl(url),
+        final_url: toAbsoluteHttpUrl(url),
+        request_method: "GET",
+        request_body: null,
         page_url: window.location.href,
         suggested_file_name: deriveSuggestedFileName(url),
         mime_type: null,

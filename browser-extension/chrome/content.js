@@ -130,6 +130,9 @@ function buildPayload(candidate) {
 
   return {
     url,
+    final_url: url,
+    request_method: "GET",
+    request_body: null,
     page_url: window.location.href,
     suggested_file_name: deriveSuggestedFileName(url, candidate),
     mime_type: null,

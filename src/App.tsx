@@ -95,6 +95,8 @@ type DownloadUrlMetadata = {
 type ExtensionDownloadRequest = {
   url: string;
   final_url?: string | null;
+  request_method?: string | null;
+  request_body?: string | null;
   page_url?: string | null;
   suggested_file_name?: string | null;
   mime_type?: string | null;

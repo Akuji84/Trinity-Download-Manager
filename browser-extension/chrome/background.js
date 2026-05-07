@@ -62,6 +62,8 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   await sendToTrinity({
     url: selectedUrl,
     final_url: selectedUrl,
+    request_method: "GET",
+    request_body: null,
     page_url: info.pageUrl ?? tab?.url ?? null,
     suggested_file_name: deriveSuggestedFileName(selectedUrl),
     mime_type: null,
@@ -177,6 +179,8 @@ async function sendTabToTrinity(tab) {
   await sendToTrinity({
     url: currentUrl,
     final_url: currentUrl,
+    request_method: "GET",
+    request_body: null,
     page_url: currentUrl,
     suggested_file_name: deriveSuggestedFileName(currentUrl),
     mime_type: null,
@@ -328,6 +332,8 @@ async function handleCreatedDownload(downloadItem) {
   const sentToTrinity = await sendToTrinity({
     url: downloadItem.url,
     final_url: downloadItem.finalUrl || downloadItem.url,
+    request_method: "GET",
+    request_body: null,
     page_url: pageUrl,
     suggested_file_name: deriveDownloadItemFileName(downloadItem),
     mime_type: downloadItem.mime || null,
@@ -452,6 +458,8 @@ async function captureDownloadClick(payload) {
   const sentToTrinity = await sendToTrinity({
     url: payload.url,
     final_url: payload.final_url ?? payload.url,
+    request_method: payload.request_method ?? "GET",
+    request_body: payload.request_body ?? null,
     page_url: payload.page_url ?? null,
     suggested_file_name: payload.suggested_file_name ?? deriveSuggestedFileName(payload.url),
     mime_type: payload.mime_type ?? null,

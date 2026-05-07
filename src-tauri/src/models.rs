@@ -124,6 +124,8 @@ pub struct DownloadUrlMetadata {
 pub struct ExtensionDownloadRequest {
     pub url: String,
     pub final_url: Option<String>,
+    pub request_method: Option<String>,
+    pub request_body: Option<String>,
     pub page_url: Option<String>,
     pub suggested_file_name: Option<String>,
     pub mime_type: Option<String>,

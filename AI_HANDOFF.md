@@ -702,6 +702,10 @@ Exit criteria:
   - the localhost bridge advertises `downloadHandoffVersion: 2` from `/app/ping`
   - Trinity now prefers `final_url` when validating and consuming extension download requests
   - the Chrome extension now sends both the original URL and resolved `final_url` where available, plus `user_agent` and cookie placeholders for the next browser-session transfer step
+- Extended browser handoff contract v2 with request replay fields:
+  - `ExtensionDownloadRequest` now also supports `request_method` and `request_body`
+  - current extension paths populate safe defaults (`GET`, `null`) for direct link, context-menu, content-script, page-hook, and browser-download-item handoffs
+  - this does not replay POST/browser-authenticated requests yet; it establishes the cross-process contract so the next step can start sending real non-GET metadata where available
 
 ## Current Verification Status
 
@@ -768,4 +772,4 @@ Exit criteria:
 
 ## Next Step
 
-Add request method/body fields and session-transfer support to the browser handoff, then start using those richer fields for gated/redirected sites that need more than a resolved `final_url`.
+Start session-transfer support for browser handoff: capture and forward browser cookies for download requests, then use them on the Rust side when resolving/browser-gated downloads.

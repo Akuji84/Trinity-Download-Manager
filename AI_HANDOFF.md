@@ -570,6 +570,11 @@ Exit criteria:
   - the Chrome extension now fetches those settings from Trinity and enforces intercept enabled/disabled, skip domains, skip extensions, capture extensions, minimum known size, fixed native fallback, and INSERT-key bypass
   - the popup `Options` action still routes into Trinity Preferences, but the extension-side dead browser options code path was removed
   - extension-triggered downloads now honor `Start downloading without confirmation` by creating the job directly instead of always opening the Add Download dialog
+- Preserved extension-provided suggested filenames end to end:
+  - `create_download_job` now accepts an optional `suggested_file_name`
+  - silent extension captures pass the browser-provided filename directly into backend job creation
+  - extension-launched Add Download flows keep that suggested filename attached until the user confirms, unless they manually edit the URL
+  - manual Add URL opens clear any extension-provided filename state so normal URL-derived naming stays untouched
 - Hardened content-script bridge calls against extension reload/invalidation:
   - `content.js` now checks that the extension runtime context is still valid before calling `chrome.runtime.sendMessage(...)`
   - message sends are wrapped so an invalidated extension context falls back cleanly instead of throwing an uncaught page error
@@ -611,4 +616,4 @@ Exit criteria:
 
 ## Next Step
 
-Add end-to-end support for extension-provided suggested filenames so browser-triggered downloads can preserve the browser's filename both in the Add Download dialog flow and in silent `start without confirmation` captures.
+Show browser-capture state more clearly inside Trinity Preferences so users can see that Chrome capture is live, what rules are active, and whether Trinity is currently reachable from the extension bridge.

@@ -364,6 +364,7 @@ function App() {
   const [systemIcons, setSystemIcons] = useState<Record<string, string>>({});
   const [url, setUrl] = useState("");
   const [outputFolder, setOutputFolder] = useState("");
+  const [pendingSuggestedFileName, setPendingSuggestedFileName] = useState("");
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -478,6 +479,7 @@ function App() {
         void invoke<DownloadJob>("create_download_job", {
           request: {
             url: payload.url ?? "",
+            suggested_file_name: payload.suggested_file_name?.trim() || null,
             output_folder: payload.output_folder?.trim() || null,
             scheduler_enabled: false,
             schedule_days: [],
@@ -495,6 +497,7 @@ function App() {
 
       setError("");
       setUrl(payload.url ?? "");
+      setPendingSuggestedFileName(payload.suggested_file_name?.trim() ?? "");
       setOutputFolder(payload.output_folder?.trim() ?? "");
       setIsSchedulerEnabled(false);
       setScheduleDays(SCHEDULE_DAYS);
@@ -700,6 +703,7 @@ function App() {
       const job = await invoke<DownloadJob>("create_download_job", {
         request: {
           url,
+          suggested_file_name: pendingSuggestedFileName || null,
           output_folder: outputFolder || null,
           scheduler_enabled: isSchedulerEnabled,
           schedule_days: isSchedulerEnabled ? scheduleDays : [],
@@ -709,6 +713,7 @@ function App() {
       });
       setJobs((currentJobs) => [job, ...currentJobs]);
       setUrl("");
+      setPendingSuggestedFileName("");
       setOutputFolder("");
       setIsSchedulerEnabled(false);
       setScheduleDays(SCHEDULE_DAYS);
@@ -723,6 +728,25 @@ function App() {
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  function openBlankAddDialog() {
+    setError("");
+    setUrl("");
+    setPendingSuggestedFileName("");
+    setOutputFolder("");
+    setIsSchedulerEnabled(false);
+    setScheduleDays(SCHEDULE_DAYS);
+    setScheduleFrom("06:00");
+    setScheduleTo("10:00");
+    setUrlMetadata(null);
+    setUrlMetadataError("");
+    setIsAddOpen(true);
+  }
+
+  function closeAddDialog() {
+    setIsAddOpen(false);
+    setPendingSuggestedFileName("");
   }
 
   async function deleteJob(id: string) {
@@ -1066,7 +1090,7 @@ function App() {
   return (
     <main className="app-shell">
       <section className="command-bar" aria-label="Download commands">
-        <button className="tool-button add" onClick={() => setIsAddOpen(true)}>
+        <button className="tool-button add" onClick={() => openBlankAddDialog()}>
           <span>
             <Plus size={30} strokeWidth={2.4} />
           </span>
@@ -2955,7 +2979,7 @@ function App() {
           >
             <div className="modal-header">
               <h3 id="add-download-title">New download</h3>
-              <button aria-label="Close" onClick={() => setIsAddOpen(false)}>
+              <button aria-label="Close" onClick={() => closeAddDialog()}>
                 <X size={17} strokeWidth={2} />
               </button>
             </div>
@@ -2990,7 +3014,10 @@ function App() {
                 <span>URL</span>
                 <input
                   autoFocus
-                  onChange={(event) => setUrl(event.currentTarget.value)}
+                  onChange={(event) => {
+                    setUrl(event.currentTarget.value);
+                    setPendingSuggestedFileName("");
+                  }}
                   placeholder="https://example.com/file.zip"
                   required
                   type="url"
@@ -3057,7 +3084,7 @@ function App() {
 
               {error ? <p className="form-error">{error}</p> : null}
               <div className="form-actions">
-                <button type="button" onClick={() => setIsAddOpen(false)}>
+                <button type="button" onClick={() => closeAddDialog()}>
                   Cancel
                 </button>
                 <button className="primary-action" disabled={isSubmitting}>

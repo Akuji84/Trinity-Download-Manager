@@ -201,7 +201,13 @@ fn create_download_job(
         _ => return Err("Only HTTP and HTTPS URLs are supported right now.".to_string()),
     }
 
-    let file_name = derive_file_name(&parsed_url);
+    let file_name = request
+        .suggested_file_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(sanitize_file_name)
+        .unwrap_or_else(|| derive_file_name(&parsed_url));
     let output_folder = match &request.output_folder {
         Some(folder) if !folder.trim().is_empty() => PathBuf::from(folder.trim()),
         _ => default_download_folder(&app)?,

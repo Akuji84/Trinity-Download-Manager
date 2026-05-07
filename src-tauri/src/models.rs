@@ -106,6 +106,7 @@ pub struct ReorderDownloadJobRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateDownloadJobRequest {
     pub url: String,
+    pub suggested_file_name: Option<String>,
     pub output_folder: Option<String>,
     pub scheduler_enabled: bool,
     pub schedule_days: Vec<String>,

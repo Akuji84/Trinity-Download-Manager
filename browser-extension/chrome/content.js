@@ -1,5 +1,14 @@
 const DOWNLOAD_HINT_PATTERN =
   /(download|installer|install|setup|exe|msi|zip|rar|7z|pkg|dmg|apk|iso|torrent)/i;
+
+const DOWNLOAD_EXTENSIONS = new Set([
+  "exe", "msi", "pkg", "dmg", "deb", "rpm", "apk",
+  "zip", "rar", "7z", "tar", "gz", "bz2", "xz", "zst",
+  "iso", "img", "bin", "torrent",
+  "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm",
+  "mp3", "flac", "aac", "ogg", "wav", "m4a",
+  "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+]);
 const PAGE_CAPTURE_EVENT = "trinity-page-download-capture";
 const PAGE_CAPTURE_RESULT_EVENT = "trinity-page-download-result";
 
@@ -133,6 +142,14 @@ function shouldCaptureCandidate(candidate, payload) {
     return true;
   }
 
+  // Only pre-capture when the URL itself points directly to a file.
+  // For page-style URLs (no recognized file extension), skip pre-capture and
+  // let Chrome follow the link naturally — onCreated will fire with the real
+  // final download URL after any server-side redirects, and we cancel it there.
+  if (!hasDownloadExtension(payload.url)) {
+    return false;
+  }
+
   const url = payload.url;
   const combinedText = [
     candidate.textContent || "",
@@ -144,6 +161,18 @@ function shouldCaptureCandidate(candidate, payload) {
     .trim();
 
   return DOWNLOAD_HINT_PATTERN.test(combinedText);
+}
+
+function hasDownloadExtension(url) {
+  try {
+    const pathname = new URL(url).pathname;
+    const lastSegment = pathname.split("/").filter(Boolean).at(-1) ?? "";
+    const dotIndex = lastSegment.lastIndexOf(".");
+    if (dotIndex === -1) return false;
+    return DOWNLOAD_EXTENSIONS.has(lastSegment.slice(dotIndex + 1).toLowerCase());
+  } catch {
+    return false;
+  }
 }
 
 function fallbackToBrowser(candidate, url) {

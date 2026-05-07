@@ -71,6 +71,41 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
   ["requestHeaders", "extraHeaders"],
 );
 
+chrome.webRequest.onHeadersReceived.addListener(
+  async (details) => {
+    if (await isDebugModeEnabled()) {
+      debugLog("webRequest.onHeadersReceived", {
+        url: details?.url || "",
+        method: details?.method || "",
+        statusCode: details?.statusCode ?? null,
+        statusLine: details?.statusLine || "",
+        type: details?.type || "",
+        responseHeaders: extractDebugResponseHeaders(details?.responseHeaders),
+      });
+    }
+  },
+  { urls: ["<all_urls>"] },
+  ["responseHeaders", "extraHeaders"],
+);
+
+chrome.webRequest.onResponseStarted.addListener(
+  async (details) => {
+    if (await isDebugModeEnabled()) {
+      debugLog("webRequest.onResponseStarted", {
+        url: details?.url || "",
+        method: details?.method || "",
+        statusCode: details?.statusCode ?? null,
+        ip: details?.ip || "",
+        fromCache: details?.fromCache ?? null,
+        type: details?.type || "",
+        responseHeaders: extractDebugResponseHeaders(details?.responseHeaders),
+      });
+    }
+  },
+  { urls: ["<all_urls>"] },
+  ["responseHeaders", "extraHeaders"],
+);
+
 async function refreshCachedBridgeStatus() {
   cachedBridgeAlive = await pingBridge();
 }
@@ -488,6 +523,43 @@ function extractReplayHeaders(requestHeaders) {
   }
 
   return Object.keys(replayHeaders).length > 0 ? replayHeaders : null;
+}
+
+function extractDebugResponseHeaders(responseHeaders) {
+  if (!Array.isArray(responseHeaders) || responseHeaders.length === 0) {
+    return {};
+  }
+
+  const allowedHeaders = new Set([
+    "accept-ranges",
+    "cache-control",
+    "content-disposition",
+    "content-length",
+    "content-range",
+    "content-type",
+    "etag",
+    "location",
+    "set-cookie",
+    "x-goog-hash",
+  ]);
+  const headers = {};
+
+  for (const header of responseHeaders) {
+    const name = String(header?.name || "").trim();
+    const value = String(header?.value || "").trim();
+    if (!name || !value) {
+      continue;
+    }
+
+    const normalizedName = name.toLowerCase();
+    if (!allowedHeaders.has(normalizedName)) {
+      continue;
+    }
+
+    headers[normalizedName] = value;
+  }
+
+  return headers;
 }
 
 function serializeRequestBody(requestBody) {

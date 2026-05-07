@@ -865,6 +865,8 @@ Exit criteria:
   - `capture-download-click`
   - `webRequest.onBeforeRequest`
   - `webRequest.onBeforeSendHeaders`
+  - `webRequest.onHeadersReceived`
+  - `webRequest.onResponseStarted`
   - `chrome.downloads.onCreated`
   - resolver entry/probe results
   - final Trinity handoff payloads if a handoff path is exercised

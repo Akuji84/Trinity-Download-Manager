@@ -368,6 +368,7 @@ function App() {
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isAddAnimatingOut, setIsAddAnimatingOut] = useState(false);
   const [newestJobId, setNewestJobId] = useState<string | null>(null);
+  const [deletingJobIds, setDeletingJobIds] = useState<Set<string>>(new Set());
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -770,9 +771,16 @@ function App() {
   }
 
   async function deleteJob(id: string) {
+    setDeletingJobIds((prev) => new Set([...prev, id]));
+    await new Promise((resolve) => setTimeout(resolve, 280));
     await invoke<boolean>("delete_download_job", { id });
     setJobs((currentJobs) => currentJobs.filter((job) => job.id !== id));
     setSelectedJobIds((currentIds) => currentIds.filter((jobId) => jobId !== id));
+    setDeletingJobIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
   }
 
   async function startJob(id: string) {
@@ -2825,7 +2833,7 @@ function App() {
                 <span>Resume</span>
                 <span>Actions</span>
               </div>
-              <div className="download-list">
+              <div className="download-list" key={activeTab}>
                 {visibleJobs.length === 0 ? (
                   <div className="empty-state">
                     <h3>No matching downloads</h3>
@@ -2847,7 +2855,7 @@ function App() {
 
                     return (
                       <article
-                        className={`download-row ${job.id === newestJobId ? "new-job " : ""}${isSelected ? "selected" : ""} ${
+                        className={`download-row ${deletingJobIds.has(job.id) ? "deleting " : ""}${job.id === newestJobId ? "new-job " : ""}${isSelected ? "selected" : ""} ${
                           dropTargetJobId === job.id ? "drop-target" : ""
                         }`}
                         draggable={isQueueManageable(job)}
@@ -2971,7 +2979,7 @@ function App() {
                             </button>
                           </div>
                         </div>
-                        <div className="progress-track">
+                        <div className={`progress-track${job.state === "Running" ? " active" : ""}`}>
                           <span style={{ width: `${progressPercent(job)}%` }} />
                         </div>
                       </article>

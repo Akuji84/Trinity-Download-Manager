@@ -834,9 +834,28 @@ Exit criteria:
   - no guessing from click URLs
   - prefer actual browser-resolved download metadata over early URL-shape heuristics
 
+### 2026-05-07 - Use early interception as a deferred resolver, not direct URL capture
+**Commit:** `pending`
+
+- Pure browser-resolved-only capture was too late for some downloads because Chrome could still show its own download UI before Trinity canceled the browser-managed item.
+- The scalable model is now refined:
+  1. **Early interception is allowed again**, but only for strong download candidates.
+  2. The intercepted URL is **not** sent straight to Trinity.
+  3. Instead, the extension runs a **generic deferred resolver**:
+     - performs a tiny ranged browser-side GET with credentials/referrer
+     - inspects headers such as `content-disposition`, `content-type`, `content-length`, and range support
+     - if the response looks like HTML/intermediate content, extracts additional candidate URLs from the body and follows them recursively
+  4. Trinity only receives the request once the browser-side resolver concludes the endpoint behaves like a real file.
+- If the resolver cannot prove it found a real file, the extension now surfaces an error badge instead of silently falling back to the browser download path. This is intentional for debugging and tightening the resolver.
+- This keeps the architecture scalable:
+  - no hardcoded website paths
+  - no blind trust in file-like URL suffixes
+  - no direct capture from raw click URLs
+  - still early enough to suppress Chrome’s visible download flow when resolution succeeds
+
 ## Next Step
 
-Test the browser-resolved-first capture path across a few download styles and tighten the browser-managed takeover only if needed:
+Test the deferred resolver against a few download styles and tighten the generic file-proof rules if needed:
 - direct CDN file
 - redirected page-to-file download
 - gated/session-bound download

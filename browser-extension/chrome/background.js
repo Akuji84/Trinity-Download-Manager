@@ -20,6 +20,9 @@ const DOWNLOAD_EXTENSIONS = new Set([
 const RECENT_CAPTURE_WINDOW_MS = 8000;
 const REQUEST_METADATA_WINDOW_MS = 15000;
 const DIRECT_CAPTURE_PROBE_TIMEOUT_MS = 2500;
+const DIRECT_CAPTURE_PROBE_BYTES = "bytes=0-4095";
+const MAX_CAPTURE_RESOLUTION_DEPTH = 4;
+const MIN_CONFIDENT_FILE_SIZE_BYTES = 64 * 1024;
 const recentCapturedUrls = new Map();
 const recentRequestMetadata = new Map();
 
@@ -729,48 +732,114 @@ async function toggleSiteExclusion(siteHost) {
 
 async function captureDownloadClick(payload) {
   if (!payload || !isHttpUrl(payload.url)) {
+    await showBridgeBadge("ERR", "#6a1b1b");
+    return { captured: false, fallbackToBrowser: false };
+  }
+
+  const {
+    capturePaused = false,
+    excludedSites = [],
+  } = await chrome.storage.local.get([
+    STORAGE_KEYS.capturePaused,
+    STORAGE_KEYS.excludedSites,
+  ]);
+
+  if (capturePaused) {
     return { captured: false, fallbackToBrowser: true };
   }
-  // Browser-resolved capture is now the primary architecture.
-  // Click/path pre-capture is intentionally disabled so Chrome can resolve
-  // final URLs, filenames, redirects, and gated download flows first.
-  return { captured: false, fallbackToBrowser: true };
+
+  const pageHost = extractHost(payload.page_url || payload.referrer || "");
+  if (pageHost && excludedSites.includes(pageHost)) {
+    return { captured: false, fallbackToBrowser: true };
+  }
+
+  if (!cachedBridgeAlive && !(await pingBridge())) {
+    cachedBridgeAlive = false;
+    await showBridgeBadge("ERR", "#6a1b1b");
+    return { captured: false, fallbackToBrowser: false };
+  }
+
+  const resolvedPayload = await resolveCapturePayloadForTrinity(payload);
+  if (!resolvedPayload) {
+    console.error("Trinity could not resolve a direct downloadable file from the browser candidate", payload.url);
+    await showBridgeBadge("ERR", "#6a1b1b");
+    return {
+      captured: false,
+      fallbackToBrowser: false,
+      error: "Could not resolve a direct downloadable file.",
+    };
+  }
+
+  const sentToTrinity = await sendToTrinity(resolvedPayload);
+
+  if (!sentToTrinity) {
+    await showBridgeBadge("ERR", "#6a1b1b");
+    return {
+      captured: false,
+      fallbackToBrowser: false,
+      error: "Trinity bridge handoff failed.",
+    };
+  }
+
+  markRecentlyCaptured(resolvedPayload.final_url || resolvedPayload.url);
+  markRecentlyCaptured(resolvedPayload.url);
+  if (resolvedPayload.page_url) {
+    markRecentlyCaptured(resolvedPayload.page_url);
+  }
+
+  await showBridgeBadge("CAP", "#145d29");
+  return { captured: true, fallbackToBrowser: false };
 }
 
-async function shouldUseDirectCapture(payload) {
+async function resolveCapturePayloadForTrinity(payload, depth = 0, visited = new Set()) {
   const targetUrl = payload.final_url || payload.url || "";
   if (!isHttpUrl(targetUrl)) {
-    return false;
+    return null;
   }
 
-  if (!hasDownloadExtension(targetUrl)) {
-    return false;
+  if (depth >= MAX_CAPTURE_RESOLUTION_DEPTH || visited.has(targetUrl)) {
+    return null;
   }
+  visited.add(targetUrl);
 
   const probe = await probeDirectDownloadCandidate(payload);
   if (!probe) {
-    return false;
+    return null;
   }
 
-  if (probe.looksHtml) {
-    return false;
+  if (probe.isDownloadableFile) {
+    const finalUrl = probe.finalUrl || targetUrl;
+    const fileName =
+      probe.contentDispositionFileName ||
+      deriveSuggestedFileName(finalUrl) ||
+      payload.suggested_file_name ||
+      null;
+    return {
+      ...payload,
+      url: finalUrl,
+      final_url: finalUrl,
+      suggested_file_name: fileName,
+      mime_type: probe.contentType || payload.mime_type || null,
+    };
   }
 
-  if (probe.contentDispositionFileName) {
-    return true;
+  for (const nextUrl of probe.discoveredUrls) {
+    const resolved = await resolveCapturePayloadForTrinity(
+      {
+        ...payload,
+        url: nextUrl,
+        final_url: nextUrl,
+        suggested_file_name: deriveSuggestedFileName(nextUrl) || payload.suggested_file_name || null,
+      },
+      depth + 1,
+      visited,
+    );
+    if (resolved) {
+      return resolved;
+    }
   }
 
-  if (hasDownloadExtension(probe.finalUrl || targetUrl)) {
-    return true;
-  }
-
-  const contentType = probe.contentType.toLowerCase();
-  return (
-    contentType.startsWith("application/") ||
-    contentType.startsWith("audio/") ||
-    contentType.startsWith("video/") ||
-    contentType.startsWith("image/")
-  );
+  return null;
 }
 
 async function probeDirectDownloadCandidate(payload) {
@@ -796,10 +865,13 @@ async function probeDirectDownloadCandidate(payload) {
     const response = await fetchWithTimeout(
       targetUrl,
       {
-        method: "HEAD",
+        method: "GET",
         cache: "no-store",
         credentials: "include",
-        headers: probeHeaders,
+        headers: {
+          ...probeHeaders,
+          Range: DIRECT_CAPTURE_PROBE_BYTES,
+        },
         referrer: payload.referrer || payload.page_url || undefined,
         redirect: "follow",
       },
@@ -817,7 +889,7 @@ async function probeDirectDownloadCandidate(payload) {
           credentials: "include",
           headers: {
             ...probeHeaders,
-            Range: "bytes=0-0",
+            Range: DIRECT_CAPTURE_PROBE_BYTES,
           },
           referrer: payload.referrer || payload.page_url || undefined,
           redirect: "follow",
@@ -833,15 +905,134 @@ async function probeDirectDownloadCandidate(payload) {
   }
 }
 
-function summarizeProbeResponse(response, fallbackUrl) {
+async function summarizeProbeResponse(response, fallbackUrl) {
   const contentType = response.headers.get("content-type") || "";
   const disposition = response.headers.get("content-disposition") || "";
+  const acceptRanges = response.headers.get("accept-ranges") || "";
+  const contentLength = parseHeaderNumber(response.headers.get("content-length"));
+  const contentRange = response.headers.get("content-range") || "";
+  const bodyPreview = await readProbePreview(response);
+  const discoveredUrls = extractCandidateUrlsFromBody(bodyPreview.text, response.url || fallbackUrl);
+  const fileLikeMime = isFileLikeContentType(contentType);
+  const supportsRanges =
+    acceptRanges.toLowerCase().includes("bytes") ||
+    response.status === 206 ||
+    contentRange.toLowerCase().startsWith("bytes ");
+  const contentDispositionFileName = fileNameFromContentDisposition(disposition);
+  const isLikelySmallPlaceholder =
+    typeof contentLength === "number" &&
+    contentLength > 0 &&
+    contentLength < MIN_CONFIDENT_FILE_SIZE_BYTES &&
+    !contentDispositionFileName &&
+    !supportsRanges;
+  const isDownloadableFile =
+    !!contentDispositionFileName ||
+    (
+      fileLikeMime &&
+      !looksLikeHtmlContentType(contentType) &&
+      (
+        supportsRanges ||
+        (typeof contentLength === "number" && contentLength >= MIN_CONFIDENT_FILE_SIZE_BYTES)
+      )
+    );
+
   return {
     finalUrl: response.url || fallbackUrl,
     contentType,
-    contentDispositionFileName: fileNameFromContentDisposition(disposition),
-    looksHtml: contentType.toLowerCase().startsWith("text/html"),
+    contentLength,
+    contentDispositionFileName,
+    discoveredUrls,
+    looksHtml: looksLikeHtmlContentType(contentType),
+    isDownloadableFile: isDownloadableFile && !isLikelySmallPlaceholder,
   };
+}
+
+async function readProbePreview(response) {
+  try {
+    const clone = response.clone();
+    const text = await clone.text();
+    return {
+      text: text.slice(0, 128 * 1024),
+    };
+  } catch {
+    return { text: "" };
+  }
+}
+
+function extractCandidateUrlsFromBody(bodyText, baseUrl) {
+  if (!bodyText || typeof bodyText !== "string") {
+    return [];
+  }
+
+  const candidates = new Set();
+  const pushCandidate = (value) => {
+    const resolved = resolveHttpUrl(value, baseUrl);
+    if (!resolved) {
+      return;
+    }
+    candidates.add(resolved);
+  };
+
+  for (const match of bodyText.matchAll(/https?:\/\/[^\s"'<>\\)]+/gi)) {
+    pushCandidate(match[0]);
+  }
+
+  for (const match of bodyText.matchAll(/href\s*=\s*["']([^"']+)["']/gi)) {
+    pushCandidate(match[1]);
+  }
+
+  for (const match of bodyText.matchAll(/(?:window\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']/gi)) {
+    pushCandidate(match[1]);
+  }
+
+  for (const match of bodyText.matchAll(/content\s*=\s*["'][^"']*url=([^"'>]+)["']/gi)) {
+    pushCandidate(match[1]);
+  }
+
+  return [...candidates].filter((value) => value !== baseUrl);
+}
+
+function resolveHttpUrl(value, baseUrl) {
+  try {
+    const parsed = new URL(String(value), baseUrl);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
+    }
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function parseHeaderNumber(value) {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(String(value).trim(), 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function looksLikeHtmlContentType(contentType) {
+  const normalized = String(contentType || "").toLowerCase();
+  return (
+    normalized.startsWith("text/html") ||
+    normalized.startsWith("text/plain") ||
+    normalized.startsWith("application/xhtml") ||
+    normalized.startsWith("application/json") ||
+    normalized.startsWith("text/xml") ||
+    normalized.startsWith("application/xml")
+  );
+}
+
+function isFileLikeContentType(contentType) {
+  const normalized = String(contentType || "").toLowerCase();
+  return (
+    normalized.startsWith("application/") ||
+    normalized.startsWith("audio/") ||
+    normalized.startsWith("video/") ||
+    normalized.startsWith("image/")
+  );
 }
 
 function fileNameFromContentDisposition(value) {

@@ -810,6 +810,14 @@ Exit criteria:
   - other structured form submissions fall back to request `.form(...)`
 - When Trinity rebuilds a form body, it intentionally skips replaying the original `content-type` header so `reqwest` can emit the correct boundary/content-type for the reconstructed request.
 
+### 2026-05-07 - Force GoFile through browser-resolved capture path
+**Commit:** `pending`
+
+- GoFile `*.gofile.io/download/web/...` links were still being pre-captured too early because they look like strong direct download URLs.
+- That meant Trinity received the placeholder web response directly and showed the tiny `11.6 KB` result instead of letting Chrome resolve the authenticated browser request first.
+- The Chrome content-script and page-hook heuristics now explicitly bypass pre-capture for those GoFile `/download/web/` URLs.
+- Result: Chrome is allowed to make the real browser download request first, then Trinity can intercept the resolved download through the browser-managed path instead of downloading the placeholder endpoint directly.
+
 ## Next Step
 
 Test and close the remaining site-specific gaps: identify any download flows that still fail after the current method/body/header/cookie/form replay stack, then add only the missing targeted browser request context those sites actually require.

@@ -37,6 +37,19 @@ def save_icns(image: Image.Image, path: Path) -> None:
     image.save(path, format="ICNS")
 
 
+def pad_image(image: Image.Image, scale: float) -> Image.Image:
+    if not 0 < scale <= 1:
+        raise ValueError("scale must be between 0 and 1")
+
+    source = ensure_rgba(image)
+    canvas = Image.new("RGBA", source.size, (0, 0, 0, 0))
+    target_size = max(1, round(source.width * scale))
+    resized = resize(source, target_size)
+    offset = ((canvas.width - target_size) // 2, (canvas.height - target_size) // 2)
+    canvas.alpha_composite(resized, offset)
+    return canvas
+
+
 def main() -> None:
     source_image = ensure_rgba(Image.open(SOURCE))
     CANONICAL_SOURCE.parent.mkdir(parents=True, exist_ok=True)
@@ -64,6 +77,7 @@ def main() -> None:
         save_png(source_image, TAURI_ICONS / filename, size)
 
     save_ico(source_image, TAURI_ICONS / "icon.ico")
+    save_ico(pad_image(source_image, 0.86), TAURI_ICONS / "shortcut-icon.ico")
     save_icns(source_image, TAURI_ICONS / "icon.icns")
 
     extension_pngs = {

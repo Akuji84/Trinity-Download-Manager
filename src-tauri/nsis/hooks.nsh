@@ -2,7 +2,7 @@
   ; Ship a dedicated shortcut icon into the install directory so the desktop .lnk
   ; and Start menu entries do not depend on Explorer's exe icon extraction/cache behavior.
   SetOutPath "$INSTDIR"
-  File "/oname=trinity-shortcut.ico" "..\..\..\..\icons\icon.ico"
+  File "/oname=trinity-shortcut.ico" "..\..\..\..\icons\shortcut-icon.ico"
 
   ; Recreate the desktop and Start menu shortcuts during install using the dedicated icon source.
   Delete "$DESKTOP\${PRODUCTNAME}.lnk"

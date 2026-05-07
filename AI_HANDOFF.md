@@ -617,6 +617,10 @@ Exit criteria:
   - the NSIS postinstall hook now recreates both the desktop shortcut and the Start menu shortcut with the same installed `trinity-shortcut.ico`
   - both shortcuts now get the same AppUserModelId handling and shell refresh notification
   - this is meant to align the wrong desktop/search shortcut icons with the already-correct tray and installer icons
+- Fixed the remaining shortcut icon source mismatch:
+  - the NSIS postinstall hook had still been copying `src-tauri/icons/icon.ico` into `$INSTDIR\\trinity-shortcut.ico`
+  - that meant the desktop and Start menu shortcuts were still using the tighter main app icon instead of the padded shortcut-specific icon
+  - the hook now ships `src-tauri/icons/shortcut-icon.ico` directly, so shortcut rendering uses the padded icon path that was generated for Windows desktop/search sizes
 - Current segmented implementation is still conservative:
   - segmented jobs rebalance naturally through the chunk queue, but live splitting/merging of in-flight chunks is not implemented yet
   - segmented part state is persisted on a short interval, so an abrupt kill may lose only the most recent in-flight chunk progress instead of the whole job

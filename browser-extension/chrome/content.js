@@ -142,14 +142,6 @@ function shouldCaptureCandidate(candidate, payload) {
     return true;
   }
 
-  // Only pre-capture when the URL itself points directly to a file.
-  // For page-style URLs (no recognized file extension), skip pre-capture and
-  // let Chrome follow the link naturally — onCreated will fire with the real
-  // final download URL after any server-side redirects, and we cancel it there.
-  if (!hasDownloadExtension(payload.url)) {
-    return false;
-  }
-
   const url = payload.url;
   const combinedText = [
     candidate.textContent || "",

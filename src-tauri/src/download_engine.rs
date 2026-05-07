@@ -189,6 +189,17 @@ async fn download_single_stream(
         )));
     }
 
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    if content_type.starts_with("text/html") {
+        return Err(DownloadError::Failed(
+            "URL returned a web page, not a downloadable file. Use the direct file URL.".to_string(),
+        ));
+    }
+
     let is_resuming = resume_accepted;
     let file_name = if is_resuming {
         job.file_name.clone()

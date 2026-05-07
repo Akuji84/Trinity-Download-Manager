@@ -8,6 +8,9 @@
   const PAGE_CAPTURE_RESULT_EVENT = "trinity-page-download-result";
   const DOWNLOAD_HINT_PATTERN =
     /(download|installer|install|setup|exe|msi|zip|rar|7z|pkg|dmg|apk|iso|torrent)/i;
+  const CAPTURE_SUPPRESSION_WINDOW_MS = 10000;
+  const pendingCaptureUrls = new Set();
+  const suppressedCaptureUrls = new Map();
 
   const originalWindowOpen = window.open.bind(window);
   const originalAnchorClick = HTMLAnchorElement.prototype.click;
@@ -15,13 +18,18 @@
   const originalLocationReplace = window.location.replace.bind(window.location);
 
   window.open = function patchedWindowOpen(url, target, features) {
-    if (!shouldCaptureUrl(url, target)) {
+    const absoluteUrl = toAbsoluteHttpUrl(url);
+    if (!shouldCaptureUrl(url, target, absoluteUrl)) {
       return originalWindowOpen(url, target, features);
+    }
+
+    if (shouldSuppressCaptureUrl(absoluteUrl)) {
+      return null;
     }
 
     requestCapture(
       {
-        url: toAbsoluteHttpUrl(url),
+        url: absoluteUrl,
         page_url: window.location.href,
         suggested_file_name: deriveSuggestedFileName(url),
         mime_type: null,
@@ -42,6 +50,10 @@
       return originalAnchorClick.call(this);
     }
 
+    if (shouldSuppressCaptureUrl(this.href)) {
+      return;
+    }
+
     requestCapture(
       {
         url: this.href,
@@ -59,13 +71,18 @@
   };
 
   window.location.assign = function patchedLocationAssign(url) {
-    if (!shouldCaptureUrl(url)) {
+    const absoluteUrl = toAbsoluteHttpUrl(url);
+    if (!shouldCaptureUrl(url, undefined, absoluteUrl)) {
       return originalLocationAssign(url);
+    }
+
+    if (shouldSuppressCaptureUrl(absoluteUrl)) {
+      return;
     }
 
     requestCapture(
       {
-        url: toAbsoluteHttpUrl(url),
+        url: absoluteUrl,
         page_url: window.location.href,
         suggested_file_name: deriveSuggestedFileName(url),
         mime_type: null,
@@ -80,13 +97,18 @@
   };
 
   window.location.replace = function patchedLocationReplace(url) {
-    if (!shouldCaptureUrl(url)) {
+    const absoluteUrl = toAbsoluteHttpUrl(url);
+    if (!shouldCaptureUrl(url, undefined, absoluteUrl)) {
       return originalLocationReplace(url);
+    }
+
+    if (shouldSuppressCaptureUrl(absoluteUrl)) {
+      return;
     }
 
     requestCapture(
       {
-        url: toAbsoluteHttpUrl(url),
+        url: absoluteUrl,
         page_url: window.location.href,
         suggested_file_name: deriveSuggestedFileName(url),
         mime_type: null,
@@ -106,14 +128,30 @@
       return;
     }
 
+    const normalizedUrl = normalizeCaptureUrl(payload.url);
+    if (shouldSuppressCaptureUrl(normalizedUrl)) {
+      onResult(true);
+      return;
+    }
+
     const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     let settled = false;
+    pendingCaptureUrls.add(normalizedUrl);
 
     const finish = (captured) => {
       if (settled) {
         return;
       }
       settled = true;
+      pendingCaptureUrls.delete(normalizedUrl);
+      if (captured) {
+        suppressedCaptureUrls.set(
+          normalizedUrl,
+          Date.now() + CAPTURE_SUPPRESSION_WINDOW_MS,
+        );
+      } else {
+        suppressedCaptureUrls.delete(normalizedUrl);
+      }
       onResult(captured);
     };
 
@@ -172,8 +210,7 @@
     return DOWNLOAD_HINT_PATTERN.test(combinedText);
   }
 
-  function shouldCaptureUrl(url, target) {
-    const absoluteUrl = toAbsoluteHttpUrl(url);
+  function shouldCaptureUrl(url, target, absoluteUrl = toAbsoluteHttpUrl(url)) {
     if (!absoluteUrl) {
       return false;
     }
@@ -204,6 +241,34 @@
 
   function isHttpUrl(value) {
     return !!toAbsoluteHttpUrl(value);
+  }
+
+  function shouldSuppressCaptureUrl(value) {
+    const normalizedUrl = normalizeCaptureUrl(value);
+    if (!normalizedUrl) {
+      return false;
+    }
+
+    if (pendingCaptureUrls.has(normalizedUrl)) {
+      return true;
+    }
+
+    cleanupSuppressedCaptureUrls();
+    const expiresAt = suppressedCaptureUrls.get(normalizedUrl);
+    return typeof expiresAt === "number" && expiresAt > Date.now();
+  }
+
+  function cleanupSuppressedCaptureUrls() {
+    const now = Date.now();
+    for (const [key, expiresAt] of suppressedCaptureUrls.entries()) {
+      if (expiresAt <= now) {
+        suppressedCaptureUrls.delete(key);
+      }
+    }
+  }
+
+  function normalizeCaptureUrl(value) {
+    return toAbsoluteHttpUrl(value) || "";
   }
 
   function deriveSuggestedFileName(value) {

@@ -592,6 +592,10 @@ Exit criteria:
 - Hardened extension/browser-settings compatibility:
   - if the bridge is alive but `/app/browser-settings` returns `404`, the extension now treats that as an older Trinity build and falls back to default browser settings
   - that `404` no longer marks the bridge as dead or blocks capture
+- Added duplicate browser-launch suppression inside the injected page hook:
+  - the page-world interception layer now tracks pending and recently-captured download URLs
+  - once Trinity capture for a URL is in flight or has just succeeded, repeated page-side `window.open`, `anchor.click`, `location.assign`, or `location.replace` attempts for that same URL are swallowed instead of reopening Chrome's native download flow
+  - this is meant to stop the case where Trinity receives the download but the page still manages to trigger Chrome `Save As` for the same file
 - Hardened content-script bridge calls against extension reload/invalidation:
   - `content.js` now checks that the extension runtime context is still valid before calling `chrome.runtime.sendMessage(...)`
   - message sends are wrapped so an invalidated extension context falls back cleanly instead of throwing an uncaught page error

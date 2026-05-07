@@ -35,19 +35,7 @@ window.addEventListener(PAGE_CAPTURE_EVENT, (event) => {
         payload: detail.payload,
       },
       (response) => {
-        const captured = hasRuntimeLastError() ? false : response?.captured === true;
-        const fallbackToBrowser = hasRuntimeLastError()
-          ? true
-          : response?.fallbackToBrowser !== false;
-        window.dispatchEvent(
-          new CustomEvent(PAGE_CAPTURE_RESULT_EVENT, {
-            detail: {
-              requestId: detail.requestId,
-              captured,
-              fallbackToBrowser,
-            },
-          }),
-        );
+        void resolvePageCaptureResponse(detail, response);
       },
     );
   } catch {
@@ -92,18 +80,7 @@ document.addEventListener(
           payload,
         },
         (response) => {
-          if (hasRuntimeLastError()) {
-            fallbackToBrowser(candidate, payload.url);
-            return;
-          }
-
-          if (response?.captured === true) {
-            return;
-          }
-
-          if (response?.fallbackToBrowser !== false) {
-            fallbackToBrowser(candidate, payload.url);
-          }
+          void resolveClickCaptureResponse(candidate, payload, response);
         },
       );
     } catch {
@@ -138,6 +115,118 @@ function sendRuntimeMessage(message, callback) {
   } catch {
     callback(undefined);
   }
+}
+
+async function resolveClickCaptureResponse(candidate, payload, response) {
+  if (hasRuntimeLastError()) {
+    fallbackToBrowser(candidate, payload.url);
+    return;
+  }
+
+  if (response?.captured === true) {
+    return;
+  }
+
+  if (response?.retryAfterLaunch === true) {
+    const retriedResponse = await relaunchAndRetryCapture(payload);
+    if (retriedResponse?.captured === true) {
+      return;
+    }
+
+    if (retriedResponse?.fallbackToBrowser !== false) {
+      fallbackToBrowser(candidate, payload.url);
+    }
+    return;
+  }
+
+  if (response?.fallbackToBrowser !== false) {
+    fallbackToBrowser(candidate, payload.url);
+  }
+}
+
+async function resolvePageCaptureResponse(detail, response) {
+  if (hasRuntimeLastError()) {
+    dispatchPageCaptureResult(detail.requestId, false, true);
+    return;
+  }
+
+  let finalResponse = response;
+  if (response?.retryAfterLaunch === true) {
+    finalResponse = await relaunchAndRetryCapture(detail.payload);
+  }
+
+  dispatchPageCaptureResult(
+    detail.requestId,
+    finalResponse?.captured === true,
+    finalResponse?.fallbackToBrowser !== false,
+  );
+}
+
+function dispatchPageCaptureResult(requestId, captured, fallbackToBrowser) {
+  window.dispatchEvent(
+    new CustomEvent(PAGE_CAPTURE_RESULT_EVENT, {
+      detail: {
+        requestId,
+        captured,
+        fallbackToBrowser,
+      },
+    }),
+  );
+}
+
+async function relaunchAndRetryCapture(payload) {
+  await launchTrinityFromContent();
+  await waitForBridgeFromContent();
+
+  return await new Promise((resolve) => {
+    sendRuntimeMessage(
+      {
+        type: "capture-download-click",
+        payload,
+      },
+      (retryResponse) => {
+        if (hasRuntimeLastError()) {
+          resolve({ captured: false, fallbackToBrowser: true });
+          return;
+        }
+
+        resolve(retryResponse ?? { captured: false, fallbackToBrowser: true });
+      },
+    );
+  });
+}
+
+async function launchTrinityFromContent() {
+  const launchFrame = document.createElement("iframe");
+  launchFrame.style.display = "none";
+  launchFrame.src = "trinity://launch";
+  (document.documentElement || document.body).appendChild(launchFrame);
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  launchFrame.remove();
+}
+
+async function waitForBridgeFromContent() {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 6000) {
+    const status = await new Promise((resolve) => {
+      sendRuntimeMessage({ type: "bridge-status" }, (response) => {
+        if (hasRuntimeLastError()) {
+          resolve({ connected: false });
+          return;
+        }
+
+        resolve(response ?? { connected: false });
+      });
+    });
+
+    if (status?.connected === true) {
+      return true;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  }
+
+  return false;
 }
 
 function isExtensionContextAvailable() {

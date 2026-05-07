@@ -585,6 +585,10 @@ Exit criteria:
   - if `trinity://launch` is triggered while Trinity is already running, the existing app instance is focused instead of spawning a second window/process
   - the bridge-triggered `open-options` and `downloads/create` paths now share the same main-window focus helper
   - this is the fix for the user-reported case where clicking extension `Options` opened a new Trinity window instead of using the already-running one
+- Updated the browser capture path to wake Trinity and retry before falling back to Chrome:
+  - if click/page capture cannot reach Trinity through the bridge, the content script now launches `trinity://launch`, waits for the bridge to come up, then retries the same capture request
+  - only after that retry fails does the extension allow the browser's native download/save flow to continue
+  - this is the fix for the regression where reinstalling the app/extension caused Chrome `Save As` to win immediately instead of Trinity taking over
 - Hardened content-script bridge calls against extension reload/invalidation:
   - `content.js` now checks that the extension runtime context is still valid before calling `chrome.runtime.sendMessage(...)`
   - message sends are wrapped so an invalidated extension context falls back cleanly instead of throwing an uncaught page error

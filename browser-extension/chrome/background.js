@@ -443,7 +443,8 @@ async function captureDownloadClick(payload) {
     cachedBridgeAlive = false;
     return {
       captured: false,
-      fallbackToBrowser: browserSettings.use_native_fallback !== false,
+      fallbackToBrowser: false,
+      retryAfterLaunch: true,
     };
   }
 

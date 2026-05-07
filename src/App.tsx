@@ -109,6 +109,7 @@ type ExtensionDownloadRequest = {
   observed_content_type?: string | null;
   observed_content_length?: number | null;
   observed_accept_ranges?: string | null;
+  browser_observed?: boolean | null;
   referrer?: string | null;
   browser?: string | null;
   user_agent?: string | null;
@@ -391,6 +392,8 @@ function App() {
   const [scheduleFrom, setScheduleFrom] = useState("06:00");
   const [scheduleTo, setScheduleTo] = useState("10:00");
   const [urlMetadata, setUrlMetadata] = useState<DownloadUrlMetadata | null>(null);
+  const [browserObservedMetadata, setBrowserObservedMetadata] = useState<DownloadUrlMetadata | null>(null);
+  const [isBrowserObservedDownload, setIsBrowserObservedDownload] = useState(false);
   const [isUrlMetadataLoading, setIsUrlMetadataLoading] = useState(false);
   const [urlMetadataError, setUrlMetadataError] = useState("");
   const [scheduleClock, setScheduleClock] = useState(() => Date.now());
@@ -433,9 +436,10 @@ function App() {
   const preferencesContentRef = useRef<HTMLElement | null>(null);
   const pendingIconKeysRef = useRef<Set<string>>(new Set());
   const settingsRef = useRef(settings);
+  const effectiveUrlMetadata = browserObservedMetadata ?? urlMetadata;
   const extensionDisplayFileName =
     pendingSuggestedFileName.trim() ||
-    urlMetadata?.file_name ||
+    effectiveUrlMetadata?.file_name ||
     deriveFileNameFromUrl(url) ||
     "";
   const isExtensionPrefilledDownload =
@@ -500,6 +504,7 @@ function App() {
     listen<ExtensionDownloadRequest>("extension-download-request", (event) => {
       const payload = event.payload;
       const resolvedUrl = payload.final_url?.trim() || (payload.url ?? "");
+      const browserObserved = payload.browser_observed === true;
       const observedFileName =
         payload.observed_file_name?.trim() ||
         payload.suggested_file_name?.trim() ||
@@ -538,11 +543,13 @@ function App() {
       setUrl(resolvedUrl);
       setPendingSuggestedFileName(observedFileName ?? "");
       setOutputFolder(payload.output_folder?.trim() ?? "");
+      setIsBrowserObservedDownload(browserObserved);
+      setBrowserObservedMetadata(observedMetadata);
       setIsSchedulerEnabled(false);
       setScheduleDays(SCHEDULE_DAYS);
       setScheduleFrom("06:00");
       setScheduleTo("10:00");
-      setUrlMetadata(observedMetadata);
+      setUrlMetadata(null);
       setUrlMetadataError("");
       setIsAddOpen(true);
     })
@@ -659,6 +666,13 @@ function App() {
       return;
     }
 
+    const hasObservedFileName = Boolean(browserObservedMetadata?.file_name?.trim());
+    const hasObservedSize = browserObservedMetadata?.total_bytes != null;
+    if (isBrowserObservedDownload && hasObservedFileName && hasObservedSize) {
+      setIsUrlMetadataLoading(false);
+      return;
+    }
+
     let isCurrentRequest = true;
     setIsUrlMetadataLoading(true);
 
@@ -761,6 +775,8 @@ function App() {
       setUrl("");
       setPendingSuggestedFileName("");
       setOutputFolder("");
+      setIsBrowserObservedDownload(false);
+      setBrowserObservedMetadata(null);
       setIsSchedulerEnabled(false);
       setScheduleDays(SCHEDULE_DAYS);
       setScheduleFrom("06:00");
@@ -785,6 +801,8 @@ function App() {
     setUrl("");
     setPendingSuggestedFileName("");
     setOutputFolder("");
+    setIsBrowserObservedDownload(false);
+    setBrowserObservedMetadata(null);
     setIsSchedulerEnabled(false);
     setScheduleDays(SCHEDULE_DAYS);
     setScheduleFrom("06:00");
@@ -800,6 +818,8 @@ function App() {
       setIsAddOpen(false);
       setIsAddAnimatingOut(false);
       setPendingSuggestedFileName("");
+      setIsBrowserObservedDownload(false);
+      setBrowserObservedMetadata(null);
     }, 220);
   }
 

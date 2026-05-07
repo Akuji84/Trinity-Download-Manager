@@ -138,6 +138,7 @@ pub struct ExtensionDownloadRequest {
     pub observed_content_type: Option<String>,
     pub observed_content_length: Option<u64>,
     pub observed_accept_ranges: Option<String>,
+    pub browser_observed: Option<bool>,
     pub referrer: Option<String>,
     pub browser: Option<String>,
     pub user_agent: Option<String>,

@@ -1061,6 +1061,7 @@ async function handleCreatedDownload(downloadItem) {
       ? Number(transaction.responseHeaders["content-length"]) || null
       : null,
     observed_accept_ranges: transaction?.responseHeaders?.["accept-ranges"] || null,
+    browser_observed: true,
     referrer: downloadItem.referrer || pageUrl || null,
     browser: "chrome",
     user_agent: navigator.userAgent,

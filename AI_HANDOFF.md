@@ -934,6 +934,16 @@ Exit criteria:
   - initial modal size metadata prefers `observed_content_length`
 - Trinity-side inspect still exists, but for browser-originated downloads it is now secondary validation instead of the first source of truth for what Chrome already observed.
 
+### 2026-05-07 - Skip generic inspect when browser-observed metadata is already sufficient
+**Commit:** `pending`
+
+- Added a `browser_observed` handoff flag for browser-managed download items.
+- The frontend now keeps browser-observed metadata separate from Trinity-inspected metadata.
+- For browser-observed downloads, the add-download modal skips the normal inspect/discovery request when Chrome already provided both:
+  - file name
+  - content length
+- Trinity-side inspect remains available only as a fallback when the browser-observed metadata is incomplete.
+
 ## Next Step
 
 Test the deferred resolver against a few download styles and tighten the generic file-proof rules if needed:

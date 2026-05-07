@@ -1209,8 +1209,8 @@ function App() {
         </button>
       </section>
 
-      {isSettingsOpen ? (
-        <>
+      <div className="view-slot">
+        <div className={`view-panel settings-panel${isSettingsOpen ? " onscreen" : ""}`}>
           <section className="preferences-strip">
             <button className="preferences-back" onClick={() => closePreferencesPage()}>
               <ArrowLeft size={15} strokeWidth={2} />
@@ -2647,9 +2647,8 @@ function App() {
               </form>
             </section>
           </section>
-        </>
-      ) : (
-        <>
+        </div>
+        <div className={`view-panel downloads-panel${isSettingsOpen ? " offscreen" : ""}`}>
           <nav className="tabs" aria-label="Download filters">
             <button
               className={`tab ${activeTab === "all" ? "active" : ""}`}
@@ -2962,8 +2961,8 @@ function App() {
               </div>
             </section>
           </section>
-        </>
-      )}
+        </div>
+      </div>
 
       <footer className="bottom-bar">
         <strong>Down {formatBytes(globalSpeed)}/s</strong>

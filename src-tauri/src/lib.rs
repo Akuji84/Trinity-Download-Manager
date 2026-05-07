@@ -125,6 +125,26 @@ fn apply_extension_request_headers(
         }
     }
 
+    if let Some(headers) = context.request_headers.as_ref() {
+        for (name, value) in headers {
+            let header_name = name.trim();
+            let header_value = value.trim();
+            if header_name.is_empty() || header_value.is_empty() {
+                continue;
+            }
+
+            let normalized_name = header_name.to_ascii_lowercase();
+            if matches!(
+                normalized_name.as_str(),
+                "cookie" | "content-length" | "host" | "range" | "referer" | "user-agent"
+            ) {
+                continue;
+            }
+
+            request = request.header(header_name, header_value);
+        }
+    }
+
     request
 }
 

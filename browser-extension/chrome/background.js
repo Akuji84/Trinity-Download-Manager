@@ -35,6 +35,14 @@ chrome.webRequest.onBeforeRequest.addListener(
   ["requestBody"],
 );
 
+chrome.webRequest.onBeforeSendHeaders.addListener(
+  (details) => {
+    cacheRequestHeaders(details);
+  },
+  { urls: ["<all_urls>"] },
+  ["requestHeaders", "extraHeaders"],
+);
+
 async function refreshCachedBridgeStatus() {
   cachedBridgeAlive = await pingBridge();
 }
@@ -255,6 +263,12 @@ async function enrichPayloadWithSession(payload) {
       payload.request_body != null
         ? payload.request_body
         : requestMetadata?.body ?? null,
+    request_headers:
+      payload.request_headers && Object.keys(payload.request_headers).length > 0
+        ? payload.request_headers
+        : requestMetadata?.headers && Object.keys(requestMetadata.headers).length > 0
+          ? requestMetadata.headers
+          : null,
     user_agent: payload.user_agent || navigator.userAgent,
     cookies: cookies.length > 0 ? cookies : null,
   };
@@ -313,9 +327,34 @@ function cacheRequestMetadata(details) {
   recentRequestMetadata.set(url, {
     method,
     body,
+    headers: null,
     tabId: typeof details.tabId === "number" ? details.tabId : null,
     frameId: typeof details.frameId === "number" ? details.frameId : null,
     initiator: details.initiator || details.documentUrl || null,
+    expiresAt: Date.now() + REQUEST_METADATA_WINDOW_MS,
+  });
+}
+
+function cacheRequestHeaders(details) {
+  const url = details?.url || "";
+  if (!isHttpUrl(url)) {
+    return;
+  }
+
+  const headers = extractReplayHeaders(details.requestHeaders);
+  if (!headers || Object.keys(headers).length === 0) {
+    return;
+  }
+
+  cleanupRecentRequestMetadata();
+  const current = recentRequestMetadata.get(url);
+  recentRequestMetadata.set(url, {
+    method: current?.method || String(details.method || "GET").trim().toUpperCase(),
+    body: current?.body ?? null,
+    headers,
+    tabId: current?.tabId ?? (typeof details.tabId === "number" ? details.tabId : null),
+    frameId: current?.frameId ?? (typeof details.frameId === "number" ? details.frameId : null),
+    initiator: current?.initiator ?? details.initiator ?? details.documentUrl ?? null,
     expiresAt: Date.now() + REQUEST_METADATA_WINDOW_MS,
   });
 }
@@ -344,6 +383,46 @@ function cleanupRecentRequestMetadata() {
       recentRequestMetadata.delete(key);
     }
   }
+}
+
+function extractReplayHeaders(requestHeaders) {
+  if (!Array.isArray(requestHeaders) || requestHeaders.length === 0) {
+    return null;
+  }
+
+  const allowedHeaders = new Set([
+    "accept",
+    "accept-language",
+    "authorization",
+    "content-type",
+    "origin",
+    "x-requested-with",
+  ]);
+  const excludedHeaders = new Set([
+    "cookie",
+    "content-length",
+    "host",
+    "referer",
+    "user-agent",
+  ]);
+  const replayHeaders = {};
+
+  for (const header of requestHeaders) {
+    const name = String(header?.name || "").trim();
+    const value = String(header?.value || "").trim();
+    if (!name || !value) {
+      continue;
+    }
+
+    const normalizedName = name.toLowerCase();
+    if (excludedHeaders.has(normalizedName) || !allowedHeaders.has(normalizedName)) {
+      continue;
+    }
+
+    replayHeaders[normalizedName] = value;
+  }
+
+  return Object.keys(replayHeaders).length > 0 ? replayHeaders : null;
 }
 
 function serializeRequestBody(requestBody) {

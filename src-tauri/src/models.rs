@@ -126,6 +126,7 @@ pub struct ExtensionDownloadRequest {
     pub final_url: Option<String>,
     pub request_method: Option<String>,
     pub request_body: Option<String>,
+    pub request_headers: Option<std::collections::HashMap<String, String>>,
     pub page_url: Option<String>,
     pub suggested_file_name: Option<String>,
     pub mime_type: Option<String>,

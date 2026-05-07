@@ -97,6 +97,7 @@ type ExtensionDownloadRequest = {
   final_url?: string | null;
   request_method?: string | null;
   request_body?: string | null;
+  request_headers?: Record<string, string> | null;
   page_url?: string | null;
   suggested_file_name?: string | null;
   mime_type?: string | null;

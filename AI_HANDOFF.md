@@ -720,6 +720,11 @@ Exit criteria:
   - request metadata currently captures the real HTTP method and a best-effort serialized request body (`formData` as URL-encoded text, raw request bodies as decoded text when possible)
   - Trinity handoff payload enrichment now prefers that captured browser metadata over placeholder `GET` / `null` values
   - this closes the extension-side half of the request replay path for the common cases Chrome exposes through `webRequest`
+- Trinity now captures and replays the most important request headers for gated downloads:
+  - the Chrome extension caches a filtered set of replay-worthy headers from `webRequest.onBeforeSendHeaders`
+  - current replay header set is intentionally narrow: `accept`, `accept-language`, `authorization`, `content-type`, `origin`, and `x-requested-with`
+  - Trinity now forwards those headers during both URL inspection and actual download requests, while still refusing to blindly replay transport/problematic headers like `cookie`, `host`, `content-length`, `range`, `referer`, or `user-agent`
+  - this improves fidelity for browser-authenticated downloads without turning the handoff into an unsafe raw browser request clone
 
 ## Current Verification Status
 
@@ -786,4 +791,4 @@ Exit criteria:
 
 ## Next Step
 
-Improve request replay fidelity for harder sites: capture additional browser request context where needed, especially request headers/content-type and any cases where Chrome exposes binary/non-text POST bodies that the current best-effort body serialization cannot safely replay yet.
+Improve replay fidelity for harder sites that use binary or structured POST bodies: preserve non-text request payloads safely instead of lossy text decoding, and add targeted support for any browser-exposed request context those sites still require beyond the current filtered header set.

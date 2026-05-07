@@ -691,6 +691,15 @@ Exit criteria:
 - For page-style URLs (no extension), content.js returns early without `event.preventDefault()`, so Chrome follows the link naturally. When the server redirects to the real file, `chrome.downloads.onCreated` fires with `downloadItem.finalUrl` (the actual `.exe` URL), and `handleCreatedDownload` cancels Chrome's download before it completes and sends the correct URL to Trinity.
 - Anchors with a `download` attribute are still pre-captured regardless of extension.
 
+### 2026-05-07 — Restore pre-capture for non-extension URLs; block HTML downloads in engine
+**Commit:** `ed3c3af` — "Restore pre-capture, block HTML downloads"
+
+- The previous fix (skip pre-capture for non-extension URLs) broke Discord: `onCreated` is less reliable than pre-capture because it only checks `cachedBridgeAlive` without a live ping fallback. Discord pre-capture via DOWNLOAD_HINT_PATTERN was the working path.
+- Reverted `shouldCaptureCandidate` in `content.js` to the original behavior — non-extension URLs matching DOWNLOAD_HINT_PATTERN are still pre-captured.
+- `hasDownloadExtension` and `DOWNLOAD_EXTENSIONS` kept in `content.js` for future use (blob URL detection, etc.)
+- Added Content-Type guard in `download_engine.rs` (`download_single_stream`): if the server responds with `text/html`, the job immediately fails with "URL returned a web page, not a downloadable file. Use the direct file URL." instead of saving HTML as `download.bin`. This catches the Steam/page-redirect case with a meaningful error.
+- Result: Discord ✓ (pre-captured, Trinity follows redirect to CDN exe), Steam: clear error instead of silent junk download.
+
 ## Next Step
 
 Show browser-capture state more clearly inside Trinity Preferences so users can see that Chrome capture is live, what rules are active, and whether Trinity is currently reachable from the extension bridge.

@@ -710,7 +710,11 @@ Exit criteria:
   - the Chrome extension now requests `cookies` permission and attaches real browser cookies for the resolved download URL plus page/referrer context before sending a handoff to Trinity
   - Trinity now keeps browser request context in memory and reuses `cookies`, `referrer`, and `user_agent` during both URL inspection and actual download-engine HTTP requests
   - this first pass intentionally avoids changing the SQLite job schema; the browser session context is transient and tied to the active handoff/job launch path
-  - `request_method` and `request_body` still exist only in the contract for now; the Rust request path still assumes `GET`
+  - this first pass intentionally avoided changing the SQLite job schema; the browser session context is transient and tied to the active handoff/job launch path
+- Trinity now honors request replay metadata from the browser handoff:
+  - the Rust side now builds inspection and download requests from `request_method` and `request_body` instead of assuming `GET` everywhere
+  - browser-originated non-GET downloads stay on the single-stream path for now; segmented/range logic remains limited to plain `GET` requests because replaying multiple ranged POST-style requests is not yet safe
+  - this closes the app-side half of the IDM/FDM-style browser handoff path; the remaining gap is populating real non-GET request metadata from Chrome when sites actually trigger downloads that way
 
 ## Current Verification Status
 
@@ -777,4 +781,4 @@ Exit criteria:
 
 ## Next Step
 
-Start using the extended browser handoff contract for authenticated replay: honor `request_method` and `request_body` on the Rust side for browser-originated downloads that are not simple GETs.
+Populate real non-GET browser request metadata in the extension: capture actual request method/body from Chrome for downloads that do not originate as plain GET requests, then feed that into the handoff contract already supported by Trinity.

@@ -16,7 +16,7 @@ use std::{
 use futures_util::StreamExt;
 use reqwest::{
     header::{HeaderMap, ACCEPT_RANGES, CONTENT_DISPOSITION, CONTENT_RANGE, COOKIE, RANGE, REFERER, USER_AGENT},
-    Client, StatusCode, Url,
+    Client, Method, StatusCode, Url,
 };
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
@@ -55,25 +55,31 @@ pub async fn download_to_disk(
     let initial_output_path = PathBuf::from(&job.output_path);
     let temp_path = temp_path_for(&initial_output_path);
     let manifest_path = manifest_path_for(&manifest_root, &initial_output_path);
+    let can_use_range_requests = can_use_range_requests(request_context.as_ref());
 
-    if let Some(existing_manifest) = load_segment_manifest(&manifest_path).await? {
-        if existing_manifest.url == job.url {
-            return download_segmented(
-                &client,
-                job,
-                request_context.clone(),
-                manifest_path,
-                SegmentedMode::Resume(existing_manifest),
-                control,
-                &mut report_output,
-                &mut report_progress,
-                &mut resolve_speed_limit_kbps,
-            )
-            .await;
+    if can_use_range_requests {
+        if let Some(existing_manifest) = load_segment_manifest(&manifest_path).await? {
+            if existing_manifest.url == job.url {
+                return download_segmented(
+                    &client,
+                    job,
+                    request_context.clone(),
+                    manifest_path,
+                    SegmentedMode::Resume(existing_manifest),
+                    control,
+                    &mut report_output,
+                    &mut report_progress,
+                    &mut resolve_speed_limit_kbps,
+                )
+                .await;
+            }
         }
+    } else if manifest_path.exists() {
+        let _ = tokio::fs::remove_file(&manifest_path).await;
     }
 
-    let is_restartable = matches!(job.state, crate::models::DownloadState::Paused)
+    let is_restartable = can_use_range_requests
+        && matches!(job.state, crate::models::DownloadState::Paused)
         && job.is_resumable
         && job.downloaded_bytes > 0;
     if is_restartable {
@@ -89,7 +95,7 @@ pub async fn download_to_disk(
         .await;
     }
 
-    let segmented_plan = if job.connection_count > 1 {
+    let segmented_plan = if can_use_range_requests && job.connection_count > 1 {
         probe_segmented_plan(&client, &job, request_context.as_ref()).await?
     } else {
         None
@@ -152,7 +158,9 @@ async fn download_single_stream(
     report_progress: &mut impl FnMut(u64, Option<u64>, u64) -> Result<(), String>,
     resolve_speed_limit_kbps: &mut impl FnMut() -> Result<Option<u64>, String>,
 ) -> Result<(), DownloadError> {
-    let is_restartable = matches!(job.state, crate::models::DownloadState::Paused)
+    let can_use_range_requests = can_use_range_requests(request_context.as_ref());
+    let is_restartable = can_use_range_requests
+        && matches!(job.state, crate::models::DownloadState::Paused)
         && job.is_resumable
         && job.downloaded_bytes > 0;
     let initial_output_path = PathBuf::from(&job.output_path);
@@ -166,7 +174,7 @@ async fn download_single_stream(
         0
     };
 
-    let mut request = apply_extension_request_headers(client.get(&job.url), request_context.as_ref());
+    let mut request = build_download_request(client, &job.url, request_context.as_ref());
     if existing_partial_bytes > 0 {
         request = request.header(RANGE, format!("bytes={existing_partial_bytes}-"));
     }
@@ -238,13 +246,14 @@ async fn download_single_stream(
     } else {
         content_length
     };
-    let is_resumable = response
-        .headers()
-        .get(ACCEPT_RANGES)
-        .and_then(|value| value.to_str().ok())
-        .map(|value| value.eq_ignore_ascii_case("bytes"))
-        .unwrap_or(false)
-        || status == StatusCode::PARTIAL_CONTENT;
+    let is_resumable = can_use_range_requests
+        && (response
+            .headers()
+            .get(ACCEPT_RANGES)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.eq_ignore_ascii_case("bytes"))
+            .unwrap_or(false)
+            || status == StatusCode::PARTIAL_CONTENT);
 
     report_output(file_name, output_path_text, total_bytes, is_resumable)
         .map_err(DownloadError::Failed)?;
@@ -511,7 +520,7 @@ async fn probe_segmented_plan(
     job: &DownloadJob,
     request_context: Option<&ExtensionDownloadRequest>,
 ) -> Result<Option<SegmentedPlan>, DownloadError> {
-    let probe_response = apply_extension_request_headers(client.get(&job.url), request_context)
+    let probe_response = build_download_request(client, &job.url, request_context)
         .header(RANGE, "bytes=0-0")
         .send()
         .await
@@ -612,7 +621,7 @@ async fn download_segment_range(
         return Ok(());
     }
 
-    let response = apply_extension_request_headers(client.get(url), request_context.as_ref())
+    let response = build_download_request(&client, &url, request_context.as_ref())
         .header(RANGE, format!("bytes={request_start}-{}", range.end))
         .send()
         .await
@@ -1003,6 +1012,40 @@ fn unique_output_path(output_path: PathBuf) -> PathBuf {
     }
 
     output_path
+}
+
+fn can_use_range_requests(context: Option<&ExtensionDownloadRequest>) -> bool {
+    request_method_from_context(context) == Method::GET
+}
+
+fn build_download_request(
+    client: &Client,
+    url: &str,
+    context: Option<&ExtensionDownloadRequest>,
+) -> reqwest::RequestBuilder {
+    let method = request_method_from_context(context);
+    let mut request = client.request(method.clone(), url);
+
+    if method != Method::GET {
+        if let Some(body) = context
+            .and_then(|value| value.request_body.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            request = request.body(body.to_string());
+        }
+    }
+
+    apply_extension_request_headers(request, context)
+}
+
+fn request_method_from_context(context: Option<&ExtensionDownloadRequest>) -> Method {
+    context
+        .and_then(|value| value.request_method.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| Method::from_bytes(value.as_bytes()).ok())
+        .unwrap_or(Method::GET)
 }
 
 fn apply_extension_request_headers(

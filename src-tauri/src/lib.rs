@@ -25,7 +25,7 @@ use models::{
 };
 use reqwest::{
     header::{CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_RANGE, COOKIE, RANGE, REFERER, USER_AGENT},
-    Client, StatusCode,
+    Client, Method, StatusCode,
 };
 use storage::Storage;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -128,6 +128,42 @@ fn apply_extension_request_headers(
     request
 }
 
+fn request_method_from_context(context: Option<&ExtensionDownloadRequest>) -> Method {
+    context
+        .and_then(|value| value.request_method.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| Method::from_bytes(value.as_bytes()).ok())
+        .unwrap_or(Method::GET)
+}
+
+fn build_extension_request(
+    client: &Client,
+    parsed_url: &Url,
+    context: Option<&ExtensionDownloadRequest>,
+    prefer_head_probe: bool,
+) -> reqwest::RequestBuilder {
+    let method = request_method_from_context(context);
+    let use_head_probe = prefer_head_probe && method == Method::GET;
+    let mut request = if use_head_probe {
+        client.head(parsed_url.clone())
+    } else {
+        client.request(method.clone(), parsed_url.clone())
+    };
+
+    if !use_head_probe && method != Method::GET {
+        if let Some(body) = context
+            .and_then(|value| value.request_body.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            request = request.body(body.to_string());
+        }
+    }
+
+    apply_extension_request_headers(request, context)
+}
+
 #[tauri::command]
 fn app_status() -> AppStatus {
     AppStatus::foundation_ready()
@@ -213,21 +249,25 @@ async fn inspect_download_url(state: State<'_, AppState>, url: String) -> Result
 
     let extension_context = extension_context_for_url(&state, parsed_url.as_str())?;
     let client = Client::new();
-    let response = match apply_extension_request_headers(client.head(parsed_url.clone()), extension_context.as_ref())
-        .send()
-        .await
-    {
-        Ok(response) if response.status().is_success() => response,
-        _ => apply_extension_request_headers(
-            client
-            .get(parsed_url.clone())
+    let method = request_method_from_context(extension_context.as_ref());
+    let response = if method == Method::GET {
+        match build_extension_request(&client, &parsed_url, extension_context.as_ref(), true)
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_success() => response,
+            _ => build_extension_request(&client, &parsed_url, extension_context.as_ref(), false)
+                .header(RANGE, "bytes=0-0")
+                .send()
+                .await
+                .map_err(|error| error.to_string())?,
+        }
+    } else {
+        build_extension_request(&client, &parsed_url, extension_context.as_ref(), false)
             .header(RANGE, "bytes=0-0")
-            ,
-            extension_context.as_ref(),
-        )
-        .send()
-        .await
-        .map_err(|error| error.to_string())?,
+            .send()
+            .await
+            .map_err(|error| error.to_string())?
     };
 
     if !response.status().is_success() && response.status() != StatusCode::PARTIAL_CONTENT {

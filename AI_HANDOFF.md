@@ -876,6 +876,25 @@ Exit criteria:
   - the extension popup shows the current resolved log-file path while debug mode is enabled
 - This mode exists specifically to observe what the browser actually does for difficult sites before changing capture logic again.
 
+### 2026-05-07 - Prefer ranged GET inspection for browser-originated downloads
+**Commit:** `pending`
+
+- Debug log evidence showed that GoFile's browser download request was already correct at the original `/download/web/...` URL:
+  - `content-type: application/vnd.rar`
+  - `content-disposition: attachment`
+  - `content-length: 37886758623`
+  - `accept-ranges: bytes`
+- The bad `11.6 KB` shown in Trinity was coming from `inspect_download_url`, not from extension capture.
+- Root cause:
+  - Trinity inspected browser-originated `GET` downloads with `HEAD` first.
+  - Some gated download endpoints return misleading metadata on `HEAD` even when the real browser `GET` response is correct.
+- Fix direction:
+  - browser-originated download inspection now prefers `GET` with `Range: bytes=0-0`
+  - plain manual URL inspection can still use the old `HEAD`-then-fallback behavior
+- This is the scalable rule we want:
+  - do not trust `HEAD` as authoritative for browser-captured downloads
+  - prefer browser-like ranged `GET` probes for file metadata on those paths
+
 ## Next Step
 
 Test the deferred resolver against a few download styles and tighten the generic file-proof rules if needed:

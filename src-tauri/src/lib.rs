@@ -337,16 +337,25 @@ async fn inspect_download_url(state: State<'_, AppState>, url: String) -> Result
     let client = Client::new();
     let method = request_method_from_context(extension_context.as_ref());
     let response = if method == Method::GET {
-        match build_extension_request(&client, &parsed_url, extension_context.as_ref(), true)
-            .send()
-            .await
-        {
-            Ok(response) if response.status().is_success() => response,
-            _ => build_extension_request(&client, &parsed_url, extension_context.as_ref(), false)
+        let prefer_ranged_get_probe = extension_context.is_some();
+        if prefer_ranged_get_probe {
+            build_extension_request(&client, &parsed_url, extension_context.as_ref(), false)
                 .header(RANGE, "bytes=0-0")
                 .send()
                 .await
-                .map_err(|error| error.to_string())?,
+                .map_err(|error| error.to_string())?
+        } else {
+            match build_extension_request(&client, &parsed_url, extension_context.as_ref(), true)
+                .send()
+                .await
+            {
+                Ok(response) if response.status().is_success() => response,
+                _ => build_extension_request(&client, &parsed_url, extension_context.as_ref(), false)
+                    .header(RANGE, "bytes=0-0")
+                    .send()
+                    .await
+                    .map_err(|error| error.to_string())?,
+            }
         }
     } else {
         build_extension_request(&client, &parsed_url, extension_context.as_ref(), false)

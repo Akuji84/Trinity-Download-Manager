@@ -674,6 +674,9 @@ Exit criteria:
 - Fixed browser-prefilled modal detection for redirected downloads such as Steam:
   - the Add Download modal now tracks browser-origin separately from whether the extension already supplied a filename
   - this means redirected browser downloads can still render `File name` and use fetched metadata like `SteamSetup.exe` even if the suggested filename was initially empty
+- Hardened browser-prefilled filename mode:
+  - the modal now also flips into `File name` mode whenever fetched URL metadata returns a real filename different from the raw URL
+  - this protects redirected browser downloads like Steam even if the earlier browser-origin flag is lost in a stale running build/session
 
 ## Current Verification Status
 

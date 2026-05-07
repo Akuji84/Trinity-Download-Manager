@@ -421,7 +421,9 @@ function App() {
   const pendingIconKeysRef = useRef<Set<string>>(new Set());
   const settingsRef = useRef(settings);
   const isExtensionPrefilledDownload =
-    isBrowserPrefilledDownload || pendingSuggestedFileName.trim().length > 0;
+    isBrowserPrefilledDownload ||
+    pendingSuggestedFileName.trim().length > 0 ||
+    (!!urlMetadata?.file_name && urlMetadata.file_name !== url);
   const extensionDisplayFileName =
     pendingSuggestedFileName.trim() || urlMetadata?.file_name || "";
 

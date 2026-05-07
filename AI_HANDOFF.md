@@ -576,10 +576,10 @@ Exit criteria:
   - extension-launched Add Download flows keep that suggested filename attached until the user confirms, unless they manually edit the URL
   - manual Add URL opens clear any extension-provided filename state so normal URL-derived naming stays untouched
 - Fixed the extension popup `Options` flow so it reliably opens Trinity Preferences:
-  - the popup now actively checks bridge status before sending the options request
-  - if Trinity is not reachable, the popup launches the app via `trinity://launch`, waits for the bridge to come up, then retries
-  - once the bridge is reachable, the popup sends the real `open-trinity-options` request and closes itself
-  - this keeps `Options` targeting the actual Trinity Preferences page instead of failing silently when the app was not already reachable
+  - the popup now tries the real `open-trinity-options` request first instead of depending on a separate bridge-status precheck
+  - if that first request fails, the popup launches the app via `trinity://launch`, waits for the bridge to come up, then retries
+  - the app-side `/app/open-options` bridge handler now shows/unminimizes/focuses the main window before emitting the Preferences-open event
+  - this is meant to cover the minimized and tray-hidden cases where the process is alive but the earlier popup flow still fell into `Could not open Preferences`
 - Hardened content-script bridge calls against extension reload/invalidation:
   - `content.js` now checks that the extension runtime context is still valid before calling `chrome.runtime.sendMessage(...)`
   - message sends are wrapped so an invalidated extension context falls back cleanly instead of throwing an uncaught page error

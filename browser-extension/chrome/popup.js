@@ -92,23 +92,26 @@ async function launchTrinityFromPopup() {
 }
 
 async function openTrinityOptionsFromPopup() {
-  let bridgeStatus = await chrome.runtime.sendMessage({ type: "bridge-status" });
-  if (bridgeStatus?.connected !== true) {
-    setStatus("Opening Trinity...");
-    await launchTrinityFromPopup();
-    bridgeStatus = await waitForBridgeConnection();
+  setStatus("Opening Preferences...");
+  let response = await chrome.runtime.sendMessage({ type: "open-trinity-options" });
+  if (response?.ok === true) {
+    popupState.connected = true;
+    window.close();
+    return;
   }
 
+  setStatus("Opening Trinity...");
+  await launchTrinityFromPopup();
+  const bridgeStatus = await waitForBridgeConnection();
   if (bridgeStatus?.connected !== true) {
     setStatus("Could not reach Trinity.");
     return;
   }
 
   setStatus("Opening Preferences...");
-  const response = await chrome.runtime.sendMessage({ type: "open-trinity-options" });
+  response = await chrome.runtime.sendMessage({ type: "open-trinity-options" });
   if (response?.ok === true) {
     popupState.connected = true;
-    setStatus("Opening Preferences...");
     window.close();
     return;
   }

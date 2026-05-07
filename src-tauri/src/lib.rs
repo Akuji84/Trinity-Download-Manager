@@ -1338,14 +1338,14 @@ fn handle_extension_bridge_connection(app: &AppHandle, mut stream: TcpStream) ->
             )
         }
         ("POST", "/app/open-options") => {
-            app.emit(EXTENSION_OPEN_OPTIONS_EVENT, ())
-                .map_err(|error| error.to_string())?;
-
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.unminimize();
                 let _ = window.set_focus();
             }
+
+            app.emit(EXTENSION_OPEN_OPTIONS_EVENT, ())
+                .map_err(|error| error.to_string())?;
 
             write_json_response(
                 &mut stream,

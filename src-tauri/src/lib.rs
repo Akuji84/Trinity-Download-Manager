@@ -24,7 +24,7 @@ use models::{
     UpdateDownloadSpeedLimitRequest,
 };
 use reqwest::{
-    header::{CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_RANGE, RANGE},
+    header::{CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_RANGE, COOKIE, RANGE, REFERER, USER_AGENT},
     Client, StatusCode,
 };
 use storage::Storage;
@@ -56,6 +56,8 @@ use windows::{
 struct AppState {
     storage: Mutex<Storage>,
     active_downloads: Mutex<HashMap<String, Arc<download_engine::DownloadControl>>>,
+    extension_request_contexts: Mutex<HashMap<String, ExtensionDownloadRequest>>,
+    job_request_contexts: Mutex<HashMap<String, ExtensionDownloadRequest>>,
     file_watcher: Mutex<RecommendedWatcher>,
     watched_directories: Mutex<Vec<PathBuf>>,
     queue_running: AtomicBool,
@@ -82,6 +84,48 @@ fn resolved_extension_url(request: &ExtensionDownloadRequest) -> &str {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| request.url.trim())
+}
+
+fn extension_context_for_url(
+    state: &AppState,
+    url: &str,
+) -> Result<Option<ExtensionDownloadRequest>, String> {
+    let contexts = state
+        .extension_request_contexts
+        .lock()
+        .map_err(|_| "Extension request context lock is unavailable.".to_string())?;
+    Ok(contexts.get(url).cloned())
+}
+
+fn apply_extension_request_headers(
+    mut request: reqwest::RequestBuilder,
+    context: Option<&ExtensionDownloadRequest>,
+) -> reqwest::RequestBuilder {
+    let Some(context) = context else {
+        return request;
+    };
+
+    if let Some(referrer) = context.referrer.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        request = request.header(REFERER, referrer);
+    }
+
+    if let Some(user_agent) = context.user_agent.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        request = request.header(USER_AGENT, user_agent);
+    }
+
+    if let Some(cookies) = context.cookies.as_ref().filter(|values| !values.is_empty()) {
+        let cookie_value = cookies
+            .iter()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>()
+            .join("; ");
+        if !cookie_value.is_empty() {
+            request = request.header(COOKIE, cookie_value);
+        }
+    }
+
+    request
 }
 
 #[tauri::command]
@@ -160,22 +204,30 @@ fn get_system_file_icon(path_hint: String, is_directory: bool) -> Result<Option<
 }
 
 #[tauri::command]
-async fn inspect_download_url(url: String) -> Result<DownloadUrlMetadata, String> {
+async fn inspect_download_url(state: State<'_, AppState>, url: String) -> Result<DownloadUrlMetadata, String> {
     let parsed_url = Url::parse(url.trim()).map_err(|_| "Enter a valid URL.".to_string())?;
     match parsed_url.scheme() {
         "http" | "https" => {}
         _ => return Err("Only HTTP and HTTPS URLs are supported right now.".to_string()),
     }
 
+    let extension_context = extension_context_for_url(&state, parsed_url.as_str())?;
     let client = Client::new();
-    let response = match client.head(parsed_url.clone()).send().await {
+    let response = match apply_extension_request_headers(client.head(parsed_url.clone()), extension_context.as_ref())
+        .send()
+        .await
+    {
         Ok(response) if response.status().is_success() => response,
-        _ => client
+        _ => apply_extension_request_headers(
+            client
             .get(parsed_url.clone())
             .header(RANGE, "bytes=0-0")
-            .send()
-            .await
-            .map_err(|error| error.to_string())?,
+            ,
+            extension_context.as_ref(),
+        )
+        .send()
+        .await
+        .map_err(|error| error.to_string())?,
     };
 
     if !response.status().is_success() && response.status() != StatusCode::PARTIAL_CONTENT {
@@ -280,6 +332,14 @@ fn create_download_job(
     storage
         .create_download_job(&job)
         .map_err(|error| error.to_string())?;
+
+    if let Some(context) = extension_context_for_url(&state, parsed_url.as_str())? {
+        state
+            .job_request_contexts
+            .lock()
+            .map_err(|_| "Job request context lock is unavailable.".to_string())?
+            .insert(job.id.clone(), context);
+    }
 
     let created_job = storage
         .list_download_jobs()
@@ -589,6 +649,12 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
     let state = app.state::<AppState>();
     let control = Arc::new(download_engine::DownloadControl::default());
     let id = job.id.clone();
+    let request_context = state
+        .job_request_contexts
+        .lock()
+        .map_err(|_| "Job request context lock is unavailable.".to_string())?
+        .get(&id)
+        .cloned();
     let hostname = Url::parse(&job.url)
         .ok()
         .and_then(|url| url.host_str().map(|value| value.to_string()));
@@ -629,6 +695,7 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
         let job_id_for_speed_limit = job_id.clone();
         let result = download_engine::download_to_disk(
             job,
+            request_context,
             manifest_root,
             control,
             move |file_name, output_path, total_bytes, is_resumable| {
@@ -693,6 +760,9 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
         let state = app.state::<AppState>();
         if let Ok(mut active_downloads) = state.active_downloads.lock() {
             active_downloads.remove(&id);
+        }
+        if let Ok(mut request_contexts) = state.job_request_contexts.lock() {
+            request_contexts.remove(&id);
         }
 
         let should_pump_now = {
@@ -1408,11 +1478,23 @@ fn handle_extension_bridge_connection(app: &AppHandle, mut stream: TcpStream) ->
         ("POST", "/downloads/create") => {
             let request: ExtensionDownloadRequest = serde_json::from_slice(&body)
                 .map_err(|error| format!("Invalid Trinity extension payload: {error}"))?;
-            let parsed_url = Url::parse(resolved_extension_url(&request))
+            let resolved_url = resolved_extension_url(&request).to_string();
+            let parsed_url = Url::parse(&resolved_url)
                 .map_err(|_| "Invalid download URL.".to_string())?;
             match parsed_url.scheme() {
                 "http" | "https" => {}
                 _ => return Err("Only HTTP and HTTPS URLs are supported.".to_string()),
+            }
+
+            let state = app.state::<AppState>();
+            let mut contexts = state
+                .extension_request_contexts
+                .lock()
+                .map_err(|_| "Extension request context lock is unavailable.".to_string())?;
+            contexts.insert(resolved_url.clone(), request.clone());
+            let original_url = request.url.trim();
+            if !original_url.is_empty() && original_url != resolved_url {
+                contexts.insert(original_url.to_string(), request.clone());
             }
 
             app.emit(EXTENSION_DOWNLOAD_EVENT, request)
@@ -1574,6 +1656,8 @@ pub fn run() {
             app.manage(AppState {
                 storage: Mutex::new(storage),
                 active_downloads: Mutex::new(HashMap::new()),
+                extension_request_contexts: Mutex::new(HashMap::new()),
+                job_request_contexts: Mutex::new(HashMap::new()),
                 file_watcher: Mutex::new(file_watcher),
                 watched_directories: Mutex::new(Vec::new()),
                 queue_running: AtomicBool::new(true),

@@ -15,13 +15,13 @@ use std::{
 
 use futures_util::StreamExt;
 use reqwest::{
-    header::{HeaderMap, ACCEPT_RANGES, CONTENT_DISPOSITION, CONTENT_RANGE, RANGE},
+    header::{HeaderMap, ACCEPT_RANGES, CONTENT_DISPOSITION, CONTENT_RANGE, COOKIE, RANGE, REFERER, USER_AGENT},
     Client, StatusCode, Url,
 };
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 
-use crate::models::DownloadJob;
+use crate::models::{DownloadJob, ExtensionDownloadRequest};
 
 const MIN_SEGMENT_SIZE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_SEGMENT_CONNECTIONS: u32 = 16;
@@ -44,6 +44,7 @@ impl DownloadEngine {
 
 pub async fn download_to_disk(
     job: DownloadJob,
+    request_context: Option<ExtensionDownloadRequest>,
     manifest_root: PathBuf,
     control: Arc<DownloadControl>,
     mut report_output: impl FnMut(String, String, Option<u64>, bool) -> Result<(), String>,
@@ -60,6 +61,7 @@ pub async fn download_to_disk(
             return download_segmented(
                 &client,
                 job,
+                request_context.clone(),
                 manifest_path,
                 SegmentedMode::Resume(existing_manifest),
                 control,
@@ -78,6 +80,7 @@ pub async fn download_to_disk(
         return download_single_stream(
             &client,
             job,
+            request_context.clone(),
             control,
             &mut report_output,
             &mut report_progress,
@@ -87,7 +90,7 @@ pub async fn download_to_disk(
     }
 
     let segmented_plan = if job.connection_count > 1 {
-        probe_segmented_plan(&client, &job).await?
+        probe_segmented_plan(&client, &job, request_context.as_ref()).await?
     } else {
         None
     };
@@ -96,6 +99,7 @@ pub async fn download_to_disk(
         return download_segmented(
             &client,
             job,
+            request_context.clone(),
             manifest_path,
             SegmentedMode::Fresh(plan),
             control,
@@ -113,6 +117,7 @@ pub async fn download_to_disk(
     download_single_stream(
         &client,
         job,
+        request_context,
         control,
         &mut report_output,
         &mut report_progress,
@@ -141,6 +146,7 @@ pub fn cleanup_download_artifacts(output_path: &Path, manifest_root: &Path) -> R
 async fn download_single_stream(
     client: &Client,
     job: DownloadJob,
+    request_context: Option<ExtensionDownloadRequest>,
     control: Arc<DownloadControl>,
     report_output: &mut impl FnMut(String, String, Option<u64>, bool) -> Result<(), String>,
     report_progress: &mut impl FnMut(u64, Option<u64>, u64) -> Result<(), String>,
@@ -160,7 +166,7 @@ async fn download_single_stream(
         0
     };
 
-    let mut request = client.get(&job.url);
+    let mut request = apply_extension_request_headers(client.get(&job.url), request_context.as_ref());
     if existing_partial_bytes > 0 {
         request = request.header(RANGE, format!("bytes={existing_partial_bytes}-"));
     }
@@ -319,6 +325,7 @@ async fn download_single_stream(
 async fn download_segmented(
     client: &Client,
     job: DownloadJob,
+    request_context: Option<ExtensionDownloadRequest>,
     manifest_path: PathBuf,
     mode: SegmentedMode,
     control: Arc<DownloadControl>,
@@ -403,6 +410,7 @@ async fn download_segmented(
     for _ in 0..worker_count {
         let client = client.clone();
         let url = job.url.clone();
+        let request_context = request_context.clone();
         let control = Arc::clone(&control);
         let downloaded_bytes = Arc::clone(&downloaded_bytes);
         let session_downloaded_bytes = Arc::clone(&session_downloaded_bytes);
@@ -413,6 +421,7 @@ async fn download_segmented(
             run_segment_worker(
                 client,
                 url,
+                request_context,
                 control,
                 downloaded_bytes,
                 session_downloaded_bytes,
@@ -500,9 +509,9 @@ async fn download_segmented(
 async fn probe_segmented_plan(
     client: &Client,
     job: &DownloadJob,
+    request_context: Option<&ExtensionDownloadRequest>,
 ) -> Result<Option<SegmentedPlan>, DownloadError> {
-    let probe_response = client
-        .get(&job.url)
+    let probe_response = apply_extension_request_headers(client.get(&job.url), request_context)
         .header(RANGE, "bytes=0-0")
         .send()
         .await
@@ -543,6 +552,7 @@ async fn probe_segmented_plan(
 async fn run_segment_worker(
     client: Client,
     url: String,
+    request_context: Option<ExtensionDownloadRequest>,
     control: Arc<DownloadControl>,
     downloaded_bytes: Arc<AtomicU64>,
     session_downloaded_bytes: Arc<AtomicU64>,
@@ -558,6 +568,7 @@ async fn run_segment_worker(
         download_segment_range(
             client.clone(),
             url.clone(),
+            request_context.clone(),
             segment_assignment.index,
             segment_assignment.range,
             control.clone(),
@@ -575,6 +586,7 @@ async fn run_segment_worker(
 async fn download_segment_range(
     client: Client,
     url: String,
+    request_context: Option<ExtensionDownloadRequest>,
     segment_index: usize,
     range: ByteRange,
     control: Arc<DownloadControl>,
@@ -600,8 +612,7 @@ async fn download_segment_range(
         return Ok(());
     }
 
-    let response = client
-        .get(url)
+    let response = apply_extension_request_headers(client.get(url), request_context.as_ref())
         .header(RANGE, format!("bytes={request_start}-{}", range.end))
         .send()
         .await
@@ -992,4 +1003,45 @@ fn unique_output_path(output_path: PathBuf) -> PathBuf {
     }
 
     output_path
+}
+
+fn apply_extension_request_headers(
+    mut request: reqwest::RequestBuilder,
+    context: Option<&ExtensionDownloadRequest>,
+) -> reqwest::RequestBuilder {
+    let Some(context) = context else {
+        return request;
+    };
+
+    if let Some(referrer) = context
+        .referrer
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        request = request.header(REFERER, referrer);
+    }
+
+    if let Some(user_agent) = context
+        .user_agent
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        request = request.header(USER_AGENT, user_agent);
+    }
+
+    if let Some(cookies) = context.cookies.as_ref().filter(|values| !values.is_empty()) {
+        let cookie_value = cookies
+            .iter()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>()
+            .join("; ");
+        if !cookie_value.is_empty() {
+            request = request.header(COOKIE, cookie_value);
+        }
+    }
+
+    request
 }

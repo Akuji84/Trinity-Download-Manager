@@ -200,12 +200,13 @@ async function sendToTrinity(payload) {
   }
 
   try {
+    const enrichedPayload = await enrichPayloadWithSession(payload);
     const response = await fetch(`${BRIDGE_BASE_URL}/downloads/create`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(enrichedPayload),
     });
 
     if (!response.ok) {
@@ -221,6 +222,56 @@ async function sendToTrinity(payload) {
     await showBridgeBadge("ERR", "#6a1b1b");
     return false;
   }
+}
+
+async function enrichPayloadWithSession(payload) {
+  const resolvedUrl = payload.final_url || payload.url || "";
+  const cookieUrls = [
+    resolvedUrl,
+    payload.url,
+    payload.page_url,
+    payload.referrer,
+  ].filter((value, index, values) => isHttpUrl(value) && values.indexOf(value) === index);
+
+  const cookies = await collectCookiesForUrls(cookieUrls);
+
+  return {
+    ...payload,
+    user_agent: payload.user_agent || navigator.userAgent,
+    cookies: cookies.length > 0 ? cookies : null,
+  };
+}
+
+async function collectCookiesForUrls(urls) {
+  if (!chrome.cookies?.getAll || !Array.isArray(urls) || urls.length === 0) {
+    return [];
+  }
+
+  const seen = new Set();
+  const collected = [];
+
+  for (const url of urls) {
+    try {
+      const cookies = await chrome.cookies.getAll({ url });
+      for (const cookie of cookies) {
+        if (!cookie?.name) {
+          continue;
+        }
+
+        const entry = `${cookie.name}=${cookie.value ?? ""}`;
+        if (seen.has(entry)) {
+          continue;
+        }
+
+        seen.add(entry);
+        collected.push(entry);
+      }
+    } catch (error) {
+      console.warn("Could not collect cookies for Trinity handoff", url, error);
+    }
+  }
+
+  return collected;
 }
 
 async function pingBridge() {

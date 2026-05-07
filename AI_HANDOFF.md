@@ -706,6 +706,11 @@ Exit criteria:
   - `ExtensionDownloadRequest` now also supports `request_method` and `request_body`
   - current extension paths populate safe defaults (`GET`, `null`) for direct link, context-menu, content-script, page-hook, and browser-download-item handoffs
   - this does not replay POST/browser-authenticated requests yet; it establishes the cross-process contract so the next step can start sending real non-GET metadata where available
+- Started session-transfer support for browser-gated downloads:
+  - the Chrome extension now requests `cookies` permission and attaches real browser cookies for the resolved download URL plus page/referrer context before sending a handoff to Trinity
+  - Trinity now keeps browser request context in memory and reuses `cookies`, `referrer`, and `user_agent` during both URL inspection and actual download-engine HTTP requests
+  - this first pass intentionally avoids changing the SQLite job schema; the browser session context is transient and tied to the active handoff/job launch path
+  - `request_method` and `request_body` still exist only in the contract for now; the Rust request path still assumes `GET`
 
 ## Current Verification Status
 
@@ -772,4 +777,4 @@ Exit criteria:
 
 ## Next Step
 
-Start session-transfer support for browser handoff: capture and forward browser cookies for download requests, then use them on the Rust side when resolving/browser-gated downloads.
+Start using the extended browser handoff contract for authenticated replay: honor `request_method` and `request_body` on the Rust side for browser-originated downloads that are not simple GETs.

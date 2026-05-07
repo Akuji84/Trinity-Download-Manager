@@ -5,6 +5,7 @@
   "version": "0.1.0",
   "permissions": [
     "contextMenus",
+    "cookies",
     "downloads",
     "storage",
     "tabs"

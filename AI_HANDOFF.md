@@ -680,6 +680,10 @@ Exit criteria:
 - Simplified Add Download filename presentation:
   - the modal now shows `File name` whenever the resolved display filename differs from the raw URL, regardless of whether the browser-origin flag survived
   - this trades a stricter browser-only rule for a more reliable installed-app behavior on redirected downloads such as Steam
+- Extended filename presentation to direct file URLs on any site:
+  - the Add Download modal now derives a filename from the URL path itself before waiting on metadata
+  - if the URL already ends in something like `SteamSetup.exe`, the modal immediately shows `File name` with that value instead of showing the raw URL
+  - metadata still overrides that derived value when the server reports a better filename
 
 ## Current Verification Status
 

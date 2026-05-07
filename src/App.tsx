@@ -420,7 +420,10 @@ function App() {
   const pendingIconKeysRef = useRef<Set<string>>(new Set());
   const settingsRef = useRef(settings);
   const extensionDisplayFileName =
-    pendingSuggestedFileName.trim() || urlMetadata?.file_name || "";
+    pendingSuggestedFileName.trim() ||
+    urlMetadata?.file_name ||
+    deriveFileNameFromUrl(url) ||
+    "";
   const isExtensionPrefilledDownload =
     extensionDisplayFileName.length > 0 && extensionDisplayFileName !== url;
 
@@ -3513,6 +3516,16 @@ function formatScheduleClock(value: string | null) {
 
 function formatWeekday(value: Date) {
   return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][value.getDay()];
+}
+
+function deriveFileNameFromUrl(value: string) {
+  try {
+    const parsedUrl = new URL(value);
+    const pathname = parsedUrl.pathname.split("/").filter(Boolean);
+    return pathname[pathname.length - 1] || "";
+  } catch {
+    return "";
+  }
 }
 
 export default App;

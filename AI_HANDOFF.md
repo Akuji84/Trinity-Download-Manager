@@ -663,6 +663,11 @@ Exit criteria:
   - clicking calls a new `reveal_in_folder` Tauri command with `job.output_path`
   - Rust implementation: `explorer /select,<path>` on Windows, `open -R` on macOS, `xdg-open <parent>` on Linux
   - button is disabled when `output_path` is empty (job not yet started/completed)
+- Tightened Chrome extension capture heuristics after Steam/Discord regressions:
+  - `content.js` now only pre-captures direct file URLs or strong download endpoints such as `/api/downloads/`, `/releases/download/`, `/installer/`, and `/installers/`
+  - this keeps Steam-style landing pages from being swallowed before the browser can navigate to the real redirected download
+  - `page-hook.js` now uses the same strong-URL rules instead of broad `download/install` text matching for programmatic navigation
+  - the page hook also tracks in-flight and recently successful capture URLs so duplicate JS-triggered download calls for the same URL do not reopen Chrome's own download flow after Trinity already accepted the job
 
 ## Current Verification Status
 

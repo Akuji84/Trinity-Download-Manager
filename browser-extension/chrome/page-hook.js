@@ -6,8 +6,9 @@
 
   const PAGE_CAPTURE_EVENT = "trinity-page-download-capture";
   const PAGE_CAPTURE_RESULT_EVENT = "trinity-page-download-result";
-  const DOWNLOAD_HINT_PATTERN =
-    /(download|installer|install|setup|exe|msi|zip|rar|7z|pkg|dmg|apk|iso|torrent)/i;
+  const RECENT_CAPTURE_WINDOW_MS = 8000;
+  const inFlightCaptures = new Set();
+  const recentSuccessfulCaptures = new Map();
 
   const originalWindowOpen = window.open.bind(window);
   const originalAnchorClick = HTMLAnchorElement.prototype.click;
@@ -106,14 +107,31 @@
       return;
     }
 
+    const normalizedUrl = normalizeCaptureUrl(payload.url);
+    cleanupRecentCaptures();
+
+    if (normalizedUrl && (inFlightCaptures.has(normalizedUrl) || wasRecentlyCaptured(normalizedUrl))) {
+      onResult(true);
+      return;
+    }
+
     const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     let settled = false;
+    if (normalizedUrl) {
+      inFlightCaptures.add(normalizedUrl);
+    }
 
     const finish = (captured) => {
       if (settled) {
         return;
       }
       settled = true;
+      if (normalizedUrl) {
+        inFlightCaptures.delete(normalizedUrl);
+        if (captured) {
+          recentSuccessfulCaptures.set(normalizedUrl, Date.now() + RECENT_CAPTURE_WINDOW_MS);
+        }
+      }
       onResult(captured);
     };
 
@@ -160,16 +178,7 @@
       return true;
     }
 
-    const combinedText = [
-      anchor.textContent || "",
-      anchor.getAttribute("aria-label") || "",
-      anchor.getAttribute("title") || "",
-      anchor.href,
-    ]
-      .join(" ")
-      .trim();
-
-    return DOWNLOAD_HINT_PATTERN.test(combinedText);
+    return isStrongDownloadUrl(anchor.href);
   }
 
   function shouldCaptureUrl(url, target) {
@@ -178,17 +187,68 @@
       return false;
     }
 
-    const combinedText = [String(url || ""), String(target || "")].join(" ").trim();
-    return DOWNLOAD_HINT_PATTERN.test(combinedText) || isLikelyBinaryUrl(absoluteUrl);
+    return isStrongDownloadUrl(absoluteUrl);
   }
 
-  function isLikelyBinaryUrl(value) {
+  function isStrongDownloadUrl(value) {
     try {
       const parsed = new URL(value, window.location.href);
       const pathname = parsed.pathname.toLowerCase();
-      return /\.(exe|msi|zip|rar|7z|pkg|dmg|apk|iso|torrent|deb|rpm)(?:$|[?#])/.test(pathname);
+      return (
+        hasDownloadExtension(parsed.toString()) ||
+        pathname.includes("/api/downloads/") ||
+        pathname.includes("/releases/download/") ||
+        pathname.includes("/installer/") ||
+        pathname.includes("/installers/")
+      );
     } catch {
       return false;
+    }
+  }
+
+  function hasDownloadExtension(value) {
+    try {
+      const parsed = new URL(value, window.location.href);
+      const pathname = parsed.pathname;
+      const lastSegment = pathname.split("/").filter(Boolean).at(-1) ?? "";
+      const dotIndex = lastSegment.lastIndexOf(".");
+      if (dotIndex === -1) {
+        return false;
+      }
+
+      const extension = lastSegment.slice(dotIndex + 1).toLowerCase();
+      return [
+        "exe", "msi", "pkg", "dmg", "deb", "rpm", "apk",
+        "zip", "rar", "7z", "tar", "gz", "bz2", "xz", "zst",
+        "iso", "img", "bin", "torrent",
+        "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm",
+        "mp3", "flac", "aac", "ogg", "wav", "m4a",
+        "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+      ].includes(extension);
+    } catch {
+      return false;
+    }
+  }
+
+  function normalizeCaptureUrl(value) {
+    try {
+      return new URL(String(value), window.location.href).toString();
+    } catch {
+      return null;
+    }
+  }
+
+  function wasRecentlyCaptured(value) {
+    const expiresAt = recentSuccessfulCaptures.get(value);
+    return typeof expiresAt === "number" && expiresAt > Date.now();
+  }
+
+  function cleanupRecentCaptures() {
+    const now = Date.now();
+    for (const [key, expiresAt] of recentSuccessfulCaptures.entries()) {
+      if (expiresAt <= now) {
+        recentSuccessfulCaptures.delete(key);
+      }
     }
   }
 

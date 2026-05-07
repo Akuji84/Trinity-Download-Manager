@@ -142,9 +142,9 @@ function shouldCaptureCandidate(candidate, payload) {
     return true;
   }
 
-  // Non-extension URLs (page-redirect downloads like Steam) must not be pre-captured.
-  // Let Chrome navigate naturally; handleCreatedDownload will intercept the resolved download.
-  if (!hasDownloadExtension(payload.url)) {
+  // Page-style URLs like Steam's /about/ page must not be pre-captured.
+  // Only direct file URLs or strong download endpoints should be intercepted here.
+  if (!isStrongDownloadUrl(payload.url)) {
     return false;
   }
 
@@ -168,6 +168,26 @@ function hasDownloadExtension(url) {
     const dotIndex = lastSegment.lastIndexOf(".");
     if (dotIndex === -1) return false;
     return DOWNLOAD_EXTENSIONS.has(lastSegment.slice(dotIndex + 1).toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+function isStrongDownloadUrl(url) {
+  try {
+    const parsedUrl = new URL(url);
+    const pathname = parsedUrl.pathname.toLowerCase();
+
+    if (hasDownloadExtension(url)) {
+      return true;
+    }
+
+    return (
+      pathname.includes("/api/downloads/") ||
+      pathname.includes("/releases/download/") ||
+      pathname.includes("/installer/") ||
+      pathname.includes("/installers/")
+    );
   } catch {
     return false;
   }

@@ -677,6 +677,9 @@ Exit criteria:
 - Hardened browser-prefilled filename mode:
   - the modal now also flips into `File name` mode whenever fetched URL metadata returns a real filename different from the raw URL
   - this protects redirected browser downloads like Steam even if the earlier browser-origin flag is lost in a stale running build/session
+- Simplified Add Download filename presentation:
+  - the modal now shows `File name` whenever the resolved display filename differs from the raw URL, regardless of whether the browser-origin flag survived
+  - this trades a stricter browser-only rule for a more reliable installed-app behavior on redirected downloads such as Steam
 
 ## Current Verification Status
 

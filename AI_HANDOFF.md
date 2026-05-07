@@ -683,6 +683,14 @@ Exit criteria:
 - Running jobs cannot be deleted from the UI.
 - Cancellation is cooperative and is checked between received network chunks.
 
+### 2026-05-07 — Fix extension pre-capture for page-redirect downloads (e.g. Steam installer)
+**Commit:** `e6c063f` — "Skip pre-capture for page URLs, use onCreated"
+
+- Steam's "Install Steam Now" button has an `href` that is a page URL (`/about/?snr=...`), not a direct file URL. The old content.js pre-captured it, called `event.preventDefault()`, and sent the page URL to Trinity, which downloaded the HTML instead of the installer.
+- Fix: `shouldCaptureCandidate` in `content.js` now requires the URL to have a recognized file extension before pre-capturing. Added `hasDownloadExtension()` helper and `DOWNLOAD_EXTENSIONS` set covering exe/msi/dmg/zip/iso/mp4/pdf and more.
+- For page-style URLs (no extension), content.js returns early without `event.preventDefault()`, so Chrome follows the link naturally. When the server redirects to the real file, `chrome.downloads.onCreated` fires with `downloadItem.finalUrl` (the actual `.exe` URL), and `handleCreatedDownload` cancels Chrome's download before it completes and sends the correct URL to Trinity.
+- Anchors with a `download` attribute are still pre-captured regardless of extension.
+
 ## Next Step
 
 Show browser-capture state more clearly inside Trinity Preferences so users can see that Chrome capture is live, what rules are active, and whether Trinity is currently reachable from the extension bridge.

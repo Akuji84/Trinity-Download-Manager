@@ -592,6 +592,10 @@ Exit criteria:
 - Hardened extension/browser-settings compatibility:
   - if the bridge is alive but `/app/browser-settings` returns `404`, the extension now treats that as an older Trinity build and falls back to default browser settings
   - that `404` no longer marks the bridge as dead or blocks capture
+- Added page-level capture coordination in `content.js`:
+  - the content script now tracks URLs currently being captured and URLs that were just captured successfully
+  - if a second capture path for the same URL resolves later with a browser-fallback result, that fallback is suppressed instead of reopening Chrome's native download flow
+  - this replaces the reverted page-hook-only suppression with a narrower fix focused on duplicate fallback decisions for the same URL
 - Hardened content-script bridge calls against extension reload/invalidation:
   - `content.js` now checks that the extension runtime context is still valid before calling `chrome.runtime.sendMessage(...)`
   - message sends are wrapped so an invalidated extension context falls back cleanly instead of throwing an uncaught page error

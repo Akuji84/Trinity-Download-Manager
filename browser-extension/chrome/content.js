@@ -2,7 +2,10 @@ const DOWNLOAD_HINT_PATTERN =
   /(download|installer|install|setup|exe|msi|zip|rar|7z|pkg|dmg|apk|iso|torrent)/i;
 const PAGE_CAPTURE_EVENT = "trinity-page-download-capture";
 const PAGE_CAPTURE_RESULT_EVENT = "trinity-page-download-result";
+const CAPTURE_SUPPRESSION_WINDOW_MS = 10000;
 let insertPressed = false;
+const pendingCaptureUrls = new Set();
+const successfulCaptureUrls = new Map();
 
 injectPageHook();
 
@@ -29,13 +32,25 @@ window.addEventListener(PAGE_CAPTURE_EVENT, (event) => {
       return;
     }
 
+    const normalizedUrl = normalizeCaptureUrl(detail.payload.url);
+    if (!normalizedUrl) {
+      return;
+    }
+
+    if (shouldSuppressBrowserFallback(normalizedUrl)) {
+      dispatchPageCaptureResult(detail.requestId, true, false);
+      return;
+    }
+
+    beginCapture(normalizedUrl);
+
     sendRuntimeMessage(
       {
         type: "capture-download-click",
         payload: detail.payload,
       },
       (response) => {
-        void resolvePageCaptureResponse(detail, response);
+        void resolvePageCaptureResponse(detail, response, normalizedUrl);
       },
     );
   } catch {
@@ -74,13 +89,25 @@ document.addEventListener(
       event.stopPropagation();
       event.stopImmediatePropagation();
 
+      const normalizedUrl = normalizeCaptureUrl(payload.url);
+      if (!normalizedUrl) {
+        fallbackToBrowser(candidate, payload.url);
+        return;
+      }
+
+      if (shouldSuppressBrowserFallback(normalizedUrl)) {
+        return;
+      }
+
+      beginCapture(normalizedUrl);
+
       sendRuntimeMessage(
         {
           type: "capture-download-click",
           payload,
         },
         (response) => {
-          void resolveClickCaptureResponse(candidate, payload, response);
+          void resolveClickCaptureResponse(candidate, payload, response, normalizedUrl);
         },
       );
     } catch {
@@ -117,19 +144,27 @@ function sendRuntimeMessage(message, callback) {
   }
 }
 
-async function resolveClickCaptureResponse(candidate, payload, response) {
+async function resolveClickCaptureResponse(candidate, payload, response, normalizedUrl) {
   if (hasRuntimeLastError()) {
+    finishCapture(normalizedUrl, false);
     fallbackToBrowser(candidate, payload.url);
     return;
   }
 
   if (response?.captured === true) {
+    finishCapture(normalizedUrl, true);
     return;
   }
 
   if (response?.retryAfterLaunch === true) {
     const retriedResponse = await relaunchAndRetryCapture(payload);
     if (retriedResponse?.captured === true) {
+      finishCapture(normalizedUrl, true);
+      return;
+    }
+
+    finishCapture(normalizedUrl, false);
+    if (shouldSuppressBrowserFallback(normalizedUrl)) {
       return;
     }
 
@@ -139,13 +174,19 @@ async function resolveClickCaptureResponse(candidate, payload, response) {
     return;
   }
 
+  finishCapture(normalizedUrl, false);
+  if (shouldSuppressBrowserFallback(normalizedUrl)) {
+    return;
+  }
+
   if (response?.fallbackToBrowser !== false) {
     fallbackToBrowser(candidate, payload.url);
   }
 }
 
-async function resolvePageCaptureResponse(detail, response) {
+async function resolvePageCaptureResponse(detail, response, normalizedUrl) {
   if (hasRuntimeLastError()) {
+    finishCapture(normalizedUrl, false);
     dispatchPageCaptureResult(detail.requestId, false, true);
     return;
   }
@@ -155,10 +196,17 @@ async function resolvePageCaptureResponse(detail, response) {
     finalResponse = await relaunchAndRetryCapture(detail.payload);
   }
 
+  const captured = finalResponse?.captured === true;
+  finishCapture(normalizedUrl, captured);
+  const fallbackToBrowser =
+    captured || shouldSuppressBrowserFallback(normalizedUrl)
+      ? false
+      : finalResponse?.fallbackToBrowser !== false;
+
   dispatchPageCaptureResult(
     detail.requestId,
-    finalResponse?.captured === true,
-    finalResponse?.fallbackToBrowser !== false,
+    captured,
+    fallbackToBrowser,
   );
 }
 
@@ -227,6 +275,54 @@ async function waitForBridgeFromContent() {
   }
 
   return false;
+}
+
+function normalizeCaptureUrl(value) {
+  try {
+    return new URL(value, window.location.href).toString();
+  } catch {
+    return "";
+  }
+}
+
+function beginCapture(normalizedUrl) {
+  cleanupSuccessfulCaptureUrls();
+  pendingCaptureUrls.add(normalizedUrl);
+}
+
+function finishCapture(normalizedUrl, captured) {
+  pendingCaptureUrls.delete(normalizedUrl);
+  cleanupSuccessfulCaptureUrls();
+  if (captured) {
+    successfulCaptureUrls.set(
+      normalizedUrl,
+      Date.now() + CAPTURE_SUPPRESSION_WINDOW_MS,
+    );
+    return;
+  }
+}
+
+function shouldSuppressBrowserFallback(normalizedUrl) {
+  if (!normalizedUrl) {
+    return false;
+  }
+
+  cleanupSuccessfulCaptureUrls();
+  if (pendingCaptureUrls.has(normalizedUrl)) {
+    return true;
+  }
+
+  const expiresAt = successfulCaptureUrls.get(normalizedUrl);
+  return typeof expiresAt === "number" && expiresAt > Date.now();
+}
+
+function cleanupSuccessfulCaptureUrls() {
+  const now = Date.now();
+  for (const [url, expiresAt] of successfulCaptureUrls.entries()) {
+    if (expiresAt <= now) {
+      successfulCaptureUrls.delete(url);
+    }
+  }
 }
 
 function isExtensionContextAvailable() {

@@ -267,6 +267,12 @@ async function enrichPayloadWithSession(payload) {
       payload.request_body != null
         ? payload.request_body_encoding ?? "text"
         : requestMetadata?.body?.encoding ?? null,
+    request_form_data:
+      payload.request_form_data && Object.keys(payload.request_form_data).length > 0
+        ? payload.request_form_data
+        : requestMetadata?.body?.formData && Object.keys(requestMetadata.body.formData).length > 0
+          ? requestMetadata.body.formData
+          : null,
     request_headers:
       payload.request_headers && Object.keys(payload.request_headers).length > 0
         ? payload.request_headers
@@ -435,17 +441,18 @@ function serializeRequestBody(requestBody) {
   }
 
   if (requestBody.formData && typeof requestBody.formData === "object") {
-    const params = new URLSearchParams();
+    const normalizedFormData = {};
     for (const [key, values] of Object.entries(requestBody.formData)) {
-      if (!Array.isArray(values)) {
+      if (!Array.isArray(values) || values.length === 0) {
         continue;
       }
-      for (const value of values) {
-        params.append(key, String(value));
-      }
+
+      normalizedFormData[key] = values.map((value) => String(value));
     }
-    const serialized = params.toString();
-    return serialized ? { value: serialized, encoding: "text" } : null;
+
+    return Object.keys(normalizedFormData).length > 0
+      ? { value: null, encoding: null, formData: normalizedFormData }
+      : null;
   }
 
   if (Array.isArray(requestBody.raw) && requestBody.raw.length > 0) {

@@ -790,7 +790,7 @@ Exit criteria:
 **Result:** Steam → Chrome follows the page naturally with session cookies → CDN `.exe` URL fires `onCreated` → Trinity intercepts ✓. Discord → pre-captured via extension match → Trinity downloads directly ✓. No Chrome save dialogs. No HTML downloads.
 
 ### 2026-05-07 - Preserve binary browser request bodies safely
-**Commit:** `pending`
+**Commit:** `c588f65`
 
 - Added `request_body_encoding` to the browser handoff contract.
 - The Chrome extension now classifies request bodies as either `text` or `base64`.
@@ -800,6 +800,16 @@ Exit criteria:
   - actual Rust download requests
 - This closes the obvious non-text request-body gap in the request replay path without changing the SQLite job schema.
 
+### 2026-05-07 - Rebuild multipart and structured form bodies
+**Commit:** `pending`
+
+- Added `request_form_data` to the browser handoff contract so Chrome-exposed form fields can be preserved semantically instead of flattened into fake text.
+- The extension now keeps `formData` payloads as structured key -> array-of-values data during handoff enrichment.
+- Trinity now rebuilds browser-originated form submissions on the Rust side:
+  - `multipart/form-data` requests are reconstructed with `reqwest` multipart forms
+  - other structured form submissions fall back to request `.form(...)`
+- When Trinity rebuilds a form body, it intentionally skips replaying the original `content-type` header so `reqwest` can emit the correct boundary/content-type for the reconstructed request.
+
 ## Next Step
 
-Improve multipart and harder-site fidelity further: preserve richer request-body structure where Chrome exposes it, and add any additional targeted browser request context needed for sites that still fail with the current method/body/header/cookie replay path.
+Test and close the remaining site-specific gaps: identify any download flows that still fail after the current method/body/header/cookie/form replay stack, then add only the missing targeted browser request context those sites actually require.

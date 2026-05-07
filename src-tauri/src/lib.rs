@@ -141,6 +141,10 @@ fn apply_extension_request_headers(
                 continue;
             }
 
+            if normalized_name == "content-type" && request_uses_form_data(Some(context)) {
+                continue;
+            }
+
             request = request.header(header_name, header_value);
         }
     }
@@ -176,6 +180,41 @@ fn request_body_bytes_from_context(context: Option<&ExtensionDownloadRequest>) -
     }
 }
 
+fn request_form_entries_from_context(
+    context: Option<&ExtensionDownloadRequest>,
+) -> Option<Vec<(String, String)>> {
+    let form_data = context?.request_form_data.as_ref()?;
+    let mut entries = Vec::new();
+
+    for (key, values) in form_data {
+        let key = key.trim();
+        if key.is_empty() {
+            continue;
+        }
+
+        for value in values {
+            entries.push((key.to_string(), value.clone()));
+        }
+    }
+
+    (!entries.is_empty()).then_some(entries)
+}
+
+fn request_uses_form_data(context: Option<&ExtensionDownloadRequest>) -> bool {
+    context
+        .and_then(|value| value.request_form_data.as_ref())
+        .map(|value| !value.is_empty())
+        .unwrap_or(false)
+}
+
+fn request_uses_multipart(context: Option<&ExtensionDownloadRequest>) -> bool {
+    context
+        .and_then(|value| value.request_headers.as_ref())
+        .and_then(|headers| headers.get("content-type").or_else(|| headers.get("Content-Type")))
+        .map(|value| value.to_ascii_lowercase().starts_with("multipart/form-data"))
+        .unwrap_or(false)
+}
+
 fn build_extension_request(
     client: &Client,
     parsed_url: &Url,
@@ -191,7 +230,17 @@ fn build_extension_request(
     };
 
     if !use_head_probe && method != Method::GET {
-        if let Some(body) = request_body_bytes_from_context(context) {
+        if let Some(entries) = request_form_entries_from_context(context) {
+            if request_uses_multipart(context) {
+                let mut form = reqwest::multipart::Form::new();
+                for (key, value) in entries {
+                    form = form.text(key, value);
+                }
+                request = request.multipart(form);
+            } else {
+                request = request.form(&entries);
+            }
+        } else if let Some(body) = request_body_bytes_from_context(context) {
             request = request.body(body);
         }
     }

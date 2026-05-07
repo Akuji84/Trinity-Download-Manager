@@ -28,7 +28,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 futures-util = "0.3"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["multipart", "rustls-tls", "stream"] }
 tokio = { version = "1", features = ["fs", "io-util"] }
 tauri-plugin-dialog = "2.7.1"
 chrono = "0.4.44"

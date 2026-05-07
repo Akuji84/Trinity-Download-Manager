@@ -61,11 +61,14 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
   await sendToTrinity({
     url: selectedUrl,
+    final_url: selectedUrl,
     page_url: info.pageUrl ?? tab?.url ?? null,
     suggested_file_name: deriveSuggestedFileName(selectedUrl),
     mime_type: null,
     referrer: tab?.url ?? null,
     browser: "chrome",
+    user_agent: navigator.userAgent,
+    cookies: null,
     output_folder: null,
   });
 });
@@ -173,17 +176,21 @@ async function sendTabToTrinity(tab) {
   const currentUrl = tab?.url ?? "";
   await sendToTrinity({
     url: currentUrl,
+    final_url: currentUrl,
     page_url: currentUrl,
     suggested_file_name: deriveSuggestedFileName(currentUrl),
     mime_type: null,
     referrer: currentUrl,
     browser: "chrome",
+    user_agent: navigator.userAgent,
+    cookies: null,
     output_folder: null,
   });
 }
 
 async function sendToTrinity(payload) {
-  if (!isHttpUrl(payload.url)) {
+  const resolvedUrl = payload.final_url || payload.url;
+  if (!isHttpUrl(resolvedUrl)) {
     await showBridgeBadge("URL?", "#7a3f00");
     return false;
   }
@@ -319,12 +326,15 @@ async function handleCreatedDownload(downloadItem) {
   }
 
   const sentToTrinity = await sendToTrinity({
-    url: downloadItem.finalUrl || downloadItem.url,
+    url: downloadItem.url,
+    final_url: downloadItem.finalUrl || downloadItem.url,
     page_url: pageUrl,
     suggested_file_name: deriveDownloadItemFileName(downloadItem),
     mime_type: downloadItem.mime || null,
     referrer: downloadItem.referrer || pageUrl || null,
     browser: "chrome",
+    user_agent: navigator.userAgent,
+    cookies: null,
     output_folder: null,
   });
 
@@ -441,11 +451,14 @@ async function captureDownloadClick(payload) {
 
   const sentToTrinity = await sendToTrinity({
     url: payload.url,
+    final_url: payload.final_url ?? payload.url,
     page_url: payload.page_url ?? null,
     suggested_file_name: payload.suggested_file_name ?? deriveSuggestedFileName(payload.url),
     mime_type: payload.mime_type ?? null,
     referrer: payload.referrer ?? payload.page_url ?? null,
     browser: "chrome",
+    user_agent: payload.user_agent ?? navigator.userAgent,
+    cookies: payload.cookies ?? null,
     output_folder: null,
   });
 

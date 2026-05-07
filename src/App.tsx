@@ -94,11 +94,14 @@ type DownloadUrlMetadata = {
 
 type ExtensionDownloadRequest = {
   url: string;
+  final_url?: string | null;
   page_url?: string | null;
   suggested_file_name?: string | null;
   mime_type?: string | null;
   referrer?: string | null;
   browser?: string | null;
+  user_agent?: string | null;
+  cookies?: string[] | null;
   output_folder?: string | null;
 };
 
@@ -485,10 +488,11 @@ function App() {
 
     listen<ExtensionDownloadRequest>("extension-download-request", (event) => {
       const payload = event.payload;
+      const resolvedUrl = payload.final_url?.trim() || (payload.url ?? "");
       if (settingsRef.current.browser_start_without_confirmation) {
         void invoke<DownloadJob>("create_download_job", {
           request: {
-            url: payload.url ?? "",
+            url: resolvedUrl,
             suggested_file_name: payload.suggested_file_name?.trim() || null,
             output_folder: payload.output_folder?.trim() || null,
             scheduler_enabled: false,
@@ -509,7 +513,7 @@ function App() {
       }
 
       setError("");
-      setUrl(payload.url ?? "");
+      setUrl(resolvedUrl);
       setPendingSuggestedFileName(payload.suggested_file_name?.trim() ?? "");
       setOutputFolder(payload.output_folder?.trim() ?? "");
       setIsSchedulerEnabled(false);

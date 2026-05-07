@@ -75,6 +75,15 @@ fn focus_main_window(app: &AppHandle) {
     }
 }
 
+fn resolved_extension_url(request: &ExtensionDownloadRequest) -> &str {
+    request
+        .final_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| request.url.trim())
+}
+
 #[tauri::command]
 fn app_status() -> AppStatus {
     AppStatus::foundation_ready()
@@ -1359,7 +1368,8 @@ fn handle_extension_bridge_connection(app: &AppHandle, mut stream: TcpStream) ->
                 "ok": true,
                 "appName": "Trinity Download Manager",
                 "bridgePort": EXTENSION_BRIDGE_PORT,
-                "endpoints": ["/app/ping", "/app/browser-settings", "/downloads/create", "/app/open-options"]
+                "endpoints": ["/app/ping", "/app/browser-settings", "/downloads/create", "/app/open-options"],
+                "downloadHandoffVersion": 2
             }),
         ),
         ("GET", "/app/browser-settings") => {
@@ -1398,8 +1408,8 @@ fn handle_extension_bridge_connection(app: &AppHandle, mut stream: TcpStream) ->
         ("POST", "/downloads/create") => {
             let request: ExtensionDownloadRequest = serde_json::from_slice(&body)
                 .map_err(|error| format!("Invalid Trinity extension payload: {error}"))?;
-            let parsed_url =
-                Url::parse(request.url.trim()).map_err(|_| "Invalid download URL.".to_string())?;
+            let parsed_url = Url::parse(resolved_extension_url(&request))
+                .map_err(|_| "Invalid download URL.".to_string())?;
             match parsed_url.scheme() {
                 "http" | "https" => {}
                 _ => return Err("Only HTTP and HTTPS URLs are supported.".to_string()),

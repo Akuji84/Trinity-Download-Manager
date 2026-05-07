@@ -684,6 +684,24 @@ Exit criteria:
   - the Add Download modal now derives a filename from the URL path itself before waiting on metadata
   - if the URL already ends in something like `SteamSetup.exe`, the modal immediately shows `File name` with that value instead of showing the raw URL
   - metadata still overrides that derived value when the server reports a better filename
+- Browser integration needs a resolver-first architecture like IDM/FDM:
+  - current Trinity behavior still relies too heavily on the clicked URL or early page URL, which fails on gated/redirected/browser-managed downloads (for example GoFile, Steam landing pages, and other protected download flows)
+  - mature download managers solve this by letting the browser resolve the real download first, then handing the native app richer metadata instead of asking the native app to guess from the page URL
+  - the browser handoff payload needs to evolve toward:
+    - final resolved download URL
+    - suggested filename from the browser download item
+    - referrer/page URL
+    - MIME type when available
+    - user agent
+    - cookies/session state for sites that require browser-authenticated requests
+    - request method / POST body support later if needed for more protected sites
+  - Trinity should treat tiny HTML or intermediate responses as unresolved browser-gated downloads, not as valid file downloads
+  - this is the architectural path required to make difficult sites work more like IDM/FDM instead of relying on fragile URL guessing
+- Implemented browser handoff contract v2 foundation:
+  - `ExtensionDownloadRequest` now supports `final_url`, `user_agent`, and `cookies` fields in addition to the original clicked `url`, filename, referrer, MIME type, and page URL
+  - the localhost bridge advertises `downloadHandoffVersion: 2` from `/app/ping`
+  - Trinity now prefers `final_url` when validating and consuming extension download requests
+  - the Chrome extension now sends both the original URL and resolved `final_url` where available, plus `user_agent` and cookie placeholders for the next browser-session transfer step
 
 ## Current Verification Status
 
@@ -750,4 +768,4 @@ Exit criteria:
 
 ## Next Step
 
-Show browser-capture state more clearly inside Trinity Preferences so users can see that Chrome capture is live, what rules are active, and whether Trinity is currently reachable from the extension bridge.
+Add request method/body fields and session-transfer support to the browser handoff, then start using those richer fields for gated/redirected sites that need more than a resolved `final_url`.

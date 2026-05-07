@@ -123,11 +123,14 @@ pub struct DownloadUrlMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtensionDownloadRequest {
     pub url: String,
+    pub final_url: Option<String>,
     pub page_url: Option<String>,
     pub suggested_file_name: Option<String>,
     pub mime_type: Option<String>,
     pub referrer: Option<String>,
     pub browser: Option<String>,
+    pub user_agent: Option<String>,
+    pub cookies: Option<Vec<String>>,
     pub output_folder: Option<String>,
 }
 

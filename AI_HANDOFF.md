@@ -613,6 +613,10 @@ Exit criteria:
   - desktop shortcuts are recreated during the install section against that installed `.ico`
   - the Finish-page desktop shortcut flow is suppressed because it was replacing the working shortcut with the wrong icon on this machine
   - the old `.lnk` LinkFlags patching path was removed because the shortcut no longer depends on Explorer extracting the exe icon
+- Extended the NSIS shortcut-icon fix to the Start menu/search entry:
+  - the NSIS postinstall hook now recreates both the desktop shortcut and the Start menu shortcut with the same installed `trinity-shortcut.ico`
+  - both shortcuts now get the same AppUserModelId handling and shell refresh notification
+  - this is meant to align the wrong desktop/search shortcut icons with the already-correct tray and installer icons
 - Current segmented implementation is still conservative:
   - segmented jobs rebalance naturally through the chunk queue, but live splitting/merging of in-flight chunks is not implemented yet
   - segmented part state is persisted on a short interval, so an abrupt kill may lose only the most recent in-flight chunk progress instead of the whole job

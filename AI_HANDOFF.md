@@ -895,6 +895,29 @@ Exit criteria:
   - do not trust `HEAD` as authoritative for browser-captured downloads
   - prefer browser-like ranged `GET` probes for file metadata on those paths
 
+### 2026-05-07 - Add browser download transaction correlator in the extension
+**Commit:** `pending`
+
+- Started the IDM/FDM-style architecture shift by adding a short-lived browser download transaction record in `background.js`.
+- The extension now correlates the same browser request across:
+  - `webRequest.onBeforeRequest`
+  - `webRequest.onBeforeSendHeaders`
+  - `webRequest.onHeadersReceived`
+  - `webRequest.onResponseStarted`
+  - `downloads.onCreated`
+- Transactions are keyed by Chrome `requestId` and kept for a short window, then matched back to created download items by URL/tab/referrer timing.
+- `downloads.onCreated` debug output now includes the matched transaction summary instead of only the raw download item.
+- The normal browser download handoff path now also reuses the matched transaction when available for:
+  - `request_method`
+  - `request_body`
+  - `request_body_encoding`
+  - `request_form_data`
+  - `request_headers`
+  - browser-observed response `content-type`
+- This is only the first structural step:
+  - the browser download item still drives takeover timing
+  - the extension is now beginning to trust the browser's real request/response transaction instead of rebuilding everything from looser URL-based guesses
+
 ## Next Step
 
 Test the deferred resolver against a few download styles and tighten the generic file-proof rules if needed:

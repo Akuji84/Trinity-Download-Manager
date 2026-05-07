@@ -20,12 +20,14 @@ const DOWNLOAD_EXTENSIONS = new Set([
 ]);
 const RECENT_CAPTURE_WINDOW_MS = 8000;
 const REQUEST_METADATA_WINDOW_MS = 15000;
+const DOWNLOAD_TRANSACTION_WINDOW_MS = 30000;
 const DIRECT_CAPTURE_PROBE_TIMEOUT_MS = 2500;
 const DIRECT_CAPTURE_PROBE_BYTES = "bytes=0-4095";
 const MAX_CAPTURE_RESOLUTION_DEPTH = 4;
 const MIN_CONFIDENT_FILE_SIZE_BYTES = 64 * 1024;
 const recentCapturedUrls = new Map();
 const recentRequestMetadata = new Map();
+const recentDownloadTransactions = new Map();
 let debugLogFlushInFlight = false;
 
 function shouldSkipDebugUrl(url) {
@@ -80,9 +82,11 @@ chrome.webRequest.onBeforeRequest.addListener(
         type: details?.type || "",
         initiator: details?.initiator || details?.documentUrl || null,
         tabId: details?.tabId ?? null,
+        requestId: details?.requestId || null,
       });
     }
     cacheRequestMetadata(details);
+    cacheDownloadTransactionRequest(details);
   },
   { urls: ["<all_urls>"] },
   ["requestBody"],
@@ -98,9 +102,11 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
         url: details?.url || "",
         method: details?.method || "",
         headers: extractReplayHeaders(details?.requestHeaders) || {},
+        requestId: details?.requestId || null,
       });
     }
     cacheRequestHeaders(details);
+    cacheDownloadTransactionRequestHeaders(details);
   },
   { urls: ["<all_urls>"] },
   ["requestHeaders", "extraHeaders"],
@@ -119,8 +125,10 @@ chrome.webRequest.onHeadersReceived.addListener(
         statusLine: details?.statusLine || "",
         type: details?.type || "",
         responseHeaders: extractDebugResponseHeaders(details?.responseHeaders),
+        requestId: details?.requestId || null,
       });
     }
+    cacheDownloadTransactionResponseHeaders(details);
   },
   { urls: ["<all_urls>"] },
   ["responseHeaders", "extraHeaders"],
@@ -140,8 +148,10 @@ chrome.webRequest.onResponseStarted.addListener(
         fromCache: details?.fromCache ?? null,
         type: details?.type || "",
         responseHeaders: extractDebugResponseHeaders(details?.responseHeaders),
+        requestId: details?.requestId || null,
       });
     }
+    cacheDownloadTransactionResponseStarted(details);
   },
   { urls: ["<all_urls>"] },
   ["responseHeaders", "extraHeaders"],
@@ -500,6 +510,128 @@ function cacheRequestHeaders(details) {
   });
 }
 
+function cacheDownloadTransactionRequest(details) {
+  const requestId = String(details?.requestId || "").trim();
+  const url = details?.url || "";
+  if (!requestId || !isHttpUrl(url)) {
+    return;
+  }
+
+  cleanupRecentDownloadTransactions();
+  const current = recentDownloadTransactions.get(requestId);
+  recentDownloadTransactions.set(requestId, {
+    requestId,
+    createdAt: current?.createdAt ?? Date.now(),
+    updatedAt: Date.now(),
+    expiresAt: Date.now() + DOWNLOAD_TRANSACTION_WINDOW_MS,
+    url,
+    method: String(details.method || current?.method || "GET").trim().toUpperCase(),
+    type: details?.type || current?.type || "",
+    tabId: typeof details?.tabId === "number" ? details.tabId : current?.tabId ?? null,
+    frameId: typeof details?.frameId === "number" ? details.frameId : current?.frameId ?? null,
+    initiator: details?.initiator || details?.documentUrl || current?.initiator || null,
+    requestBody: serializeRequestBody(details?.requestBody) || current?.requestBody || null,
+    requestHeaders: current?.requestHeaders || null,
+    responseHeaders: current?.responseHeaders || null,
+    statusCode: current?.statusCode ?? null,
+    statusLine: current?.statusLine || "",
+    ip: current?.ip || "",
+    fromCache: current?.fromCache ?? null,
+  });
+}
+
+function cacheDownloadTransactionRequestHeaders(details) {
+  const requestId = String(details?.requestId || "").trim();
+  const url = details?.url || "";
+  if (!requestId || !isHttpUrl(url)) {
+    return;
+  }
+
+  cleanupRecentDownloadTransactions();
+  const current = recentDownloadTransactions.get(requestId);
+  recentDownloadTransactions.set(requestId, {
+    requestId,
+    createdAt: current?.createdAt ?? Date.now(),
+    updatedAt: Date.now(),
+    expiresAt: Date.now() + DOWNLOAD_TRANSACTION_WINDOW_MS,
+    url,
+    method: String(details.method || current?.method || "GET").trim().toUpperCase(),
+    type: details?.type || current?.type || "",
+    tabId: current?.tabId ?? (typeof details?.tabId === "number" ? details.tabId : null),
+    frameId: current?.frameId ?? (typeof details?.frameId === "number" ? details.frameId : null),
+    initiator: current?.initiator ?? details?.initiator ?? details?.documentUrl ?? null,
+    requestBody: current?.requestBody || null,
+    requestHeaders: extractReplayHeaders(details?.requestHeaders) || current?.requestHeaders || null,
+    responseHeaders: current?.responseHeaders || null,
+    statusCode: current?.statusCode ?? null,
+    statusLine: current?.statusLine || "",
+    ip: current?.ip || "",
+    fromCache: current?.fromCache ?? null,
+  });
+}
+
+function cacheDownloadTransactionResponseHeaders(details) {
+  const requestId = String(details?.requestId || "").trim();
+  const url = details?.url || "";
+  if (!requestId || !isHttpUrl(url)) {
+    return;
+  }
+
+  cleanupRecentDownloadTransactions();
+  const current = recentDownloadTransactions.get(requestId);
+  recentDownloadTransactions.set(requestId, {
+    requestId,
+    createdAt: current?.createdAt ?? Date.now(),
+    updatedAt: Date.now(),
+    expiresAt: Date.now() + DOWNLOAD_TRANSACTION_WINDOW_MS,
+    url,
+    method: String(details.method || current?.method || "GET").trim().toUpperCase(),
+    type: details?.type || current?.type || "",
+    tabId: current?.tabId ?? (typeof details?.tabId === "number" ? details.tabId : null),
+    frameId: current?.frameId ?? (typeof details?.frameId === "number" ? details.frameId : null),
+    initiator: current?.initiator ?? details?.initiator ?? details?.documentUrl ?? null,
+    requestBody: current?.requestBody || null,
+    requestHeaders: current?.requestHeaders || null,
+    responseHeaders: extractDebugResponseHeaders(details?.responseHeaders),
+    statusCode: details?.statusCode ?? current?.statusCode ?? null,
+    statusLine: details?.statusLine || current?.statusLine || "",
+    ip: current?.ip || "",
+    fromCache: current?.fromCache ?? null,
+  });
+}
+
+function cacheDownloadTransactionResponseStarted(details) {
+  const requestId = String(details?.requestId || "").trim();
+  const url = details?.url || "";
+  if (!requestId || !isHttpUrl(url)) {
+    return;
+  }
+
+  cleanupRecentDownloadTransactions();
+  const current = recentDownloadTransactions.get(requestId);
+  recentDownloadTransactions.set(requestId, {
+    requestId,
+    createdAt: current?.createdAt ?? Date.now(),
+    updatedAt: Date.now(),
+    expiresAt: Date.now() + DOWNLOAD_TRANSACTION_WINDOW_MS,
+    url,
+    method: String(details.method || current?.method || "GET").trim().toUpperCase(),
+    type: details?.type || current?.type || "",
+    tabId: current?.tabId ?? (typeof details?.tabId === "number" ? details.tabId : null),
+    frameId: current?.frameId ?? (typeof details?.frameId === "number" ? details.frameId : null),
+    initiator: current?.initiator ?? details?.initiator ?? details?.documentUrl ?? null,
+    requestBody: current?.requestBody || null,
+    requestHeaders: current?.requestHeaders || null,
+    responseHeaders: Object.keys(current?.responseHeaders || {}).length > 0
+      ? current.responseHeaders
+      : extractDebugResponseHeaders(details?.responseHeaders),
+    statusCode: details?.statusCode ?? current?.statusCode ?? null,
+    statusLine: current?.statusLine || "",
+    ip: details?.ip || current?.ip || "",
+    fromCache: details?.fromCache ?? current?.fromCache ?? null,
+  });
+}
+
 function findRecentRequestMetadata(payload) {
   cleanupRecentRequestMetadata();
   const candidates = [
@@ -524,6 +656,67 @@ function cleanupRecentRequestMetadata() {
       recentRequestMetadata.delete(key);
     }
   }
+}
+
+function cleanupRecentDownloadTransactions() {
+  const now = Date.now();
+  for (const [key, value] of recentDownloadTransactions.entries()) {
+    if (!value || value.expiresAt <= now) {
+      recentDownloadTransactions.delete(key);
+    }
+  }
+}
+
+function findDownloadTransactionForItem(downloadItem) {
+  cleanupRecentDownloadTransactions();
+  const candidateUrls = [
+    downloadItem?.finalUrl,
+    downloadItem?.url,
+  ].filter((value, index, values) => isHttpUrl(value) && values.indexOf(value) === index);
+  if (candidateUrls.length === 0) {
+    return null;
+  }
+
+  const downloadReferrer = String(downloadItem?.referrer || "").trim();
+  const downloadTabId = typeof downloadItem?.tabId === "number" ? downloadItem.tabId : null;
+  const candidates = [];
+  for (const transaction of recentDownloadTransactions.values()) {
+    if (!transaction || !candidateUrls.includes(transaction.url)) {
+      continue;
+    }
+    if (transaction.type && transaction.type !== "main_frame") {
+      continue;
+    }
+    if (downloadTabId != null && transaction.tabId != null && transaction.tabId !== downloadTabId) {
+      continue;
+    }
+    if (downloadReferrer && transaction.initiator && transaction.initiator !== downloadReferrer) {
+      continue;
+    }
+    candidates.push(transaction);
+  }
+
+  candidates.sort((left, right) => (right.updatedAt || 0) - (left.updatedAt || 0));
+  return candidates[0] || null;
+}
+
+function summarizeDownloadTransaction(transaction) {
+  if (!transaction) {
+    return null;
+  }
+
+  return {
+    requestId: transaction.requestId,
+    url: transaction.url,
+    method: transaction.method || "",
+    type: transaction.type || "",
+    tabId: transaction.tabId ?? null,
+    initiator: transaction.initiator || null,
+    statusCode: transaction.statusCode ?? null,
+    statusLine: transaction.statusLine || "",
+    requestHeaders: transaction.requestHeaders || null,
+    responseHeaders: transaction.responseHeaders || null,
+  };
 }
 
 function extractReplayHeaders(requestHeaders) {
@@ -729,6 +922,7 @@ async function getPopupState() {
 }
 
 async function handleCreatedDownload(downloadItem) {
+  const transaction = findDownloadTransactionForItem(downloadItem);
   if (await isDebugModeEnabled()) {
     debugLog("downloads.onCreated", {
       id: downloadItem.id,
@@ -741,6 +935,7 @@ async function handleCreatedDownload(downloadItem) {
       fileSize: downloadItem.fileSize ?? null,
       totalBytes: downloadItem.totalBytes ?? null,
       exists: downloadItem.exists ?? null,
+      transaction: summarizeDownloadTransaction(transaction),
     });
     return;
   }
@@ -819,11 +1014,14 @@ async function handleCreatedDownload(downloadItem) {
   const sentToTrinity = await sendToTrinity({
     url: downloadItem.url,
     final_url: downloadItem.finalUrl || downloadItem.url,
-    request_method: "GET",
-    request_body: null,
+    request_method: transaction?.method || "GET",
+    request_body: transaction?.requestBody?.value ?? null,
+    request_body_encoding: transaction?.requestBody?.encoding ?? null,
+    request_form_data: transaction?.requestBody?.formData ?? null,
+    request_headers: transaction?.requestHeaders || null,
     page_url: pageUrl,
     suggested_file_name: deriveDownloadItemFileName(downloadItem),
-    mime_type: downloadItem.mime || null,
+    mime_type: transaction?.responseHeaders?.["content-type"] || downloadItem.mime || null,
     referrer: downloadItem.referrer || pageUrl || null,
     browser: "chrome",
     user_agent: navigator.userAgent,

@@ -141,10 +141,6 @@ function buildPayload(candidate) {
 }
 
 function shouldCaptureCandidate(candidate, payload) {
-  if (requiresBrowserResolvedDownload(payload.url)) {
-    return false;
-  }
-
   if (candidate instanceof HTMLAnchorElement && candidate.hasAttribute("download")) {
     return true;
   }
@@ -194,21 +190,6 @@ function isStrongDownloadUrl(url) {
       pathname.includes("/releases/download/") ||
       pathname.includes("/installer/") ||
       pathname.includes("/installers/")
-    );
-  } catch {
-    return false;
-  }
-}
-
-function requiresBrowserResolvedDownload(url) {
-  try {
-    const parsedUrl = new URL(url);
-    const host = parsedUrl.hostname.toLowerCase();
-    const pathname = parsedUrl.pathname.toLowerCase();
-
-    return (
-      (host === "gofile.io" || host.endsWith(".gofile.io")) &&
-      pathname.includes("/download/web/")
     );
   } catch {
     return false;

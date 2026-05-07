@@ -19,6 +19,7 @@ const DOWNLOAD_EXTENSIONS = new Set([
 ]);
 const RECENT_CAPTURE_WINDOW_MS = 8000;
 const REQUEST_METADATA_WINDOW_MS = 15000;
+const DIRECT_CAPTURE_PROBE_TIMEOUT_MS = 2500;
 const recentCapturedUrls = new Map();
 const recentRequestMetadata = new Map();
 
@@ -756,6 +757,14 @@ async function captureDownloadClick(payload) {
     };
   }
 
+  const shouldCaptureDirectly = await shouldUseDirectCapture(payload);
+  if (!shouldCaptureDirectly) {
+    return {
+      captured: false,
+      fallbackToBrowser: true,
+    };
+  }
+
   const sentToTrinity = await sendToTrinity({
     url: payload.url,
     final_url: payload.final_url ?? payload.url,
@@ -785,6 +794,144 @@ async function captureDownloadClick(payload) {
 
   await showBridgeBadge("CAP", "#145d29");
   return { captured: true };
+}
+
+async function shouldUseDirectCapture(payload) {
+  const targetUrl = payload.final_url || payload.url || "";
+  if (!isHttpUrl(targetUrl)) {
+    return false;
+  }
+
+  if (!hasDownloadExtension(targetUrl)) {
+    return false;
+  }
+
+  const probe = await probeDirectDownloadCandidate(payload);
+  if (!probe) {
+    return false;
+  }
+
+  if (probe.looksHtml) {
+    return false;
+  }
+
+  if (probe.contentDispositionFileName) {
+    return true;
+  }
+
+  if (hasDownloadExtension(probe.finalUrl || targetUrl)) {
+    return true;
+  }
+
+  const contentType = probe.contentType.toLowerCase();
+  return (
+    contentType.startsWith("application/") ||
+    contentType.startsWith("audio/") ||
+    contentType.startsWith("video/") ||
+    contentType.startsWith("image/")
+  );
+}
+
+async function probeDirectDownloadCandidate(payload) {
+  const targetUrl = payload.final_url || payload.url || "";
+  if (!isHttpUrl(targetUrl)) {
+    return null;
+  }
+
+  const probeHeaders = {};
+  if (payload.request_headers && typeof payload.request_headers === "object") {
+    for (const [name, value] of Object.entries(payload.request_headers)) {
+      if (!name || !value) {
+        continue;
+      }
+      const normalized = name.toLowerCase();
+      if (normalized === "authorization" || normalized === "origin" || normalized === "accept") {
+        probeHeaders[name] = value;
+      }
+    }
+  }
+
+  try {
+    const response = await fetchWithTimeout(
+      targetUrl,
+      {
+        method: "HEAD",
+        cache: "no-store",
+        credentials: "include",
+        headers: probeHeaders,
+        referrer: payload.referrer || payload.page_url || undefined,
+        redirect: "follow",
+      },
+      DIRECT_CAPTURE_PROBE_TIMEOUT_MS,
+    );
+
+    return summarizeProbeResponse(response, targetUrl);
+  } catch {
+    try {
+      const response = await fetchWithTimeout(
+        targetUrl,
+        {
+          method: "GET",
+          cache: "no-store",
+          credentials: "include",
+          headers: {
+            ...probeHeaders,
+            Range: "bytes=0-0",
+          },
+          referrer: payload.referrer || payload.page_url || undefined,
+          redirect: "follow",
+        },
+        DIRECT_CAPTURE_PROBE_TIMEOUT_MS,
+      );
+
+      return summarizeProbeResponse(response, targetUrl);
+    } catch (error) {
+      console.warn("Direct capture probe failed", targetUrl, error);
+      return null;
+    }
+  }
+}
+
+function summarizeProbeResponse(response, fallbackUrl) {
+  const contentType = response.headers.get("content-type") || "";
+  const disposition = response.headers.get("content-disposition") || "";
+  return {
+    finalUrl: response.url || fallbackUrl,
+    contentType,
+    contentDispositionFileName: fileNameFromContentDisposition(disposition),
+    looksHtml: contentType.toLowerCase().startsWith("text/html"),
+  };
+}
+
+function fileNameFromContentDisposition(value) {
+  if (!value) {
+    return null;
+  }
+
+  const utf8Match = value.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      return utf8Match[1];
+    }
+  }
+
+  const basicMatch = value.match(/filename\s*=\s*\"?([^\";]+)\"?/i);
+  return basicMatch?.[1] || null;
+}
+
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 async function openTrinityOptions() {

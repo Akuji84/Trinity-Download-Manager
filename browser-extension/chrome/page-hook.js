@@ -186,10 +186,6 @@
       return false;
     }
 
-    if (requiresBrowserResolvedDownload(anchor.href)) {
-      return false;
-    }
-
     if (anchor.hasAttribute("download")) {
       return true;
     }
@@ -200,10 +196,6 @@
   function shouldCaptureUrl(url, target) {
     const absoluteUrl = toAbsoluteHttpUrl(url);
     if (!absoluteUrl) {
-      return false;
-    }
-
-    if (requiresBrowserResolvedDownload(absoluteUrl)) {
       return false;
     }
 
@@ -220,20 +212,6 @@
         pathname.includes("/releases/download/") ||
         pathname.includes("/installer/") ||
         pathname.includes("/installers/")
-      );
-    } catch {
-      return false;
-    }
-  }
-
-  function requiresBrowserResolvedDownload(value) {
-    try {
-      const parsed = new URL(value, window.location.href);
-      const host = parsed.hostname.toLowerCase();
-      const pathname = parsed.pathname.toLowerCase();
-      return (
-        (host === "gofile.io" || host.endsWith(".gofile.io")) &&
-        pathname.includes("/download/web/")
       );
     } catch {
       return false;

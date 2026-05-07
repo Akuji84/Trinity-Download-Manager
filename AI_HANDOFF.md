@@ -810,13 +810,15 @@ Exit criteria:
   - other structured form submissions fall back to request `.form(...)`
 - When Trinity rebuilds a form body, it intentionally skips replaying the original `content-type` header so `reqwest` can emit the correct boundary/content-type for the reconstructed request.
 
-### 2026-05-07 - Force GoFile through browser-resolved capture path
+### 2026-05-07 - Move browser capture toward a scalable two-lane model
 **Commit:** `pending`
 
-- GoFile `*.gofile.io/download/web/...` links were still being pre-captured too early because they look like strong direct download URLs.
-- That meant Trinity received the placeholder web response directly and showed the tiny `11.6 KB` result instead of letting Chrome resolve the authenticated browser request first.
-- The Chrome content-script and page-hook heuristics now explicitly bypass pre-capture for those GoFile `/download/web/` URLs.
-- Result: Chrome is allowed to make the real browser download request first, then Trinity can intercept the resolved download through the browser-managed path instead of downloading the placeholder endpoint directly.
+- We do not want the extension architecture to grow around hardcoded website paths or one-off hostname exceptions.
+- The scalable capture model is now:
+  1. **Direct capture lane** - only send straight to Trinity when the URL looks like a direct file and a lightweight browser-side probe says the endpoint behaves like a real file response.
+  2. **Browser-resolved lane** - if the candidate is ambiguous or the probe suggests HTML/intermediate content, let Chrome resolve the real download first and intercept it through the browser-managed download event path.
+- The extension now uses a generic response-based probe for likely direct-file clicks instead of relying on host-specific carveouts.
+- This keeps the architecture aligned with the longer-term IDM/FDM-style model: prefer browser resolution for ambiguous flows, and use direct pre-capture only for low-risk direct-file cases.
 
 ## Next Step
 

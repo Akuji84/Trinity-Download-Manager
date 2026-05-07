@@ -18,12 +18,22 @@ const DOWNLOAD_EXTENSIONS = new Set([
   "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
 ]);
 const RECENT_CAPTURE_WINDOW_MS = 8000;
+const REQUEST_METADATA_WINDOW_MS = 15000;
 const recentCapturedUrls = new Map();
+const recentRequestMetadata = new Map();
 
 // Cached bridge status so onCreated can cancel immediately without a network round-trip
 let cachedBridgeAlive = false;
 setInterval(refreshCachedBridgeStatus, 15000);
 refreshCachedBridgeStatus();
+
+chrome.webRequest.onBeforeRequest.addListener(
+  (details) => {
+    cacheRequestMetadata(details);
+  },
+  { urls: ["<all_urls>"] },
+  ["requestBody"],
+);
 
 async function refreshCachedBridgeStatus() {
   cachedBridgeAlive = await pingBridge();
@@ -226,6 +236,7 @@ async function sendToTrinity(payload) {
 
 async function enrichPayloadWithSession(payload) {
   const resolvedUrl = payload.final_url || payload.url || "";
+  const requestMetadata = findRecentRequestMetadata(payload);
   const cookieUrls = [
     resolvedUrl,
     payload.url,
@@ -237,9 +248,25 @@ async function enrichPayloadWithSession(payload) {
 
   return {
     ...payload,
+    request_method: shouldUseCapturedRequestMethod(payload, requestMetadata)
+      ? requestMetadata?.method || payload.request_method || "GET"
+      : payload.request_method || "GET",
+    request_body:
+      payload.request_body != null
+        ? payload.request_body
+        : requestMetadata?.body ?? null,
     user_agent: payload.user_agent || navigator.userAgent,
     cookies: cookies.length > 0 ? cookies : null,
   };
+}
+
+function shouldUseCapturedRequestMethod(payload, requestMetadata) {
+  if (!requestMetadata?.method) {
+    return false;
+  }
+
+  const payloadMethod = String(payload.request_method || "GET").trim().toUpperCase();
+  return payloadMethod === "GET" && payload.request_body == null;
 }
 
 async function collectCookiesForUrls(urls) {
@@ -272,6 +299,100 @@ async function collectCookiesForUrls(urls) {
   }
 
   return collected;
+}
+
+function cacheRequestMetadata(details) {
+  const url = details?.url || "";
+  if (!isHttpUrl(url)) {
+    return;
+  }
+
+  const method = String(details.method || "GET").trim().toUpperCase();
+  const body = serializeRequestBody(details.requestBody);
+  cleanupRecentRequestMetadata();
+  recentRequestMetadata.set(url, {
+    method,
+    body,
+    tabId: typeof details.tabId === "number" ? details.tabId : null,
+    frameId: typeof details.frameId === "number" ? details.frameId : null,
+    initiator: details.initiator || details.documentUrl || null,
+    expiresAt: Date.now() + REQUEST_METADATA_WINDOW_MS,
+  });
+}
+
+function findRecentRequestMetadata(payload) {
+  cleanupRecentRequestMetadata();
+  const candidates = [
+    payload.final_url,
+    payload.url,
+  ].filter((value, index, values) => isHttpUrl(value) && values.indexOf(value) === index);
+
+  for (const candidate of candidates) {
+    const metadata = recentRequestMetadata.get(candidate);
+    if (metadata && metadata.expiresAt > Date.now()) {
+      return metadata;
+    }
+  }
+
+  return null;
+}
+
+function cleanupRecentRequestMetadata() {
+  const now = Date.now();
+  for (const [key, value] of recentRequestMetadata.entries()) {
+    if (!value || value.expiresAt <= now) {
+      recentRequestMetadata.delete(key);
+    }
+  }
+}
+
+function serializeRequestBody(requestBody) {
+  if (!requestBody) {
+    return null;
+  }
+
+  if (requestBody.formData && typeof requestBody.formData === "object") {
+    const params = new URLSearchParams();
+    for (const [key, values] of Object.entries(requestBody.formData)) {
+      if (!Array.isArray(values)) {
+        continue;
+      }
+      for (const value of values) {
+        params.append(key, String(value));
+      }
+    }
+    const serialized = params.toString();
+    return serialized || null;
+  }
+
+  if (Array.isArray(requestBody.raw) && requestBody.raw.length > 0) {
+    const chunks = requestBody.raw
+      .map((part) => {
+        const bytes = part?.bytes;
+        if (!bytes) {
+          return null;
+        }
+        return bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : new Uint8Array(bytes.buffer || bytes);
+      })
+      .filter(Boolean);
+
+    if (chunks.length === 0) {
+      return null;
+    }
+
+    const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    const combined = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+      combined.set(chunk, offset);
+      offset += chunk.length;
+    }
+
+    const decoded = new TextDecoder().decode(combined).trim();
+    return decoded || null;
+  }
+
+  return null;
 }
 
 async function pingBridge() {

@@ -715,6 +715,11 @@ Exit criteria:
   - the Rust side now builds inspection and download requests from `request_method` and `request_body` instead of assuming `GET` everywhere
   - browser-originated non-GET downloads stay on the single-stream path for now; segmented/range logic remains limited to plain `GET` requests because replaying multiple ranged POST-style requests is not yet safe
   - this closes the app-side half of the IDM/FDM-style browser handoff path; the remaining gap is populating real non-GET request metadata from Chrome when sites actually trigger downloads that way
+- The Chrome extension now captures real request metadata when the browser issues a request:
+  - added `webRequest` permission and a lightweight `onBeforeRequest` cache keyed by URL
+  - request metadata currently captures the real HTTP method and a best-effort serialized request body (`formData` as URL-encoded text, raw request bodies as decoded text when possible)
+  - Trinity handoff payload enrichment now prefers that captured browser metadata over placeholder `GET` / `null` values
+  - this closes the extension-side half of the request replay path for the common cases Chrome exposes through `webRequest`
 
 ## Current Verification Status
 
@@ -781,4 +786,4 @@ Exit criteria:
 
 ## Next Step
 
-Populate real non-GET browser request metadata in the extension: capture actual request method/body from Chrome for downloads that do not originate as plain GET requests, then feed that into the handoff contract already supported by Trinity.
+Improve request replay fidelity for harder sites: capture additional browser request context where needed, especially request headers/content-type and any cases where Chrome exposes binary/non-text POST bodies that the current best-effort body serialization cannot safely replay yet.

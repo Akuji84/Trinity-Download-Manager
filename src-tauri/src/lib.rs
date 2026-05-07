@@ -67,6 +67,14 @@ const EXTENSION_BRIDGE_PORT: u16 = 38491;
 const EXTENSION_DOWNLOAD_EVENT: &str = "extension-download-request";
 const EXTENSION_OPEN_OPTIONS_EVENT: &str = "extension-open-options";
 
+fn focus_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
 #[tauri::command]
 fn app_status() -> AppStatus {
     AppStatus::foundation_ready()
@@ -1338,11 +1346,7 @@ fn handle_extension_bridge_connection(app: &AppHandle, mut stream: TcpStream) ->
             )
         }
         ("POST", "/app/open-options") => {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.unminimize();
-                let _ = window.set_focus();
-            }
+            focus_main_window(app);
 
             app.emit(EXTENSION_OPEN_OPTIONS_EVENT, ())
                 .map_err(|error| error.to_string())?;
@@ -1368,11 +1372,7 @@ fn handle_extension_bridge_connection(app: &AppHandle, mut stream: TcpStream) ->
             app.emit(EXTENSION_DOWNLOAD_EVENT, request)
                 .map_err(|error| error.to_string())?;
 
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.unminimize();
-                let _ = window.set_focus();
-            }
+            focus_main_window(app);
 
             write_json_response(
                 &mut stream,
@@ -1476,6 +1476,9 @@ fn write_json_response(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            focus_main_window(app);
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| {
@@ -1572,21 +1575,12 @@ pub fn run() {
                         tauri::tray::TrayIconEvent::Click { .. }
                             | tauri::tray::TrayIconEvent::DoubleClick { .. }
                     ) {
-                        let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.unminimize();
-                            let _ = window.set_focus();
-                        }
+                        focus_main_window(&tray.app_handle());
                     }
                 })
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.unminimize();
-                            let _ = window.set_focus();
-                        }
+                        focus_main_window(app);
                     }
                     "quit" => {
                         app.exit(0);

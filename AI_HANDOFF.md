@@ -580,6 +580,11 @@ Exit criteria:
   - if that first request fails, the popup launches the app via `trinity://launch`, waits for the bridge to come up, then retries
   - the app-side `/app/open-options` bridge handler now shows/unminimizes/focuses the main window before emitting the Preferences-open event
   - this is meant to cover the minimized and tray-hidden cases where the process is alive but the earlier popup flow still fell into `Could not open Preferences`
+- Added single-instance app routing for protocol launches:
+  - Trinity now uses `tauri-plugin-single-instance`
+  - if `trinity://launch` is triggered while Trinity is already running, the existing app instance is focused instead of spawning a second window/process
+  - the bridge-triggered `open-options` and `downloads/create` paths now share the same main-window focus helper
+  - this is the fix for the user-reported case where clicking extension `Options` opened a new Trinity window instead of using the already-running one
 - Hardened content-script bridge calls against extension reload/invalidation:
   - `content.js` now checks that the extension runtime context is still valid before calling `chrome.runtime.sendMessage(...)`
   - message sends are wrapped so an invalidated extension context falls back cleanly instead of throwing an uncaught page error

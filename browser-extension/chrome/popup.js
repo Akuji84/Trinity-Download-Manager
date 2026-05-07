@@ -1,6 +1,7 @@
 const statusNode = document.getElementById("popup-status");
 const captureButton = document.getElementById("toggle-capture");
 const siteButton = document.getElementById("toggle-site");
+const debugButton = document.getElementById("toggle-debug");
 const optionsButton = document.getElementById("open-options");
 const helpButton = document.getElementById("open-help");
 
@@ -9,6 +10,7 @@ let popupState = {
   capturePaused: false,
   siteExcluded: false,
   siteHost: "",
+  debugMode: false,
 };
 
 async function initializePopup() {
@@ -27,14 +29,25 @@ async function initializePopup() {
 }
 
 function render() {
-  setStatus(popupState.connected ? "Trinity is connected." : "Trinity is not running.");
+  setStatus(
+    popupState.debugMode
+      ? "Debug mode is on. Download capture is disabled."
+      : popupState.connected
+        ? "Trinity is connected."
+        : "Trinity is not running.",
+  );
   captureButton.textContent = popupState.capturePaused
     ? "Resume catching downloads from all sites"
     : "Pause to catch downloads from all sites";
   siteButton.textContent = popupState.siteExcluded
     ? `Catch downloads from ${popupState.siteHost || "this site"}`
     : `Don't catch downloads from ${popupState.siteHost || "this site"}`;
+  debugButton.textContent = popupState.debugMode
+    ? "Turn off debug capture watcher"
+    : "Turn on debug capture watcher";
   siteButton.disabled = !popupState.siteHost;
+  captureButton.disabled = popupState.debugMode;
+  siteButton.disabled = popupState.debugMode || !popupState.siteHost;
 }
 
 function setStatus(value) {
@@ -60,6 +73,15 @@ siteButton.addEventListener("click", async () => {
   render();
 });
 
+debugButton.addEventListener("click", async () => {
+  const response = await chrome.runtime.sendMessage({ type: "toggle-debug-mode" });
+  popupState.debugMode = response?.debugMode === true;
+  if (popupState.debugMode) {
+    popupState.capturePaused = false;
+  }
+  render();
+});
+
 optionsButton.addEventListener("click", async () => {
   optionsButton.disabled = true;
   try {
@@ -79,6 +101,7 @@ function normalizePopupState(response) {
     capturePaused: response?.capturePaused === true,
     siteExcluded: response?.siteExcluded === true,
     siteHost: response?.siteHost ?? "",
+    debugMode: response?.debugMode === true,
   };
 }
 

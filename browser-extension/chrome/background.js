@@ -2,6 +2,7 @@ const BRIDGE_BASE_URL = "http://127.0.0.1:38491";
 const STORAGE_KEYS = {
   capturePaused: "capturePaused",
   excludedSites: "excludedSites",
+  debugMode: "debugMode",
 };
 const CONTEXT_MENU_IDS = {
   link: "trinity-download-link",
@@ -26,13 +27,29 @@ const MIN_CONFIDENT_FILE_SIZE_BYTES = 64 * 1024;
 const recentCapturedUrls = new Map();
 const recentRequestMetadata = new Map();
 
+function debugLog(stage, details = {}) {
+  console.log(`[Trinity Debug] ${stage}`, {
+    timestamp: new Date().toISOString(),
+    ...details,
+  });
+}
+
 // Cached bridge status so onCreated can cancel immediately without a network round-trip
 let cachedBridgeAlive = false;
 setInterval(refreshCachedBridgeStatus, 15000);
 refreshCachedBridgeStatus();
 
 chrome.webRequest.onBeforeRequest.addListener(
-  (details) => {
+  async (details) => {
+    if (await isDebugModeEnabled()) {
+      debugLog("webRequest.onBeforeRequest", {
+        url: details?.url || "",
+        method: details?.method || "",
+        type: details?.type || "",
+        initiator: details?.initiator || details?.documentUrl || null,
+        tabId: details?.tabId ?? null,
+      });
+    }
     cacheRequestMetadata(details);
   },
   { urls: ["<all_urls>"] },
@@ -40,7 +57,14 @@ chrome.webRequest.onBeforeRequest.addListener(
 );
 
 chrome.webRequest.onBeforeSendHeaders.addListener(
-  (details) => {
+  async (details) => {
+    if (await isDebugModeEnabled()) {
+      debugLog("webRequest.onBeforeSendHeaders", {
+        url: details?.url || "",
+        method: details?.method || "",
+        headers: extractReplayHeaders(details?.requestHeaders) || {},
+      });
+    }
     cacheRequestHeaders(details);
   },
   { urls: ["<all_urls>"] },
@@ -49,6 +73,11 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
 
 async function refreshCachedBridgeStatus() {
   cachedBridgeAlive = await pingBridge();
+}
+
+async function isDebugModeEnabled() {
+  const { debugMode = false } = await chrome.storage.local.get(STORAGE_KEYS.debugMode);
+  return debugMode === true;
 }
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -139,6 +168,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === "toggle-debug-mode") {
+    toggleDebugMode()
+      .then((state) => sendResponse(state))
+      .catch((error) => {
+        console.error("Debug mode toggle failed", error);
+        sendResponse({ debugMode: false });
+      });
+    return true;
+  }
+
   if (message?.type === "toggle-capture-paused") {
     toggleCapturePaused()
       .then((state) => sendResponse(state))
@@ -223,6 +262,18 @@ async function sendToTrinity(payload) {
 
   try {
     const enrichedPayload = await enrichPayloadWithSession(payload);
+    if (await isDebugModeEnabled()) {
+      debugLog("handoff.sendToTrinity", {
+        url: enrichedPayload.url,
+        finalUrl: enrichedPayload.final_url,
+        pageUrl: enrichedPayload.page_url,
+        suggestedFileName: enrichedPayload.suggested_file_name,
+        mimeType: enrichedPayload.mime_type,
+        requestMethod: enrichedPayload.request_method,
+        requestHeaders: enrichedPayload.request_headers || null,
+        cookieCount: Array.isArray(enrichedPayload.cookies) ? enrichedPayload.cookies.length : 0,
+      });
+    }
     const response = await fetch(`${BRIDGE_BASE_URL}/downloads/create`, {
       method: "POST",
       headers: {
@@ -548,8 +599,8 @@ async function pingBridge() {
 }
 
 async function getPopupState() {
-  const [{ capturePaused = false, excludedSites = [] }, currentTab] = await Promise.all([
-    chrome.storage.local.get([STORAGE_KEYS.capturePaused, STORAGE_KEYS.excludedSites]),
+  const [{ capturePaused = false, excludedSites = [], debugMode = false }, currentTab] = await Promise.all([
+    chrome.storage.local.get([STORAGE_KEYS.capturePaused, STORAGE_KEYS.excludedSites, STORAGE_KEYS.debugMode]),
     getActiveTab(),
   ]);
   const siteHost = extractHost(currentTab?.url ?? "");
@@ -559,10 +610,27 @@ async function getPopupState() {
     capturePaused,
     siteExcluded: siteHost ? excludedSites.includes(siteHost) : false,
     siteHost,
+    debugMode,
   };
 }
 
 async function handleCreatedDownload(downloadItem) {
+  if (await isDebugModeEnabled()) {
+    debugLog("downloads.onCreated", {
+      id: downloadItem.id,
+      url: downloadItem.url || "",
+      finalUrl: downloadItem.finalUrl || "",
+      filename: downloadItem.filename || "",
+      mime: downloadItem.mime || "",
+      referrer: downloadItem.referrer || "",
+      state: downloadItem.state || "",
+      fileSize: downloadItem.fileSize ?? null,
+      totalBytes: downloadItem.totalBytes ?? null,
+      exists: downloadItem.exists ?? null,
+    });
+    return;
+  }
+
   if (!shouldConsiderDownload(downloadItem)) {
     return;
   }
@@ -714,6 +782,14 @@ async function toggleCapturePaused() {
   return { capturePaused: nextValue };
 }
 
+async function toggleDebugMode() {
+  const { debugMode = false } = await chrome.storage.local.get(STORAGE_KEYS.debugMode);
+  const nextValue = !debugMode;
+  await chrome.storage.local.set({ [STORAGE_KEYS.debugMode]: nextValue });
+  debugLog("debug-mode-toggle", { enabled: nextValue });
+  return { debugMode: nextValue };
+}
+
 async function toggleSiteExclusion(siteHost) {
   if (!siteHost) {
     return { siteExcluded: false };
@@ -731,6 +807,17 @@ async function toggleSiteExclusion(siteHost) {
 }
 
 async function captureDownloadClick(payload) {
+  if (await isDebugModeEnabled()) {
+    debugLog("capture-download-click", {
+      url: payload?.url || "",
+      finalUrl: payload?.final_url || "",
+      pageUrl: payload?.page_url || "",
+      suggestedFileName: payload?.suggested_file_name || null,
+      referrer: payload?.referrer || null,
+    });
+    return { captured: false, fallbackToBrowser: true };
+  }
+
   if (!payload || !isHttpUrl(payload.url)) {
     await showBridgeBadge("ERR", "#6a1b1b");
     return { captured: false, fallbackToBrowser: false };
@@ -801,11 +888,29 @@ async function resolveCapturePayloadForTrinity(payload, depth = 0, visited = new
     return null;
   }
   visited.add(targetUrl);
+  debugLog("resolver.enter", {
+    depth,
+    targetUrl,
+    pageUrl: payload.page_url || null,
+  });
 
   const probe = await probeDirectDownloadCandidate(payload);
   if (!probe) {
+    debugLog("resolver.no-probe", { depth, targetUrl });
     return null;
   }
+
+  debugLog("resolver.probe-result", {
+    depth,
+    targetUrl,
+    finalUrl: probe.finalUrl,
+    contentType: probe.contentType,
+    contentLength: probe.contentLength,
+    contentDispositionFileName: probe.contentDispositionFileName,
+    looksHtml: probe.looksHtml,
+    isDownloadableFile: probe.isDownloadableFile,
+    discoveredUrls: probe.discoveredUrls,
+  });
 
   if (probe.isDownloadableFile) {
     const finalUrl = probe.finalUrl || targetUrl;

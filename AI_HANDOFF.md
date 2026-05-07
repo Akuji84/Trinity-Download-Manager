@@ -853,6 +853,23 @@ Exit criteria:
   - no direct capture from raw click URLs
   - still early enough to suppress Chrome’s visible download flow when resolution succeeds
 
+### 2026-05-07 - Add temporary browser debug watcher mode
+**Commit:** `pending`
+
+- Added a temporary extension-side debug mode intended for diagnosing hard browser-managed downloads like GoFile.
+- The popup now includes a debug toggle. When enabled:
+  - download capture/takeover is intentionally disabled
+  - the browser is allowed to perform its normal download flow
+  - the extension logs the real browser-side sequence instead of trying to take over
+- Current debug logging covers:
+  - `capture-download-click`
+  - `webRequest.onBeforeRequest`
+  - `webRequest.onBeforeSendHeaders`
+  - `chrome.downloads.onCreated`
+  - resolver entry/probe results
+  - final Trinity handoff payloads if a handoff path is exercised
+- This mode exists specifically to observe what the browser actually does for difficult sites before changing capture logic again.
+
 ## Next Step
 
 Test the deferred resolver against a few download styles and tighten the generic file-proof rules if needed:

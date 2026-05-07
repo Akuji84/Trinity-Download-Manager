@@ -31,6 +31,10 @@ body {
   background: #e8e8e8;
 }
 
+.menu-item-debug {
+  color: #7a3f00;
+}
+
 .menu-item:disabled {
   color: #909090;
   cursor: default;

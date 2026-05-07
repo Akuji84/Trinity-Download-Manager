@@ -789,6 +789,17 @@ Exit criteria:
 
 **Result:** Steam → Chrome follows the page naturally with session cookies → CDN `.exe` URL fires `onCreated` → Trinity intercepts ✓. Discord → pre-captured via extension match → Trinity downloads directly ✓. No Chrome save dialogs. No HTML downloads.
 
+### 2026-05-07 - Preserve binary browser request bodies safely
+**Commit:** `pending`
+
+- Added `request_body_encoding` to the browser handoff contract.
+- The Chrome extension now classifies request bodies as either `text` or `base64`.
+- Raw browser request bodies that are not safe UTF-8 text are now base64-encoded instead of being lossy-decoded into strings.
+- Trinity now decodes and replays base64 request bodies on both:
+  - bridge-side URL inspection
+  - actual Rust download requests
+- This closes the obvious non-text request-body gap in the request replay path without changing the SQLite job schema.
+
 ## Next Step
 
-Improve replay fidelity for harder sites that use binary or structured POST bodies: preserve non-text request payloads safely instead of lossy text decoding, and add targeted support for any browser-exposed request context those sites still require beyond the current filtered header set.
+Improve multipart and harder-site fidelity further: preserve richer request-body structure where Chrome exposes it, and add any additional targeted browser request context needed for sites that still fail with the current method/body/header/cookie replay path.

@@ -157,6 +157,25 @@ fn request_method_from_context(context: Option<&ExtensionDownloadRequest>) -> Me
         .unwrap_or(Method::GET)
 }
 
+fn request_body_bytes_from_context(context: Option<&ExtensionDownloadRequest>) -> Option<Vec<u8>> {
+    let context = context?;
+    let body = context
+        .request_body
+        .as_deref()
+        .filter(|value| !value.is_empty())?;
+
+    match context
+        .request_body_encoding
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("text")
+    {
+        "base64" => BASE64_STANDARD.decode(body).ok(),
+        _ => Some(body.as_bytes().to_vec()),
+    }
+}
+
 fn build_extension_request(
     client: &Client,
     parsed_url: &Url,
@@ -172,12 +191,8 @@ fn build_extension_request(
     };
 
     if !use_head_probe && method != Method::GET {
-        if let Some(body) = context
-            .and_then(|value| value.request_body.as_deref())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            request = request.body(body.to_string());
+        if let Some(body) = request_body_bytes_from_context(context) {
+            request = request.body(body);
         }
     }
 

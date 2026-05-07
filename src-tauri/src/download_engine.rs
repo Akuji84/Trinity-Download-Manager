@@ -13,6 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use futures_util::StreamExt;
 use reqwest::{
     header::{HeaderMap, ACCEPT_RANGES, CONTENT_DISPOSITION, CONTENT_RANGE, COOKIE, RANGE, REFERER, USER_AGENT},
@@ -1027,12 +1028,8 @@ fn build_download_request(
     let mut request = client.request(method.clone(), url);
 
     if method != Method::GET {
-        if let Some(body) = context
-            .and_then(|value| value.request_body.as_deref())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            request = request.body(body.to_string());
+        if let Some(body) = request_body_bytes_from_context(context) {
+            request = request.body(body);
         }
     }
 
@@ -1046,6 +1043,25 @@ fn request_method_from_context(context: Option<&ExtensionDownloadRequest>) -> Me
         .filter(|value| !value.is_empty())
         .and_then(|value| Method::from_bytes(value.as_bytes()).ok())
         .unwrap_or(Method::GET)
+}
+
+fn request_body_bytes_from_context(context: Option<&ExtensionDownloadRequest>) -> Option<Vec<u8>> {
+    let context = context?;
+    let body = context
+        .request_body
+        .as_deref()
+        .filter(|value| !value.is_empty())?;
+
+    match context
+        .request_body_encoding
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("text")
+    {
+        "base64" => BASE64_STANDARD.decode(body).ok(),
+        _ => Some(body.as_bytes().to_vec()),
+    }
 }
 
 fn apply_extension_request_headers(

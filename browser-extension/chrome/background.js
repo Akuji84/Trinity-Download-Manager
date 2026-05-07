@@ -262,7 +262,11 @@ async function enrichPayloadWithSession(payload) {
     request_body:
       payload.request_body != null
         ? payload.request_body
-        : requestMetadata?.body ?? null,
+        : requestMetadata?.body?.value ?? null,
+    request_body_encoding:
+      payload.request_body != null
+        ? payload.request_body_encoding ?? "text"
+        : requestMetadata?.body?.encoding ?? null,
     request_headers:
       payload.request_headers && Object.keys(payload.request_headers).length > 0
         ? payload.request_headers
@@ -441,7 +445,7 @@ function serializeRequestBody(requestBody) {
       }
     }
     const serialized = params.toString();
-    return serialized || null;
+    return serialized ? { value: serialized, encoding: "text" } : null;
   }
 
   if (Array.isArray(requestBody.raw) && requestBody.raw.length > 0) {
@@ -467,11 +471,50 @@ function serializeRequestBody(requestBody) {
       offset += chunk.length;
     }
 
-    const decoded = new TextDecoder().decode(combined).trim();
-    return decoded || null;
+    const decoded = tryDecodeUtf8Body(combined);
+    if (decoded != null) {
+      return { value: decoded, encoding: "text" };
+    }
+
+    return {
+      value: encodeBase64Bytes(combined),
+      encoding: "base64",
+    };
   }
 
   return null;
+}
+
+function tryDecodeUtf8Body(bytes) {
+  try {
+    const decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    const sanitized = decoded.replace(/\0/g, "").trim();
+    if (!sanitized) {
+      return null;
+    }
+
+    const nonPrintableCount = [...sanitized].filter((character) => {
+      const code = character.charCodeAt(0);
+      return code < 9 || (code > 13 && code < 32);
+    }).length;
+    if (nonPrintableCount > 0) {
+      return null;
+    }
+
+    return sanitized;
+  } catch {
+    return null;
+  }
+}
+
+function encodeBase64Bytes(bytes) {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
 }
 
 async function pingBridge() {

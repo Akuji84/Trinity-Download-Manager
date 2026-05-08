@@ -10,13 +10,15 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
+use chrono::DateTime;
+use filetime::FileTime;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use futures_util::StreamExt;
 use reqwest::{
-    header::{HeaderMap, ACCEPT_RANGES, CONTENT_DISPOSITION, CONTENT_RANGE, COOKIE, RANGE, REFERER, USER_AGENT},
+    header::{HeaderMap, ACCEPT_RANGES, CONTENT_DISPOSITION, CONTENT_RANGE, COOKIE, LAST_MODIFIED, RANGE, REFERER, USER_AGENT},
     Client, Method, StatusCode, Url,
 };
 use serde::{Deserialize, Serialize};
@@ -29,6 +31,13 @@ const MAX_SEGMENT_CONNECTIONS: u32 = 16;
 const TARGET_SEGMENTS_PER_CONNECTION: u32 = 3;
 const MAX_TOTAL_SEGMENTS: u32 = 64;
 const SEGMENT_MANIFEST_VERSION: u32 = 1;
+
+#[derive(Clone, Copy)]
+pub struct DownloadBehavior {
+    pub skip_web_pages: bool,
+    pub use_server_file_time: bool,
+    pub mark_downloaded_files: bool,
+}
 
 #[derive(Default)]
 pub struct DownloadEngine;
@@ -47,6 +56,7 @@ pub async fn download_to_disk(
     client: Client,
     job: DownloadJob,
     request_context: Option<ExtensionDownloadRequest>,
+    behavior: DownloadBehavior,
     manifest_root: PathBuf,
     control: Arc<DownloadControl>,
     mut report_output: impl FnMut(String, String, Option<u64>, bool) -> Result<(), String>,
@@ -65,6 +75,7 @@ pub async fn download_to_disk(
                     &client,
                     job,
                     request_context.clone(),
+                    behavior,
                     manifest_path,
                     SegmentedMode::Resume(existing_manifest),
                     control,
@@ -88,6 +99,7 @@ pub async fn download_to_disk(
             &client,
             job,
             request_context.clone(),
+            behavior,
             control,
             &mut report_output,
             &mut report_progress,
@@ -97,7 +109,7 @@ pub async fn download_to_disk(
     }
 
     let segmented_plan = if can_use_range_requests && job.connection_count > 1 {
-        probe_segmented_plan(&client, &job, request_context.as_ref()).await?
+        probe_segmented_plan(&client, &job, behavior, request_context.as_ref()).await?
     } else {
         None
     };
@@ -107,6 +119,7 @@ pub async fn download_to_disk(
             &client,
             job,
             request_context.clone(),
+            behavior,
             manifest_path,
             SegmentedMode::Fresh(plan),
             control,
@@ -125,6 +138,7 @@ pub async fn download_to_disk(
         &client,
         job,
         request_context,
+        behavior,
         control,
         &mut report_output,
         &mut report_progress,
@@ -154,6 +168,7 @@ async fn download_single_stream(
     client: &Client,
     job: DownloadJob,
     request_context: Option<ExtensionDownloadRequest>,
+    behavior: DownloadBehavior,
     control: Arc<DownloadControl>,
     report_output: &mut impl FnMut(String, String, Option<u64>, bool) -> Result<(), String>,
     report_progress: &mut impl FnMut(u64, Option<u64>, u64) -> Result<(), String>,
@@ -209,11 +224,16 @@ async fn download_single_stream(
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .unwrap_or("");
-    if content_type.starts_with("text/html") {
+    if behavior.skip_web_pages && content_type.starts_with("text/html") {
         return Err(DownloadError::Failed(
             "URL returned a web page, not a downloadable file. Use the direct file URL.".to_string(),
         ));
     }
+    let server_file_time = if behavior.use_server_file_time {
+        parse_last_modified_header(response.headers())
+    } else {
+        None
+    };
 
     let is_resuming = resume_accepted;
     let observed_file_name = observed_file_name_from_context(request_context.as_ref());
@@ -334,6 +354,13 @@ async fn download_single_stream(
     tokio::fs::rename(&temp_path, &output_path)
         .await
         .map_err(|error| DownloadError::Failed(error.to_string()))?;
+    apply_download_postprocessing(
+        &output_path,
+        &job.url,
+        request_context.as_ref(),
+        server_file_time,
+        behavior,
+    );
 
     Ok(())
 }
@@ -342,6 +369,7 @@ async fn download_segmented(
     client: &Client,
     job: DownloadJob,
     request_context: Option<ExtensionDownloadRequest>,
+    behavior: DownloadBehavior,
     manifest_path: PathBuf,
     mode: SegmentedMode,
     control: Arc<DownloadControl>,
@@ -502,6 +530,13 @@ async fn download_segmented(
             tokio::fs::rename(&temp_path, &output_path)
                 .await
                 .map_err(|error| DownloadError::Failed(error.to_string()))?;
+            apply_download_postprocessing(
+                &output_path,
+                &job.url,
+                request_context.as_ref(),
+                manifest_snapshot.server_file_time_unix_seconds.map(system_time_from_unix_seconds),
+                behavior,
+            );
             let _ = tokio::fs::remove_file(&manifest_path).await;
             report_progress(total_bytes, Some(total_bytes), 0).map_err(DownloadError::Failed)?;
             Ok(())
@@ -525,6 +560,7 @@ async fn download_segmented(
 async fn probe_segmented_plan(
     client: &Client,
     job: &DownloadJob,
+    behavior: DownloadBehavior,
     request_context: Option<&ExtensionDownloadRequest>,
 ) -> Result<Option<SegmentedPlan>, DownloadError> {
     let probe_response = build_download_request(client, &job.url, request_context)
@@ -562,6 +598,11 @@ async fn probe_segmented_plan(
         file_name,
         total_bytes,
         ranges,
+        server_file_time: if behavior.use_server_file_time {
+            parse_last_modified_header(probe_response.headers())
+        } else {
+            None
+        },
     }))
 }
 
@@ -758,6 +799,9 @@ fn build_segment_manifest(url: &str, output_path: PathBuf, plan: SegmentedPlan) 
         file_name: plan.file_name,
         output_path: output_path.to_string_lossy().to_string(),
         total_bytes: plan.total_bytes,
+        server_file_time_unix_seconds: plan
+            .server_file_time
+            .and_then(unix_seconds_from_system_time),
         segments,
     }
 }
@@ -827,6 +871,7 @@ struct SegmentedPlan {
     file_name: String,
     total_bytes: u64,
     ranges: Vec<ByteRange>,
+    server_file_time: Option<SystemTime>,
 }
 
 #[derive(Clone, Copy)]
@@ -853,6 +898,7 @@ struct SegmentManifest {
     file_name: String,
     output_path: String,
     total_bytes: u64,
+    server_file_time_unix_seconds: Option<i64>,
     segments: Vec<SegmentState>,
 }
 
@@ -903,6 +949,61 @@ fn plan_ranges(total_bytes: u64, segment_count: u32) -> Vec<ByteRange> {
 fn parse_total_from_content_range(value: &str) -> Option<u64> {
     let (_, total) = value.split_once('/')?;
     total.parse::<u64>().ok()
+}
+
+fn parse_last_modified_header(headers: &HeaderMap) -> Option<SystemTime> {
+    let value = headers.get(LAST_MODIFIED)?.to_str().ok()?;
+    let parsed = DateTime::parse_from_rfc2822(value).ok()?;
+    Some(parsed.with_timezone(&chrono::Utc).into())
+}
+
+fn unix_seconds_from_system_time(value: SystemTime) -> Option<i64> {
+    let duration = value.duration_since(SystemTime::UNIX_EPOCH).ok()?;
+    i64::try_from(duration.as_secs()).ok()
+}
+
+fn system_time_from_unix_seconds(value: i64) -> SystemTime {
+    SystemTime::UNIX_EPOCH + Duration::from_secs(value.max(0) as u64)
+}
+
+fn apply_download_postprocessing(
+    output_path: &Path,
+    source_url: &str,
+    request_context: Option<&ExtensionDownloadRequest>,
+    server_file_time: Option<SystemTime>,
+    behavior: DownloadBehavior,
+) {
+    if behavior.use_server_file_time {
+        if let Some(server_file_time) = server_file_time {
+            let _ = filetime::set_file_mtime(output_path, FileTime::from_system_time(server_file_time));
+        }
+    }
+
+    if behavior.mark_downloaded_files {
+        #[cfg(target_os = "windows")]
+        {
+            let _ = write_zone_identifier(output_path, source_url, request_context);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn write_zone_identifier(
+    output_path: &Path,
+    source_url: &str,
+    request_context: Option<&ExtensionDownloadRequest>,
+) -> Result<(), String> {
+    let zone_identifier_path = format!("{}:Zone.Identifier", output_path.display());
+    let referrer = request_context
+        .and_then(|context| context.referrer.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("");
+    let mut contents = format!("[ZoneTransfer]\r\nZoneId=3\r\nHostUrl={source_url}\r\n");
+    if !referrer.is_empty() {
+        contents.push_str(&format!("ReferrerUrl={referrer}\r\n"));
+    }
+    std::fs::write(zone_identifier_path, contents).map_err(|error| error.to_string())
 }
 
 fn resolve_file_name(headers: &HeaderMap, final_url: &Url, fallback: &str) -> String {

@@ -35,6 +35,7 @@ chrono = "0.4.44"
 notify = "8"
 base64 = "0.22"
 png = "0.17"
+filetime = "0.2"
 windows = { version = "0.58", features = [
   "Win32_Foundation",
   "Win32_Graphics_Gdi",

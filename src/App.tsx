@@ -82,6 +82,9 @@ type AppSettings = {
   bottom_panel_follows_selection: boolean;
   show_tray_activity: boolean;
   use_custom_sort_order: boolean;
+  skip_web_pages: boolean;
+  use_server_file_time: boolean;
+  mark_downloaded_files: boolean;
   browser_intercept_downloads: boolean;
   browser_start_without_confirmation: boolean;
   browser_skip_domains: string;
@@ -450,6 +453,9 @@ function App() {
     bottom_panel_follows_selection: true,
     show_tray_activity: true,
     use_custom_sort_order: false,
+    skip_web_pages: true,
+    use_server_file_time: false,
+    mark_downloaded_files: true,
     browser_intercept_downloads: true,
     browser_start_without_confirmation: false,
     browser_skip_domains: "accounts.google.com, drive.google.com",
@@ -534,6 +540,9 @@ function App() {
           bottomPanelFollowsSelection: loadedSettings.bottom_panel_follows_selection,
           showTrayActivity: loadedSettings.show_tray_activity,
           useCustomSortOrder: loadedSettings.use_custom_sort_order,
+          skipWebPages: loadedSettings.skip_web_pages,
+          useServerFileTime: loadedSettings.use_server_file_time,
+          markDownloadedFiles: loadedSettings.mark_downloaded_files,
           browserInterceptDownloads: loadedSettings.browser_intercept_downloads,
           browserStartWithoutConfirmation: loadedSettings.browser_start_without_confirmation,
           browserSkipDomains: loadedSettings.browser_skip_domains,
@@ -1011,6 +1020,9 @@ function App() {
           bottom_panel_follows_selection: currentSettings.bottom_panel_follows_selection,
           show_tray_activity: currentSettings.show_tray_activity,
           use_custom_sort_order: currentSettings.use_custom_sort_order,
+          skip_web_pages: currentSettings.skip_web_pages,
+          use_server_file_time: currentSettings.use_server_file_time,
+          mark_downloaded_files: currentSettings.mark_downloaded_files,
           browser_intercept_downloads: currentSettings.browser_intercept_downloads,
           browser_start_without_confirmation:
             currentSettings.browser_start_without_confirmation,
@@ -1201,6 +1213,9 @@ function App() {
         bottom_panel_follows_selection: preferencesDraft.bottomPanelFollowsSelection,
         show_tray_activity: preferencesDraft.showTrayActivity,
         use_custom_sort_order: preferencesDraft.useCustomSortOrder,
+        skip_web_pages: preferencesDraft.skipWebPages,
+        use_server_file_time: preferencesDraft.useServerFileTime,
+        mark_downloaded_files: preferencesDraft.markDownloadedFiles,
         browser_intercept_downloads: preferencesDraft.browserInterceptDownloads,
         browser_start_without_confirmation:
           preferencesDraft.browserStartWithoutConfirmation,
@@ -1244,6 +1259,9 @@ function App() {
       bottomPanelFollowsSelection: updatedSettings.bottom_panel_follows_selection,
       showTrayActivity: updatedSettings.show_tray_activity,
       useCustomSortOrder: updatedSettings.use_custom_sort_order,
+      skipWebPages: updatedSettings.skip_web_pages,
+      useServerFileTime: updatedSettings.use_server_file_time,
+      markDownloadedFiles: updatedSettings.mark_downloaded_files,
       browserInterceptDownloads: updatedSettings.browser_intercept_downloads,
       browserStartWithoutConfirmation: updatedSettings.browser_start_without_confirmation,
       browserSkipDomains: updatedSettings.browser_skip_domains,
@@ -1289,6 +1307,9 @@ function App() {
       bottomPanelFollowsSelection: settings.bottom_panel_follows_selection,
       showTrayActivity: settings.show_tray_activity,
       useCustomSortOrder: settings.use_custom_sort_order,
+      skipWebPages: settings.skip_web_pages,
+      useServerFileTime: settings.use_server_file_time,
+      markDownloadedFiles: settings.mark_downloaded_files,
       browserInterceptDownloads: settings.browser_intercept_downloads,
       browserStartWithoutConfirmation: settings.browser_start_without_confirmation,
       browserSkipDomains: settings.browser_skip_domains,

@@ -311,6 +311,27 @@ impl Storage {
         self.connection.execute(
             "
             INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('skip_web_pages', '1');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('use_server_file_time', '0');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('mark_downloaded_files', '1');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
             VALUES ('browser_intercept_downloads', '1');
             ",
             [],
@@ -1195,6 +1216,21 @@ impl Storage {
             .and_then(|value| value.parse::<u8>().ok())
             .map(|value| value != 0)
             .unwrap_or(defaults.use_custom_sort_order);
+        let skip_web_pages = self
+            .get_setting("skip_web_pages")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.skip_web_pages);
+        let use_server_file_time = self
+            .get_setting("use_server_file_time")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.use_server_file_time);
+        let mark_downloaded_files = self
+            .get_setting("mark_downloaded_files")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.mark_downloaded_files);
         let browser_intercept_downloads = self
             .get_setting("browser_intercept_downloads")?
             .and_then(|value| value.parse::<u8>().ok())
@@ -1276,6 +1312,9 @@ impl Storage {
             bottom_panel_follows_selection,
             show_tray_activity,
             use_custom_sort_order,
+            skip_web_pages,
+            use_server_file_time,
+            mark_downloaded_files,
             browser_intercept_downloads,
             browser_start_without_confirmation,
             browser_skip_domains,
@@ -1365,6 +1404,18 @@ impl Storage {
         self.upsert_setting(
             "use_custom_sort_order",
             if settings.use_custom_sort_order { "1" } else { "0" },
+        )?;
+        self.upsert_setting(
+            "skip_web_pages",
+            if settings.skip_web_pages { "1" } else { "0" },
+        )?;
+        self.upsert_setting(
+            "use_server_file_time",
+            if settings.use_server_file_time { "1" } else { "0" },
+        )?;
+        self.upsert_setting(
+            "mark_downloaded_files",
+            if settings.mark_downloaded_files { "1" } else { "0" },
         )?;
         self.upsert_setting(
             "browser_intercept_downloads",

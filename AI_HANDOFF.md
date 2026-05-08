@@ -56,6 +56,21 @@
 - `bottom_panel_follows_selection` is still only persisted at this point.
   The preferences page exposes it, but there is no actual bottom details panel in the current UI for that setting to control yet.
 
+## 2026-05-08 - General download behavior preferences
+
+- The following General download-behavior settings are now persisted and enforced:
+  - `skip_web_pages`
+  - `use_server_file_time`
+  - `mark_downloaded_files`
+- `skip_web_pages` now affects both metadata inspection and download execution:
+  - when enabled, Trinity rejects `text/html` responses as web pages instead of treating them as downloadable files
+- `use_server_file_time` now applies the server `Last-Modified` timestamp to the finished file when the response provides one
+  - segmented downloads carry the timestamp forward from the probe response so the final file still gets the server time
+- `mark_downloaded_files` now marks completed files on Windows with a `Zone.Identifier` stream
+  - Trinity writes `HostUrl`
+  - and `ReferrerUrl` when browser request context is available
+- Proxy settings added by the previous pass are still live through the shared `reqwest::Client` builder in app state.
+
 ## Product Goal
 
 Build Trinity Download Manager into a professional desktop download manager comparable to tools like Free Download Manager, with a long-term goal of being reliable enough for thousands of users.

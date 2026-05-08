@@ -438,6 +438,9 @@ fn update_app_settings(
         bottom_panel_follows_selection: request.bottom_panel_follows_selection,
         show_tray_activity: request.show_tray_activity,
         use_custom_sort_order: request.use_custom_sort_order,
+        skip_web_pages: request.skip_web_pages,
+        use_server_file_time: request.use_server_file_time,
+        mark_downloaded_files: request.mark_downloaded_files,
         browser_intercept_downloads: request.browser_intercept_downloads,
         browser_start_without_confirmation: request.browser_start_without_confirmation,
         browser_skip_domains: request.browser_skip_domains.trim().to_string(),
@@ -503,6 +506,12 @@ async fn inspect_download_url(state: State<'_, AppState>, url: String) -> Result
     }
 
     let extension_context = extension_context_for_url(&state, parsed_url.as_str())?;
+    let app_settings = state
+        .storage
+        .lock()
+        .map_err(|_| "Storage lock is unavailable.".to_string())?
+        .get_app_settings()
+        .map_err(|error| error.to_string())?;
     let client = state
         .http_client
         .lock()
@@ -540,6 +549,16 @@ async fn inspect_download_url(state: State<'_, AppState>, url: String) -> Result
 
     if !response.status().is_success() && response.status() != StatusCode::PARTIAL_CONTENT {
         return Err(format!("Server returned HTTP {}", response.status()));
+    }
+    if app_settings.skip_web_pages {
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("");
+        if content_type.starts_with("text/html") {
+            return Err("URL returned a web page, not a downloadable file. Use the direct file URL.".to_string());
+        }
     }
 
     let file_name = file_name_from_content_disposition(response.headers())
@@ -1071,10 +1090,31 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
         let job_id_for_output = job_id.clone();
         let job_id_for_progress = job_id.clone();
         let job_id_for_speed_limit = job_id.clone();
+        let download_behavior = {
+            let state = app.state::<AppState>();
+            let storage = state
+                .storage
+                .lock()
+                .map_err(|_| "Storage lock is unavailable.".to_string())
+                .and_then(|storage| storage.get_app_settings().map_err(|error| error.to_string()));
+            match storage {
+                Ok(settings) => download_engine::DownloadBehavior {
+                    skip_web_pages: settings.skip_web_pages,
+                    use_server_file_time: settings.use_server_file_time,
+                    mark_downloaded_files: settings.mark_downloaded_files,
+                },
+                Err(_) => download_engine::DownloadBehavior {
+                    skip_web_pages: true,
+                    use_server_file_time: false,
+                    mark_downloaded_files: true,
+                },
+            }
+        };
         let result = download_engine::download_to_disk(
             http_client,
             job,
             request_context,
+            download_behavior,
             manifest_root,
             control,
             move |file_name, output_path, total_bytes, is_resumable| {

@@ -3232,7 +3232,14 @@ function App() {
               <label className="field-block">
                 <span>{isExtensionPrefilledDownload ? "File name" : "URL"}</span>
                 {isExtensionPrefilledDownload ? (
-                  <input readOnly type="text" value={extensionDisplayFileName} />
+                  <input
+                    onChange={(event) =>
+                      setPendingSuggestedFileName(event.currentTarget.value)
+                    }
+                    required
+                    type="text"
+                    value={pendingSuggestedFileName}
+                  />
                 ) : (
                   <input
                     autoFocus

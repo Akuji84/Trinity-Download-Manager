@@ -944,6 +944,17 @@ Exit criteria:
   - content length
 - Trinity-side inspect remains available only as a fallback when the browser-observed metadata is incomplete.
 
+### 2026-05-07 - Seed initial Rust job state from browser-observed metadata
+**Commit:** `pending`
+
+- `create_download_job` now consults the matched browser extension context before creating the queued job record.
+- For browser-observed downloads, the initial Rust job state now prefers:
+  - `observed_file_name`
+  - `observed_content_length`
+  - `observed_accept_ranges`
+- That means the backend no longer starts browser-proven downloads from a blank `total_bytes: None` / `is_resumable: false` baseline when Chrome already knew better.
+- The download engine can still update those values from the live response later, but the initial state is now aligned with the browser transaction instead of rediscovery defaults.
+
 ## Next Step
 
 Test the deferred resolver against a few download styles and tighten the generic file-proof rules if needed:

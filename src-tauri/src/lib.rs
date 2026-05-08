@@ -405,12 +405,21 @@ fn create_download_job(
         _ => return Err("Only HTTP and HTTPS URLs are supported right now.".to_string()),
     }
 
+    let extension_context = extension_context_for_url(&state, parsed_url.as_str())?;
     let file_name = request
         .suggested_file_name
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(sanitize_file_name)
+        .or_else(|| {
+            extension_context
+                .as_ref()
+                .and_then(|context| context.observed_file_name.as_deref())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(sanitize_file_name)
+        })
         .unwrap_or_else(|| derive_file_name(&parsed_url));
     let output_folder = match &request.output_folder {
         Some(folder) if !folder.trim().is_empty() => PathBuf::from(folder.trim()),
@@ -450,9 +459,27 @@ fn create_download_job(
         connection_count,
         speed_limit_kbps: app_settings.default_download_speed_limit_kbps,
         downloaded_bytes: 0,
-        total_bytes: None,
+        total_bytes: extension_context
+            .as_ref()
+            .and_then(|context| context.browser_observed)
+            .filter(|value| *value)
+            .and_then(|_| {
+                extension_context
+                    .as_ref()
+                    .and_then(|context| context.observed_content_length)
+            }),
         speed_bps: 0,
-        is_resumable: false,
+        is_resumable: extension_context
+            .as_ref()
+            .and_then(|context| context.browser_observed)
+            .filter(|value| *value)
+            .and_then(|_| {
+                extension_context
+                    .as_ref()
+                    .and_then(|context| context.observed_accept_ranges.as_deref())
+            })
+            .map(|value| value.eq_ignore_ascii_case("bytes"))
+            .unwrap_or(false),
         scheduler_enabled,
         schedule_days,
         schedule_from,
@@ -468,7 +495,7 @@ fn create_download_job(
         .create_download_job(&job)
         .map_err(|error| error.to_string())?;
 
-    if let Some(context) = extension_context_for_url(&state, parsed_url.as_str())? {
+    if let Some(context) = extension_context {
         state
             .job_request_contexts
             .lock()

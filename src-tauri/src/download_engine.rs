@@ -216,10 +216,15 @@ async fn download_single_stream(
     }
 
     let is_resuming = resume_accepted;
+    let observed_file_name = observed_file_name_from_context(request_context.as_ref());
+    let observed_total_bytes = observed_total_bytes_from_context(request_context.as_ref());
+    let observed_accept_ranges = observed_accept_ranges_from_context(request_context.as_ref());
     let file_name = if is_resuming {
         job.file_name.clone()
     } else {
-        resolve_file_name(response.headers(), response.url(), &job.file_name)
+        observed_file_name.unwrap_or_else(|| {
+            resolve_file_name(response.headers(), response.url(), &job.file_name)
+        })
     };
     let output_path = if is_resuming {
         initial_output_path
@@ -245,7 +250,7 @@ async fn download_single_stream(
     let total_bytes = if is_resuming {
         content_length.map(|length| start_bytes + length)
     } else {
-        content_length
+        content_length.or(observed_total_bytes)
     };
     let is_resumable = can_use_range_requests
         && (response
@@ -253,6 +258,7 @@ async fn download_single_stream(
             .get(ACCEPT_RANGES)
             .and_then(|value| value.to_str().ok())
             .map(|value| value.eq_ignore_ascii_case("bytes"))
+            .or(observed_accept_ranges)
             .unwrap_or(false)
             || status == StatusCode::PARTIAL_CONTENT);
 
@@ -1107,6 +1113,33 @@ fn request_uses_multipart(context: Option<&ExtensionDownloadRequest>) -> bool {
         .and_then(|headers| headers.get("content-type").or_else(|| headers.get("Content-Type")))
         .map(|value| value.to_ascii_lowercase().starts_with("multipart/form-data"))
         .unwrap_or(false)
+}
+
+fn observed_file_name_from_context(context: Option<&ExtensionDownloadRequest>) -> Option<String> {
+    context
+        .and_then(|value| value.browser_observed)
+        .filter(|value| *value)
+        .and_then(|_| context.and_then(|value| value.observed_file_name.as_deref()))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(sanitize_file_name)
+}
+
+fn observed_total_bytes_from_context(context: Option<&ExtensionDownloadRequest>) -> Option<u64> {
+    context
+        .and_then(|value| value.browser_observed)
+        .filter(|value| *value)
+        .and_then(|_| context.and_then(|value| value.observed_content_length))
+}
+
+fn observed_accept_ranges_from_context(context: Option<&ExtensionDownloadRequest>) -> Option<bool> {
+    context
+        .and_then(|value| value.browser_observed)
+        .filter(|value| *value)
+        .and_then(|_| context.and_then(|value| value.observed_accept_ranges.as_deref()))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.eq_ignore_ascii_case("bytes"))
 }
 
 fn apply_extension_request_headers(

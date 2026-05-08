@@ -955,6 +955,19 @@ Exit criteria:
 - That means the backend no longer starts browser-proven downloads from a blank `total_bytes: None` / `is_resumable: false` baseline when Chrome already knew better.
 - The download engine can still update those values from the live response later, but the initial state is now aligned with the browser transaction instead of rediscovery defaults.
 
+### 2026-05-07 - Prefer browser-observed startup metadata inside the download engine
+**Commit:** `pending`
+
+- The runtime download engine now uses browser-observed metadata as its startup baseline for browser-managed downloads:
+  - `observed_file_name`
+  - `observed_content_length`
+  - `observed_accept_ranges`
+- For non-resume startup:
+  - file name now prefers the browser-observed file name before re-resolving from the live response
+  - total size now prefers the live response `Content-Length`, but falls back to browser-observed content length
+  - resumability now uses live `Accept-Ranges` first, then falls back to the browser-observed range support flag
+- This keeps the live server response as validation while avoiding unnecessary rediscovery when the browser transaction already proved the metadata.
+
 ## Next Step
 
 Test the deferred resolver against a few download styles and tighten the generic file-proof rules if needed:

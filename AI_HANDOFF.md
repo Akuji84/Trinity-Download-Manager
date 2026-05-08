@@ -14,6 +14,28 @@
 - The General > Startup preference controls are now fully wired to the backend instead of being frontend-only placeholders.
 - The startup prompt is intentionally one-time. After the user answers, future changes happen through Options.
 
+## 2026-05-07 - First batch of real General preferences
+
+- The following General settings are now persisted and enforced by the app:
+  - `default_folder_mode`
+  - `fixed_download_folder`
+  - `show_save_as_button`
+  - `delete_button_action`
+  - `file_exists_action`
+- Download creation now respects the configured default folder:
+  - fixed folder when selected and provided
+  - standard Downloads fallback otherwise
+- The add-download dialog now hides the `Save to` row when `show_save_as_button` is disabled.
+- Delete behavior now follows the configured action:
+  - `remove` removes the job from Trinity only
+  - `delete` removes the job and local artifacts
+  - `ask` prompts at click time
+- File collision behavior is now enforced when a job is created:
+  - `rename` reserves a unique output path
+  - `overwrite` keeps the configured path
+  - `ask` blocks creation with an explicit conflict error
+- The runtime download path was updated to stop auto-renaming on start so it does not override the chosen file-exists policy.
+
 ## Product Goal
 
 Build Trinity Download Manager into a professional desktop download manager comparable to tools like Free Download Manager, with a long-term goal of being reliable enough for thousands of users.

@@ -229,7 +229,7 @@ async fn download_single_stream(
     let output_path = if is_resuming {
         initial_output_path
     } else {
-        unique_output_path(Path::new(&job.output_folder).join(&file_name))
+        initial_output_path
     };
     let temp_path = temp_path_for(&output_path);
     let output_path_text = output_path.to_string_lossy().to_string();

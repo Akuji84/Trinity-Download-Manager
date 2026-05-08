@@ -122,6 +122,55 @@ fn resolved_extension_url(request: &ExtensionDownloadRequest) -> &str {
         .unwrap_or_else(|| request.url.trim())
 }
 
+fn normalize_default_folder_mode(value: &str) -> String {
+    match value.trim() {
+        "fixed" => "fixed".to_string(),
+        _ => "automatic".to_string(),
+    }
+}
+
+fn normalize_delete_button_action(value: &str) -> String {
+    match value.trim() {
+        "remove" => "remove".to_string(),
+        "delete" => "delete".to_string(),
+        _ => "ask".to_string(),
+    }
+}
+
+fn normalize_file_exists_action(value: &str) -> String {
+    match value.trim() {
+        "overwrite" => "overwrite".to_string(),
+        "ask" => "ask".to_string(),
+        _ => "rename".to_string(),
+    }
+}
+
+fn unique_output_path(output_path: PathBuf) -> PathBuf {
+    if !output_path.exists() {
+        return output_path;
+    }
+
+    let parent = output_path.parent().unwrap_or_else(|| std::path::Path::new(""));
+    let stem = output_path
+        .file_stem()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or("download");
+    let extension = output_path.extension().and_then(std::ffi::OsStr::to_str);
+
+    for index in 1..10_000 {
+        let file_name = match extension {
+            Some(extension) if !extension.is_empty() => format!("{stem} ({index}).{extension}"),
+            _ => format!("{stem} ({index})"),
+        };
+        let candidate = parent.join(file_name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+
+    output_path
+}
+
 fn extension_context_for_url(
     state: &AppState,
     url: &str,
@@ -322,6 +371,11 @@ fn update_app_settings(
         launch_at_startup: request.launch_at_startup,
         start_minimized: request.start_minimized,
         startup_prompt_answered: request.startup_prompt_answered,
+        default_folder_mode: normalize_default_folder_mode(&request.default_folder_mode),
+        fixed_download_folder: request.fixed_download_folder.trim().to_string(),
+        show_save_as_button: request.show_save_as_button,
+        delete_button_action: normalize_delete_button_action(&request.delete_button_action),
+        file_exists_action: normalize_file_exists_action(&request.file_exists_action),
         browser_intercept_downloads: request.browser_intercept_downloads,
         browser_start_without_confirmation: request.browser_start_without_confirmation,
         browser_skip_domains: request.browser_skip_domains.trim().to_string(),
@@ -442,6 +496,11 @@ fn create_download_job(
         _ => return Err("Only HTTP and HTTPS URLs are supported right now.".to_string()),
     }
 
+    let storage = state
+        .storage
+        .lock()
+        .map_err(|_| "Storage lock is unavailable.".to_string())?;
+    let app_settings = storage.get_app_settings().map_err(|error| error.to_string())?;
     let extension_context = extension_context_for_url(&state, parsed_url.as_str())?;
     let file_name = request
         .suggested_file_name
@@ -460,17 +519,29 @@ fn create_download_job(
         .unwrap_or_else(|| derive_file_name(&parsed_url));
     let output_folder = match &request.output_folder {
         Some(folder) if !folder.trim().is_empty() => PathBuf::from(folder.trim()),
+        _ if app_settings.default_folder_mode == "fixed"
+            && !app_settings.fixed_download_folder.trim().is_empty() =>
+        {
+            PathBuf::from(app_settings.fixed_download_folder.trim())
+        }
         _ => default_download_folder(&app)?,
     };
-    let output_path = output_folder.join(&file_name);
+    let requested_output_path = output_folder.join(&file_name);
+    let output_path = match app_settings.file_exists_action.as_str() {
+        "overwrite" => requested_output_path,
+        "ask" => {
+            if requested_output_path.exists() {
+                return Err(
+                    "A file with this name already exists in the target folder.".to_string(),
+                );
+            }
+            requested_output_path
+        }
+        _ => unique_output_path(requested_output_path),
+    };
     let (scheduler_enabled, schedule_days, schedule_from, schedule_to) =
         normalize_schedule_request(&request)?;
-    let storage = state
-        .storage
-        .lock()
-        .map_err(|_| "Storage lock is unavailable.".to_string())?;
     let queue_position = storage.next_queue_position().map_err(|error| error.to_string())?;
-    let app_settings = storage.get_app_settings().map_err(|error| error.to_string())?;
     let connection_count = parsed_url
         .host_str()
         .map(|hostname| {
@@ -690,6 +761,16 @@ fn delete_download_job(
             manifest_root.as_path(),
         )?;
     }
+
+    storage.delete_download_job(&id).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn remove_download_job(state: State<'_, AppState>, id: String) -> Result<bool, String> {
+    let storage = state
+        .storage
+        .lock()
+        .map_err(|_| "Storage lock is unavailable.".to_string())?;
 
     storage.delete_download_job(&id).map_err(|error| error.to_string())
 }
@@ -1961,6 +2042,7 @@ pub fn run() {
             create_download_job,
             list_download_jobs,
             delete_download_job,
+            remove_download_job,
             move_download_job_up,
             move_download_job_down,
             reorder_download_job,

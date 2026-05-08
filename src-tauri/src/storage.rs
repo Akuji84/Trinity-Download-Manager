@@ -241,6 +241,41 @@ impl Storage {
         self.connection.execute(
             "
             INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('default_folder_mode', 'automatic');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('fixed_download_folder', '');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('show_save_as_button', '1');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('delete_button_action', 'ask');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('file_exists_action', 'rename');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
             VALUES ('browser_intercept_downloads', '1');
             ",
             [],
@@ -1034,6 +1069,37 @@ impl Storage {
             .and_then(|value| value.parse::<u8>().ok())
             .map(|value| value != 0)
             .unwrap_or(defaults.startup_prompt_answered);
+        let default_folder_mode = self
+            .get_setting("default_folder_mode")?
+            .map(|value| match value.trim() {
+                "fixed" => "fixed".to_string(),
+                _ => "automatic".to_string(),
+            })
+            .unwrap_or(defaults.default_folder_mode);
+        let fixed_download_folder = self
+            .get_setting("fixed_download_folder")?
+            .unwrap_or(defaults.fixed_download_folder);
+        let show_save_as_button = self
+            .get_setting("show_save_as_button")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.show_save_as_button);
+        let delete_button_action = self
+            .get_setting("delete_button_action")?
+            .map(|value| match value.trim() {
+                "remove" => "remove".to_string(),
+                "delete" => "delete".to_string(),
+                _ => "ask".to_string(),
+            })
+            .unwrap_or(defaults.delete_button_action);
+        let file_exists_action = self
+            .get_setting("file_exists_action")?
+            .map(|value| match value.trim() {
+                "overwrite" => "overwrite".to_string(),
+                "ask" => "ask".to_string(),
+                _ => "rename".to_string(),
+            })
+            .unwrap_or(defaults.file_exists_action);
         let browser_intercept_downloads = self
             .get_setting("browser_intercept_downloads")?
             .and_then(|value| value.parse::<u8>().ok())
@@ -1084,6 +1150,11 @@ impl Storage {
             launch_at_startup,
             start_minimized,
             startup_prompt_answered,
+            default_folder_mode,
+            fixed_download_folder,
+            show_save_as_button,
+            delete_button_action,
+            file_exists_action,
             browser_intercept_downloads,
             browser_start_without_confirmation,
             browser_skip_domains,
@@ -1137,6 +1208,14 @@ impl Storage {
             "startup_prompt_answered",
             if settings.startup_prompt_answered { "1" } else { "0" },
         )?;
+        self.upsert_setting("default_folder_mode", &settings.default_folder_mode)?;
+        self.upsert_setting("fixed_download_folder", &settings.fixed_download_folder)?;
+        self.upsert_setting(
+            "show_save_as_button",
+            if settings.show_save_as_button { "1" } else { "0" },
+        )?;
+        self.upsert_setting("delete_button_action", &settings.delete_button_action)?;
+        self.upsert_setting("file_exists_action", &settings.file_exists_action)?;
         self.upsert_setting(
             "browser_intercept_downloads",
             if settings.browser_intercept_downloads { "1" } else { "0" },

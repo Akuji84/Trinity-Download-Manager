@@ -72,6 +72,11 @@ type AppSettings = {
   launch_at_startup: boolean;
   start_minimized: boolean;
   startup_prompt_answered: boolean;
+  default_folder_mode: "automatic" | "fixed";
+  fixed_download_folder: string;
+  show_save_as_button: boolean;
+  delete_button_action: "remove" | "delete" | "ask";
+  file_exists_action: "rename" | "overwrite" | "ask";
   browser_intercept_downloads: boolean;
   browser_start_without_confirmation: boolean;
   browser_skip_domains: string;
@@ -424,6 +429,11 @@ function App() {
     launch_at_startup: false,
     start_minimized: false,
     startup_prompt_answered: false,
+    default_folder_mode: "automatic",
+    fixed_download_folder: "",
+    show_save_as_button: true,
+    delete_button_action: "ask",
+    file_exists_action: "rename",
     browser_intercept_downloads: true,
     browser_start_without_confirmation: false,
     browser_skip_domains: "accounts.google.com, drive.google.com",
@@ -458,6 +468,17 @@ function App() {
   const isExtensionPrefilledDownload =
     extensionDisplayFileName.length > 0 && extensionDisplayFileName !== url;
 
+  function preferredOutputFolderFromSettings(currentSettings: AppSettings) {
+    if (
+      currentSettings.default_folder_mode === "fixed" &&
+      currentSettings.fixed_download_folder.trim().length > 0
+    ) {
+      return currentSettings.fixed_download_folder.trim();
+    }
+
+    return "";
+  }
+
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
@@ -482,6 +503,11 @@ function App() {
           closeToTray: loadedSettings.close_to_tray,
           launchAtStartup: loadedSettings.launch_at_startup,
           startMinimized: loadedSettings.start_minimized,
+          defaultFolderMode: loadedSettings.default_folder_mode,
+          fixedDownloadFolder: loadedSettings.fixed_download_folder,
+          showSaveAsButton: loadedSettings.show_save_as_button,
+          deleteButtonAction: loadedSettings.delete_button_action,
+          fileExistsAction: loadedSettings.file_exists_action,
           browserInterceptDownloads: loadedSettings.browser_intercept_downloads,
           browserStartWithoutConfirmation: loadedSettings.browser_start_without_confirmation,
           browserSkipDomains: loadedSettings.browser_skip_domains,
@@ -560,7 +586,9 @@ function App() {
       setError("");
       setUrl(resolvedUrl);
       setPendingSuggestedFileName(observedFileName ?? "");
-      setOutputFolder(payload.output_folder?.trim() ?? "");
+      setOutputFolder(
+        payload.output_folder?.trim() || preferredOutputFolderFromSettings(settingsRef.current),
+      );
       setIsBrowserObservedDownload(browserObserved);
       setBrowserObservedMetadata(observedMetadata);
       setIsSchedulerEnabled(false);
@@ -866,7 +894,7 @@ function App() {
     setError("");
     setUrl("");
     setPendingSuggestedFileName("");
-    setOutputFolder("");
+    setOutputFolder(preferredOutputFolderFromSettings(settingsRef.current));
     setIsBrowserObservedDownload(false);
     setBrowserObservedMetadata(null);
     setIsSchedulerEnabled(false);
@@ -920,6 +948,11 @@ function App() {
           launch_at_startup: launchAtStartup,
           start_minimized: currentSettings.start_minimized,
           startup_prompt_answered: true,
+          default_folder_mode: currentSettings.default_folder_mode,
+          fixed_download_folder: currentSettings.fixed_download_folder,
+          show_save_as_button: currentSettings.show_save_as_button,
+          delete_button_action: currentSettings.delete_button_action,
+          file_exists_action: currentSettings.file_exists_action,
           browser_intercept_downloads: currentSettings.browser_intercept_downloads,
           browser_start_without_confirmation:
             currentSettings.browser_start_without_confirmation,
@@ -957,6 +990,40 @@ function App() {
       next.delete(id);
       return next;
     });
+  }
+
+  async function removeJobFromList(id: string) {
+    setDeletingJobIds((prev) => new Set([...prev, id]));
+    await new Promise((resolve) => setTimeout(resolve, 280));
+    await invoke<boolean>("remove_download_job", { id });
+    setJobs((currentJobs) => currentJobs.filter((job) => job.id !== id));
+    setSelectedJobIds((currentIds) => currentIds.filter((jobId) => jobId !== id));
+    setDeletingJobIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }
+
+  async function handleDeleteAction(id: string) {
+    switch (settings.delete_button_action) {
+      case "remove":
+        await removeJobFromList(id);
+        return;
+      case "delete":
+        await deleteJob(id);
+        return;
+      default: {
+        const shouldDeleteFiles = window.confirm(
+          "Delete downloaded files from disk too?\n\nChoose OK to delete files and remove the item, or Cancel to remove the item from Trinity only.",
+        );
+        if (shouldDeleteFiles) {
+          await deleteJob(id);
+        } else {
+          await removeJobFromList(id);
+        }
+      }
+    }
   }
 
   async function startJob(id: string) {
@@ -1061,6 +1128,11 @@ function App() {
         launch_at_startup: preferencesDraft.launchAtStartup,
         start_minimized: preferencesDraft.startMinimized,
         startup_prompt_answered: settings.startup_prompt_answered,
+        default_folder_mode: preferencesDraft.defaultFolderMode,
+        fixed_download_folder: preferencesDraft.fixedDownloadFolder,
+        show_save_as_button: preferencesDraft.showSaveAsButton,
+        delete_button_action: preferencesDraft.deleteButtonAction,
+        file_exists_action: preferencesDraft.fileExistsAction,
         browser_intercept_downloads: preferencesDraft.browserInterceptDownloads,
         browser_start_without_confirmation:
           preferencesDraft.browserStartWithoutConfirmation,
@@ -1089,6 +1161,11 @@ function App() {
       closeToTray: updatedSettings.close_to_tray,
       launchAtStartup: updatedSettings.launch_at_startup,
       startMinimized: updatedSettings.start_minimized,
+      defaultFolderMode: updatedSettings.default_folder_mode,
+      fixedDownloadFolder: updatedSettings.fixed_download_folder,
+      showSaveAsButton: updatedSettings.show_save_as_button,
+      deleteButtonAction: updatedSettings.delete_button_action,
+      fileExistsAction: updatedSettings.file_exists_action,
       browserInterceptDownloads: updatedSettings.browser_intercept_downloads,
       browserStartWithoutConfirmation: updatedSettings.browser_start_without_confirmation,
       browserSkipDomains: updatedSettings.browser_skip_domains,
@@ -1119,6 +1196,11 @@ function App() {
       closeToTray: settings.close_to_tray,
       launchAtStartup: settings.launch_at_startup,
       startMinimized: settings.start_minimized,
+      defaultFolderMode: settings.default_folder_mode,
+      fixedDownloadFolder: settings.fixed_download_folder,
+      showSaveAsButton: settings.show_save_as_button,
+      deleteButtonAction: settings.delete_button_action,
+      fileExistsAction: settings.file_exists_action,
       browserInterceptDownloads: settings.browser_intercept_downloads,
       browserStartWithoutConfirmation: settings.browser_start_without_confirmation,
       browserSkipDomains: settings.browser_skip_domains,
@@ -3164,7 +3246,7 @@ function App() {
                               disabled={job.state === "Running"}
                               onClick={(event) => {
                                 event.stopPropagation();
-                                deleteJob(job.id);
+                                handleDeleteAction(job.id);
                               }}
                             >
                               Delete
@@ -3203,32 +3285,34 @@ function App() {
               </button>
             </div>
             <form className="add-form new-download-form" onSubmit={createJob}>
-              <label className="field-block">
-                <span>Save to</span>
-                <div className="path-row">
-                  <input
-                    onChange={(event) =>
-                      setOutputFolder(event.currentTarget.value)
-                    }
-                    placeholder="Leave blank to use Downloads"
-                    value={outputFolder}
-                  />
-                  <button
-                    type="button"
-                    aria-label="Use default downloads folder"
-                    onClick={() => useDefaultOutputFolder()}
-                  >
-                    <ChevronDown size={14} strokeWidth={2} />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Browse for folder"
-                    onClick={() => chooseOutputFolder()}
-                  >
-                    <MoreHorizontal size={18} strokeWidth={2} />
-                  </button>
-                </div>
-              </label>
+              {settings.show_save_as_button ? (
+                <label className="field-block">
+                  <span>Save to</span>
+                  <div className="path-row">
+                    <input
+                      onChange={(event) =>
+                        setOutputFolder(event.currentTarget.value)
+                      }
+                      placeholder="Leave blank to use Downloads"
+                      value={outputFolder}
+                    />
+                    <button
+                      type="button"
+                      aria-label="Use default downloads folder"
+                      onClick={() => useDefaultOutputFolder()}
+                    >
+                      <ChevronDown size={14} strokeWidth={2} />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Browse for folder"
+                      onClick={() => chooseOutputFolder()}
+                    >
+                      <MoreHorizontal size={18} strokeWidth={2} />
+                    </button>
+                  </div>
+                </label>
+              ) : null}
               <label className="field-block">
                 <span>{isExtensionPrefilledDownload ? "File name" : "URL"}</span>
                 {isExtensionPrefilledDownload ? (

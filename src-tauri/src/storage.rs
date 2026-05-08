@@ -364,6 +364,41 @@ impl Storage {
             ",
             [],
         )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('proxy_mode', 'system');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('proxy_host', '');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('proxy_port', '8080');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('proxy_username', '');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('proxy_password', '');
+            ",
+            [],
+        )?;
 
         Ok(())
     }
@@ -1194,6 +1229,27 @@ impl Storage {
             .and_then(|value| value.parse::<u8>().ok())
             .map(|value| value != 0)
             .unwrap_or(defaults.browser_ignore_insert_key);
+        let proxy_mode = self
+            .get_setting("proxy_mode")?
+            .map(|value| match value.trim() {
+                "none" => "none".to_string(),
+                "manual" => "manual".to_string(),
+                _ => "system".to_string(),
+            })
+            .unwrap_or(defaults.proxy_mode);
+        let proxy_host = self
+            .get_setting("proxy_host")?
+            .unwrap_or(defaults.proxy_host);
+        let proxy_port = self
+            .get_setting("proxy_port")?
+            .and_then(|value| value.parse::<u16>().ok())
+            .unwrap_or(defaults.proxy_port);
+        let proxy_username = self
+            .get_setting("proxy_username")?
+            .unwrap_or(defaults.proxy_username);
+        let proxy_password = self
+            .get_setting("proxy_password")?
+            .unwrap_or(defaults.proxy_password);
 
         Ok(AppSettings {
             max_concurrent_downloads,
@@ -1228,6 +1284,11 @@ impl Storage {
             browser_minimum_size_mb,
             browser_use_native_fallback,
             browser_ignore_insert_key,
+            proxy_mode,
+            proxy_host,
+            proxy_port,
+            proxy_username,
+            proxy_password,
         })
     }
 
@@ -1336,6 +1397,11 @@ impl Storage {
             "browser_ignore_insert_key",
             if settings.browser_ignore_insert_key { "1" } else { "0" },
         )?;
+        self.upsert_setting("proxy_mode", &settings.proxy_mode)?;
+        self.upsert_setting("proxy_host", &settings.proxy_host)?;
+        self.upsert_setting("proxy_port", settings.proxy_port.to_string())?;
+        self.upsert_setting("proxy_username", &settings.proxy_username)?;
+        self.upsert_setting("proxy_password", &settings.proxy_password)?;
 
         Ok(())
     }

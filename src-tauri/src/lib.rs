@@ -62,6 +62,7 @@ struct AppState {
     job_request_contexts: Mutex<HashMap<String, ExtensionDownloadRequest>>,
     file_watcher: Mutex<RecommendedWatcher>,
     watched_directories: Mutex<Vec<PathBuf>>,
+    http_client: Mutex<Client>,
     queue_running: AtomicBool,
     close_to_tray: AtomicBool,
     show_tray_activity: AtomicBool,
@@ -75,6 +76,26 @@ const EXTENSION_OPEN_OPTIONS_EVENT: &str = "extension-open-options";
 const WINDOWS_RUN_KEY_PATH: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 #[cfg(target_os = "windows")]
 const WINDOWS_RUN_VALUE_NAME: &str = "Trinity Download Manager";
+
+fn build_http_client(settings: &AppSettings) -> Client {
+    let mut builder = Client::builder();
+    match settings.proxy_mode.as_str() {
+        "none" => {
+            builder = builder.no_proxy();
+        }
+        "manual" if !settings.proxy_host.is_empty() => {
+            let proxy_url = format!("http://{}:{}", settings.proxy_host, settings.proxy_port);
+            if let Ok(mut proxy) = reqwest::Proxy::all(&proxy_url) {
+                if !settings.proxy_username.is_empty() {
+                    proxy = proxy.basic_auth(&settings.proxy_username, &settings.proxy_password);
+                }
+                builder = builder.proxy(proxy);
+            }
+        }
+        _ => {} // "system" — reqwest uses the OS proxy by default
+    }
+    builder.build().unwrap_or_default()
+}
 
 fn focus_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
@@ -170,6 +191,14 @@ fn normalize_file_exists_action(value: &str) -> String {
         "overwrite" => "overwrite".to_string(),
         "ask" => "ask".to_string(),
         _ => "rename".to_string(),
+    }
+}
+
+fn normalize_proxy_mode(value: &str) -> String {
+    match value.trim() {
+        "none" => "none".to_string(),
+        "manual" => "manual".to_string(),
+        _ => "system".to_string(),
     }
 }
 
@@ -417,6 +446,11 @@ fn update_app_settings(
         browser_minimum_size_mb: request.browser_minimum_size_mb.min(1024 * 1024),
         browser_use_native_fallback: request.browser_use_native_fallback,
         browser_ignore_insert_key: request.browser_ignore_insert_key,
+        proxy_mode: normalize_proxy_mode(&request.proxy_mode),
+        proxy_host: request.proxy_host.trim().to_string(),
+        proxy_port: request.proxy_port,
+        proxy_username: request.proxy_username.trim().to_string(),
+        proxy_password: request.proxy_password.clone(),
     };
     state.close_to_tray.store(request.close_to_tray, Ordering::Relaxed);
     state
@@ -432,6 +466,9 @@ fn update_app_settings(
         .map_err(|error| error.to_string())?;
     drop(storage);
 
+    if let Ok(mut client_guard) = state.http_client.lock() {
+        *client_guard = build_http_client(&settings);
+    }
     sync_launch_at_startup_setting(settings.launch_at_startup)?;
     pump_queue(app.clone())?;
     if let Ok(storage) = state.storage.lock() {
@@ -466,7 +503,11 @@ async fn inspect_download_url(state: State<'_, AppState>, url: String) -> Result
     }
 
     let extension_context = extension_context_for_url(&state, parsed_url.as_str())?;
-    let client = Client::new();
+    let client = state
+        .http_client
+        .lock()
+        .map_err(|_| "HTTP client lock is unavailable.".to_string())?
+        .clone();
     let method = request_method_from_context(extension_context.as_ref());
     let response = if method == Method::GET {
         let prefer_ranged_get_probe = extension_context.is_some();
@@ -987,6 +1028,11 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
         .map_err(|_| "Job request context lock is unavailable.".to_string())?
         .get(&id)
         .cloned();
+    let http_client = state
+        .http_client
+        .lock()
+        .map_err(|_| "HTTP client lock is unavailable.".to_string())?
+        .clone();
     let hostname = Url::parse(&job.url)
         .ok()
         .and_then(|url| url.host_str().map(|value| value.to_string()));
@@ -1026,6 +1072,7 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
         let job_id_for_progress = job_id.clone();
         let job_id_for_speed_limit = job_id.clone();
         let result = download_engine::download_to_disk(
+            http_client,
             job,
             request_context,
             manifest_root,
@@ -2021,6 +2068,7 @@ pub fn run() {
                 job_request_contexts: Mutex::new(HashMap::new()),
                 file_watcher: Mutex::new(file_watcher),
                 watched_directories: Mutex::new(Vec::new()),
+                http_client: Mutex::new(build_http_client(&initial_settings)),
                 queue_running: AtomicBool::new(true),
                 close_to_tray: AtomicBool::new(initial_settings.close_to_tray),
                 show_tray_activity: AtomicBool::new(initial_settings.show_tray_activity),

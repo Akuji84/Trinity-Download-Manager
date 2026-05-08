@@ -90,6 +90,11 @@ type AppSettings = {
   browser_minimum_size_mb: number;
   browser_use_native_fallback: boolean;
   browser_ignore_insert_key: boolean;
+  proxy_mode: "system" | "none" | "manual";
+  proxy_host: string;
+  proxy_port: number;
+  proxy_username: string;
+  proxy_password: string;
 };
 
 type DownloadProgressEvent = {
@@ -453,6 +458,11 @@ function App() {
     browser_minimum_size_mb: 1,
     browser_use_native_fallback: true,
     browser_ignore_insert_key: true,
+    proxy_mode: "system",
+    proxy_host: "",
+    proxy_port: 8080,
+    proxy_username: "",
+    proxy_password: "",
   });
   const [preferencesDraft, setPreferencesDraft] = useState<PreferencesDraft>(() =>
     createPreferencesDraft(3),
@@ -1010,6 +1020,11 @@ function App() {
           browser_minimum_size_mb: currentSettings.browser_minimum_size_mb,
           browser_use_native_fallback: currentSettings.browser_use_native_fallback,
           browser_ignore_insert_key: currentSettings.browser_ignore_insert_key,
+          proxy_mode: currentSettings.proxy_mode,
+          proxy_host: currentSettings.proxy_host,
+          proxy_port: currentSettings.proxy_port,
+          proxy_username: currentSettings.proxy_username,
+          proxy_password: currentSettings.proxy_password,
         },
       });
       setSettings(updatedSettings);
@@ -1195,6 +1210,11 @@ function App() {
         browser_minimum_size_mb: preferencesDraft.browserMinimumSizeMb,
         browser_use_native_fallback: preferencesDraft.browserUseNativeFallback,
         browser_ignore_insert_key: preferencesDraft.browserIgnoreInsertKey,
+        proxy_mode: preferencesDraft.proxyMode,
+        proxy_host: preferencesDraft.proxyHost,
+        proxy_port: parseInt(preferencesDraft.proxyPort, 10) || 8080,
+        proxy_username: preferencesDraft.proxyUsername,
+        proxy_password: preferencesDraft.proxyPassword,
       },
     });
     setSettings(updatedSettings);
@@ -1232,6 +1252,11 @@ function App() {
       browserMinimumSizeMb: updatedSettings.browser_minimum_size_mb,
       browserUseNativeFallback: updatedSettings.browser_use_native_fallback,
       browserIgnoreInsertKey: updatedSettings.browser_ignore_insert_key,
+      proxyMode: updatedSettings.proxy_mode,
+      proxyHost: updatedSettings.proxy_host,
+      proxyPort: String(updatedSettings.proxy_port),
+      proxyUsername: updatedSettings.proxy_username,
+      proxyPassword: updatedSettings.proxy_password,
     }));
     setPreferencesStatus("Settings saved.");
     await refreshJobs();
@@ -1272,6 +1297,11 @@ function App() {
       browserMinimumSizeMb: settings.browser_minimum_size_mb,
       browserUseNativeFallback: settings.browser_use_native_fallback,
       browserIgnoreInsertKey: settings.browser_ignore_insert_key,
+      proxyMode: settings.proxy_mode,
+      proxyHost: settings.proxy_host,
+      proxyPort: String(settings.proxy_port),
+      proxyUsername: settings.proxy_username,
+      proxyPassword: settings.proxy_password,
     }));
     setPreferencesStatus("");
     setActivePreferencesSection("general");
@@ -2029,7 +2059,7 @@ function App() {
                       <h3>Network</h3>
                       <p>Proxy routing, authentication, and connection path controls.</p>
                     </div>
-                    <span className="preferences-badge placeholder">Placeholder</span>
+                    <span className="preferences-badge live">Live</span>
                   </div>
                   <div className="preferences-radio-list">
                     <label className="preferences-radio">
@@ -2057,41 +2087,47 @@ function App() {
                       Configure manually
                     </label>
                   </div>
-                  <div className="preferences-grid two-column">
-                    <label className="preferences-field">
-                      <span>Proxy host</span>
-                      <input
-                        onChange={(event) => setPreferenceValue("proxyHost", event.currentTarget.value)}
-                        value={preferencesDraft.proxyHost}
-                      />
-                    </label>
-                    <label className="preferences-field">
-                      <span>Port</span>
-                      <input
-                        onChange={(event) => setPreferenceValue("proxyPort", event.currentTarget.value)}
-                        value={preferencesDraft.proxyPort}
-                      />
-                    </label>
-                    <label className="preferences-field">
-                      <span>Username</span>
-                      <input
-                        onChange={(event) =>
-                          setPreferenceValue("proxyUsername", event.currentTarget.value)
-                        }
-                        value={preferencesDraft.proxyUsername}
-                      />
-                    </label>
-                    <label className="preferences-field">
-                      <span>Password</span>
-                      <input
-                        onChange={(event) =>
-                          setPreferenceValue("proxyPassword", event.currentTarget.value)
-                        }
-                        type="password"
-                        value={preferencesDraft.proxyPassword}
-                      />
-                    </label>
-                  </div>
+                  {preferencesDraft.proxyMode === "manual" && (
+                    <div className="preferences-grid two-column">
+                      <label className="preferences-field">
+                        <span>Proxy host</span>
+                        <input
+                          onChange={(event) => setPreferenceValue("proxyHost", event.currentTarget.value)}
+                          placeholder="e.g. 192.168.1.1"
+                          value={preferencesDraft.proxyHost}
+                        />
+                      </label>
+                      <label className="preferences-field">
+                        <span>Port</span>
+                        <input
+                          onChange={(event) => setPreferenceValue("proxyPort", event.currentTarget.value)}
+                          placeholder="8080"
+                          value={preferencesDraft.proxyPort}
+                        />
+                      </label>
+                      <label className="preferences-field">
+                        <span>Username <small style={{ color: "#7a8895" }}>(optional)</small></span>
+                        <input
+                          autoComplete="off"
+                          onChange={(event) =>
+                            setPreferenceValue("proxyUsername", event.currentTarget.value)
+                          }
+                          value={preferencesDraft.proxyUsername}
+                        />
+                      </label>
+                      <label className="preferences-field">
+                        <span>Password <small style={{ color: "#7a8895" }}>(optional)</small></span>
+                        <input
+                          autoComplete="new-password"
+                          onChange={(event) =>
+                            setPreferenceValue("proxyPassword", event.currentTarget.value)
+                          }
+                          type="password"
+                          value={preferencesDraft.proxyPassword}
+                        />
+                      </label>
+                    </div>
+                  )}
                 </section>
 
                 <section className="preferences-section" id="preferences-trafficLimits">

@@ -44,6 +44,7 @@ impl DownloadEngine {
 }
 
 pub async fn download_to_disk(
+    client: Client,
     job: DownloadJob,
     request_context: Option<ExtensionDownloadRequest>,
     manifest_root: PathBuf,
@@ -52,7 +53,6 @@ pub async fn download_to_disk(
     mut report_progress: impl FnMut(u64, Option<u64>, u64) -> Result<(), String>,
     mut resolve_speed_limit_kbps: impl FnMut() -> Result<Option<u64>, String>,
 ) -> Result<(), DownloadError> {
-    let client = Client::new();
     let initial_output_path = PathBuf::from(&job.output_path);
     let temp_path = temp_path_for(&initial_output_path);
     let manifest_path = manifest_path_for(&manifest_root, &initial_output_path);

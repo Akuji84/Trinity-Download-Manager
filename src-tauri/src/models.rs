@@ -192,6 +192,11 @@ pub struct AppSettings {
     pub browser_minimum_size_mb: u64,
     pub browser_use_native_fallback: bool,
     pub browser_ignore_insert_key: bool,
+    pub proxy_mode: String,
+    pub proxy_host: String,
+    pub proxy_port: u16,
+    pub proxy_username: String,
+    pub proxy_password: String,
 }
 
 impl Default for AppSettings {
@@ -229,6 +234,11 @@ impl Default for AppSettings {
             browser_minimum_size_mb: 1,
             browser_use_native_fallback: true,
             browser_ignore_insert_key: true,
+            proxy_mode: "system".to_string(),
+            proxy_host: String::new(),
+            proxy_port: 8080,
+            proxy_username: String::new(),
+            proxy_password: String::new(),
         }
     }
 }
@@ -267,6 +277,11 @@ pub struct UpdateAppSettingsRequest {
     pub browser_minimum_size_mb: u64,
     pub browser_use_native_fallback: bool,
     pub browser_ignore_insert_key: bool,
+    pub proxy_mode: String,
+    pub proxy_host: String,
+    pub proxy_port: u16,
+    pub proxy_username: String,
+    pub proxy_password: String,
 }
 
 impl From<&AppSettings> for BrowserIntegrationSettings {

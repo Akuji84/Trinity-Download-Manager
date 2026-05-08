@@ -2,7 +2,6 @@ const BRIDGE_BASE_URL = "http://127.0.0.1:38491";
 const STORAGE_KEYS = {
   capturePaused: "capturePaused",
   excludedSites: "excludedSites",
-  debugMode: "debugMode",
 };
 const CONTEXT_MENU_IDS = {
   link: "trinity-download-link",
@@ -14,41 +13,9 @@ const REQUEST_METADATA_WINDOW_MS = 15000;
 const DOWNLOAD_TRANSACTION_WINDOW_MS = 30000;
 const recentRequestMetadata = new Map();
 const recentDownloadTransactions = new Map();
-let debugLogFlushInFlight = false;
 
-function shouldSkipDebugUrl(url) {
+function shouldSkipBridgeUrl(url) {
   return typeof url === "string" && url.startsWith(BRIDGE_BASE_URL);
-}
-
-function debugLog(stage, details = {}) {
-  const entry = {
-    timestamp: new Date().toISOString(),
-    stage,
-    ...details,
-  };
-  console.log(`[Trinity Debug] ${stage}`, entry);
-  void postDebugLog(entry);
-}
-
-async function postDebugLog(entry) {
-  if (debugLogFlushInFlight) {
-    return;
-  }
-
-  debugLogFlushInFlight = true;
-  try {
-    await fetch(`${BRIDGE_BASE_URL}/debug/log`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(entry),
-    });
-  } catch (error) {
-    console.warn("Could not persist Trinity debug log entry", error);
-  } finally {
-    debugLogFlushInFlight = false;
-  }
 }
 
 // Cached bridge status so onCreated can cancel immediately without a network round-trip
@@ -57,19 +24,9 @@ setInterval(refreshCachedBridgeStatus, 15000);
 refreshCachedBridgeStatus();
 
 chrome.webRequest.onBeforeRequest.addListener(
-  async (details) => {
-    if (shouldSkipDebugUrl(details?.url || "")) {
+  (details) => {
+    if (shouldSkipBridgeUrl(details?.url || "")) {
       return;
-    }
-    if (await isDebugModeEnabled()) {
-      debugLog("webRequest.onBeforeRequest", {
-        url: details?.url || "",
-        method: details?.method || "",
-        type: details?.type || "",
-        initiator: details?.initiator || details?.documentUrl || null,
-        tabId: details?.tabId ?? null,
-        requestId: details?.requestId || null,
-      });
     }
     cacheRequestMetadata(details);
     cacheDownloadTransactionRequest(details);
@@ -79,17 +36,9 @@ chrome.webRequest.onBeforeRequest.addListener(
 );
 
 chrome.webRequest.onBeforeSendHeaders.addListener(
-  async (details) => {
-    if (shouldSkipDebugUrl(details?.url || "")) {
+  (details) => {
+    if (shouldSkipBridgeUrl(details?.url || "")) {
       return;
-    }
-    if (await isDebugModeEnabled()) {
-      debugLog("webRequest.onBeforeSendHeaders", {
-        url: details?.url || "",
-        method: details?.method || "",
-        headers: extractReplayHeaders(details?.requestHeaders) || {},
-        requestId: details?.requestId || null,
-      });
     }
     cacheRequestHeaders(details);
     cacheDownloadTransactionRequestHeaders(details);
@@ -99,20 +48,9 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
 );
 
 chrome.webRequest.onHeadersReceived.addListener(
-  async (details) => {
-    if (shouldSkipDebugUrl(details?.url || "")) {
+  (details) => {
+    if (shouldSkipBridgeUrl(details?.url || "")) {
       return;
-    }
-    if (await isDebugModeEnabled()) {
-      debugLog("webRequest.onHeadersReceived", {
-        url: details?.url || "",
-        method: details?.method || "",
-        statusCode: details?.statusCode ?? null,
-        statusLine: details?.statusLine || "",
-        type: details?.type || "",
-        responseHeaders: extractDebugResponseHeaders(details?.responseHeaders),
-        requestId: details?.requestId || null,
-      });
     }
     cacheDownloadTransactionResponseHeaders(details);
   },
@@ -121,21 +59,9 @@ chrome.webRequest.onHeadersReceived.addListener(
 );
 
 chrome.webRequest.onResponseStarted.addListener(
-  async (details) => {
-    if (shouldSkipDebugUrl(details?.url || "")) {
+  (details) => {
+    if (shouldSkipBridgeUrl(details?.url || "")) {
       return;
-    }
-    if (await isDebugModeEnabled()) {
-      debugLog("webRequest.onResponseStarted", {
-        url: details?.url || "",
-        method: details?.method || "",
-        statusCode: details?.statusCode ?? null,
-        ip: details?.ip || "",
-        fromCache: details?.fromCache ?? null,
-        type: details?.type || "",
-        responseHeaders: extractDebugResponseHeaders(details?.responseHeaders),
-        requestId: details?.requestId || null,
-      });
     }
     cacheDownloadTransactionResponseStarted(details);
   },
@@ -145,11 +71,6 @@ chrome.webRequest.onResponseStarted.addListener(
 
 async function refreshCachedBridgeStatus() {
   cachedBridgeAlive = await pingBridge();
-}
-
-async function isDebugModeEnabled() {
-  const { debugMode = false } = await chrome.storage.local.get(STORAGE_KEYS.debugMode);
-  return debugMode === true;
 }
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -240,16 +161,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
-  if (message?.type === "toggle-debug-mode") {
-    toggleDebugMode()
-      .then((state) => sendResponse(state))
-      .catch((error) => {
-        console.error("Debug mode toggle failed", error);
-        sendResponse({ debugMode: false });
-      });
-    return true;
-  }
-
   if (message?.type === "toggle-capture-paused") {
     toggleCapturePaused()
       .then((state) => sendResponse(state))
@@ -334,21 +245,6 @@ async function sendToTrinity(payload) {
 
   try {
     const enrichedPayload = await enrichPayloadWithSession(payload);
-    if (await isDebugModeEnabled()) {
-      debugLog("handoff.sendToTrinity", {
-        url: enrichedPayload.url,
-        finalUrl: enrichedPayload.final_url,
-        pageUrl: enrichedPayload.page_url,
-        suggestedFileName: enrichedPayload.suggested_file_name,
-        mimeType: enrichedPayload.mime_type,
-        observedFileName: enrichedPayload.observed_file_name || null,
-        observedContentType: enrichedPayload.observed_content_type || null,
-        observedContentLength: enrichedPayload.observed_content_length ?? null,
-        requestMethod: enrichedPayload.request_method,
-        requestHeaders: enrichedPayload.request_headers || null,
-        cookieCount: Array.isArray(enrichedPayload.cookies) ? enrichedPayload.cookies.length : 0,
-      });
-    }
     const response = await fetch(`${BRIDGE_BASE_URL}/downloads/create`, {
       method: "POST",
       headers: {
@@ -936,23 +832,6 @@ async function getPopupState() {
 
 async function handleCreatedDownload(downloadItem) {
   const transaction = findDownloadTransactionForItem(downloadItem);
-  if (await isDebugModeEnabled()) {
-    debugLog("downloads.onCreated", {
-      id: downloadItem.id,
-      url: downloadItem.url || "",
-      finalUrl: downloadItem.finalUrl || "",
-      filename: downloadItem.filename || "",
-      mime: downloadItem.mime || "",
-      referrer: downloadItem.referrer || "",
-      state: downloadItem.state || "",
-      fileSize: downloadItem.fileSize ?? null,
-      totalBytes: downloadItem.totalBytes ?? null,
-      exists: downloadItem.exists ?? null,
-      transaction: summarizeDownloadTransaction(transaction),
-    });
-    return;
-  }
-
   if (!shouldConsiderDownload(downloadItem)) {
     return;
   }
@@ -1097,30 +976,6 @@ async function toggleCapturePaused() {
   const nextValue = !capturePaused;
   await chrome.storage.local.set({ [STORAGE_KEYS.capturePaused]: nextValue });
   return { capturePaused: nextValue };
-}
-
-async function toggleDebugMode() {
-  const { debugMode = false } = await chrome.storage.local.get(STORAGE_KEYS.debugMode);
-  const nextValue = !debugMode;
-  await chrome.storage.local.set({ [STORAGE_KEYS.debugMode]: nextValue });
-  debugLog("debug-mode-toggle", { enabled: nextValue });
-  return { debugMode: nextValue };
-}
-
-async function getDebugLogPath() {
-  try {
-    const response = await fetch(`${BRIDGE_BASE_URL}/app/debug-log-path`, {
-      method: "GET",
-      cache: "no-store",
-    });
-    if (!response.ok) {
-      return "";
-    }
-    const payload = await response.json();
-    return payload?.path || "";
-  } catch {
-    return "";
-  }
 }
 
 async function toggleSiteExclusion(siteHost) {

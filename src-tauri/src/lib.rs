@@ -6,7 +6,6 @@ mod task_manager;
 use std::{
     collections::HashMap,
     ffi::c_void,
-    fs::OpenOptions,
     io::{Read, Write},
     net::{TcpListener, TcpStream},
     path::PathBuf,
@@ -69,7 +68,6 @@ const EXTENSION_BRIDGE_HOST: &str = "127.0.0.1";
 const EXTENSION_BRIDGE_PORT: u16 = 38491;
 const EXTENSION_DOWNLOAD_EVENT: &str = "extension-download-request";
 const EXTENSION_OPEN_OPTIONS_EVENT: &str = "extension-open-options";
-const EXTENSION_DEBUG_LOG_FILE: &str = "browser-capture-debug.log";
 
 fn focus_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
@@ -1225,33 +1223,6 @@ fn segment_manifest_root(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(root)
 }
 
-fn extension_debug_log_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let path = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| error.to_string())?
-        .join(EXTENSION_DEBUG_LOG_FILE);
-
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-
-    Ok(path)
-}
-
-fn append_extension_debug_log(app: &AppHandle, value: &serde_json::Value) -> Result<(), String> {
-    let path = extension_debug_log_path(app)?;
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|error| error.to_string())?;
-    let line = serde_json::to_string(value).map_err(|error| error.to_string())?;
-    file.write_all(line.as_bytes())
-        .and_then(|_| file.write_all(b"\n"))
-        .map_err(|error| error.to_string())
-}
-
 fn derive_file_name(url: &Url) -> String {
     let candidate = url
         .path_segments()
@@ -1627,20 +1598,10 @@ fn handle_extension_bridge_connection(app: &AppHandle, mut stream: TcpStream) ->
                 "ok": true,
                 "appName": "Trinity Download Manager",
                 "bridgePort": EXTENSION_BRIDGE_PORT,
-                "endpoints": ["/app/ping", "/app/browser-settings", "/downloads/create", "/app/open-options", "/debug/log", "/app/debug-log-path"],
+                "endpoints": ["/app/ping", "/app/browser-settings", "/downloads/create", "/app/open-options"],
                 "downloadHandoffVersion": 2
             }),
         ),
-        ("GET", "/app/debug-log-path") => {
-            let path = extension_debug_log_path(app)?;
-            write_json_response(
-                &mut stream,
-                "200 OK",
-                &serde_json::json!({
-                    "path": path.to_string_lossy(),
-                }),
-            )
-        }
         ("GET", "/app/browser-settings") => {
             let settings = {
                 let state = app.state::<AppState>();
@@ -1706,18 +1667,6 @@ fn handle_extension_bridge_connection(app: &AppHandle, mut stream: TcpStream) ->
                 "202 Accepted",
                 &serde_json::json!({
                     "accepted": true
-                }),
-            )
-        }
-        ("POST", "/debug/log") => {
-            let value: serde_json::Value =
-                serde_json::from_slice(&body).map_err(|error| format!("Invalid debug log payload: {error}"))?;
-            append_extension_debug_log(app, &value)?;
-            write_json_response(
-                &mut stream,
-                "202 Accepted",
-                &serde_json::json!({
-                    "accepted": true,
                 }),
             )
         }

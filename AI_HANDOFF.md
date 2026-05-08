@@ -1018,6 +1018,21 @@ Exit criteria:
 - **Active tab count pulse** — when `activeCount` increases, the number in "Active (N)" bumps blue with a scale pop (`count-bump` keyframe, 450ms). Gated on `jobsInitialized` so startup load doesn't trigger it.
 - **Completion flash** — when a job transitions Running → Completed, `progress-complete` keyframe sweeps the bar from blue → bright white → dark green (700ms). Tracked via `prevJobStatesRef` and `completingJobIds` state.
 
+### 2026-05-07 - Remove live debug infrastructure from the shipping path
+**Commit:** `pending`
+
+- Removed the remaining extension-side debug infrastructure from `browser-extension/chrome/background.js`:
+  - no debug mode storage key
+  - no debug log emission
+  - no debug message handlers
+  - no hidden `/debug/log` posting
+- Removed the local bridge debug endpoints and file-writing support from `src-tauri/src/lib.rs`:
+  - `/debug/log`
+  - `/app/debug-log-path`
+  - `browser-capture-debug.log` append helpers
+- `app/ping` now reports only the active production endpoints.
+- Existing debug log files on disk may still exist from earlier runs, but the app and extension no longer write to them.
+
 ## Next Step
 
 Keep shrinking the remaining legacy resolver/re-discovery logic so browser-observed request and response data are the primary source of truth throughout the extension and app.

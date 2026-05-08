@@ -968,10 +968,26 @@ Exit criteria:
   - resumability now uses live `Accept-Ranges` first, then falls back to the browser-observed range support flag
 - This keeps the live server response as validation while avoiding unnecessary rediscovery when the browser transaction already proved the metadata.
 
+### 2026-05-07 - Add a standalone download behavior test harness at repo root
+**Commit:** `pending`
+
+- Added a new root folder: `download-test-harness/`
+- This harness is intentionally separate from Trinity production code. It exists to test delivery behaviors generically, not to teach Trinity hardcoded assumptions about one synthetic website.
+- The harness uses a tiny standalone Node server and generates files on demand instead of committing large binary fixtures.
+- Covered scenarios:
+  - direct static file
+  - redirected file
+  - browser-managed gated file using a session cookie
+  - JS-triggered download using a programmatic anchor click
+  - resumable large file with proper `Range` / `206 Partial Content` support
+- Important design constraint:
+  - production capture and download logic should continue to be driven by generic browser-observed behavior and real protocol semantics, not by special casing this harness's URLs or HTML structure
+
 ## Next Step
 
-Test the deferred resolver against a few download styles and tighten the generic file-proof rules if needed:
-- direct CDN file
-- redirected page-to-file download
+Use the new local harness to run a stable behavior matrix and validate the browser-observed-first takeover path end to end:
+- direct static file
+- redirected file
 - gated/session-bound download
 - JS-triggered browser download
+- resumable large file

@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Trinity Download Test Harness</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Local harness</p>
+          <h1>Download behavior matrix</h1>
+          <p class="lede">
+            This harness is for testing delivery patterns. It generates files on demand and does not model
+            any one real website.
+          </p>
+        </div>
+        <div class="status-panel">
+          <div class="status-row">
+            <span>Server</span>
+            <strong id="health-status">Checking...</strong>
+          </div>
+          <div class="status-row">
+            <span>Session cookie</span>
+            <strong id="session-status">Unknown</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="grid">
+        <article class="scenario">
+          <header>
+            <h2>Direct static file</h2>
+            <p>Plain anchor to a generated binary file.</p>
+          </header>
+          <div class="meta">GET /download/direct</div>
+          <a class="button" href="/download/direct?sizeMb=5&name=direct-static-5mb.bin">Download 5 MB</a>
+        </article>
+
+        <article class="scenario">
+          <header>
+            <h2>Redirected file</h2>
+            <p>Initial request returns a 302 redirect to the real file URL.</p>
+          </header>
+          <div class="meta">GET /download/redirect -> /download/direct</div>
+          <a class="button" href="/download/redirect?sizeMb=8&name=redirected-8mb.bin">Download 8 MB</a>
+        </article>
+
+        <article class="scenario">
+          <header>
+            <h2>Browser-managed gated file</h2>
+            <p>Starts a session cookie, then downloads a file endpoint that requires that cookie.</p>
+          </header>
+          <div class="meta">GET /api/session/start + GET /download/gated</div>
+          <button class="button" id="gated-download">Start cookie flow + download 12 MB</button>
+        </article>
+
+        <article class="scenario">
+          <header>
+            <h2>JS-triggered download</h2>
+            <p>Programmatic anchor click after asynchronous JavaScript work.</p>
+          </header>
+          <div class="meta">fetch metadata + click hidden anchor</div>
+          <button class="button" id="js-download">Trigger JS download 6 MB</button>
+        </article>
+
+        <article class="scenario scenario-wide">
+          <header>
+            <h2>Resumable large file</h2>
+            <p>Large generated binary with range support and stable attachment headers.</p>
+          </header>
+          <div class="meta">GET /download/resumable-large with Accept-Ranges</div>
+          <a class="button" href="/download/resumable-large">Download 256 MB</a>
+        </article>
+      </section>
+
+      <section class="notes">
+        <h2>Notes</h2>
+        <ul>
+          <li>Files are generated on demand. No large binary fixtures are stored in the repository.</li>
+          <li>Payload bytes are deterministic, so range requests are stable across retries.</li>
+          <li>The point is delivery behavior coverage, not modeling a specific production site.</li>
+        </ul>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

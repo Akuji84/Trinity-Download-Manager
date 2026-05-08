@@ -993,6 +993,31 @@ Exit criteria:
 - The local download test harness remains in the repo root for manual use, but it is no longer advertised through the main `package.json` scripts or the top-level `README.md`.
 - This keeps the architecture aligned with the browser-observed-first model and reduces the chance that older pre-capture logic overrides the working takeover path.
 
+### 2026-05-07 - Remove dead resolver-first machinery from the extension worker
+**Commit:** `pending`
+
+- Deleted the unused resolver/probe code from `browser-extension/chrome/background.js`:
+  - direct-capture probe constants
+  - recursive resolver flow
+  - response/body discovery helpers
+  - pre-capture dedupe state tied to the old page-interception model
+- Kept the request metadata cache and browser transaction correlation paths because they still support normal browser-observed handoff and context replay.
+- The background worker is now materially simpler:
+  - browser-managed `downloads.onCreated` takeover
+  - request/response transaction correlation
+  - session/request-context enrichment
+  - bridge handoff
+- This makes the actual extension architecture match the current product behavior instead of carrying a second abandoned capture model.
+
+### 2026-05-07 — Add UI micro-animations across the app
+**Commit:** `b687c46`
+
+- **Hover transitions** — all interactive elements that previously snapped now fade smoothly: `.tool-button`, `.icon-button`, `.tab`, `.tree-item`, `.download-row`, `.row-actions button`, `.preferences-nav-item` (active indicator slides via `border-left-color 150ms ease`)
+- **Progress bar width** — `transition: width 300ms linear` on `.progress-track span` so the fill grows smoothly between progress events
+- **Skeleton loader** — 4 shimmer placeholder rows shown in the download list on startup until first `refreshJobs()` completes (`jobsInitialized` state)
+- **Active tab count pulse** — when `activeCount` increases, the number in "Active (N)" bumps blue with a scale pop (`count-bump` keyframe, 450ms). Gated on `jobsInitialized` so startup load doesn't trigger it.
+- **Completion flash** — when a job transitions Running → Completed, `progress-complete` keyframe sweeps the bar from blue → bright white → dark green (700ms). Tracked via `prevJobStatesRef` and `completingJobIds` state.
+
 ## Next Step
 
 Keep shrinking the remaining legacy resolver/re-discovery logic so browser-observed request and response data are the primary source of truth throughout the extension and app.

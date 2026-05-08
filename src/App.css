@@ -62,6 +62,7 @@ button {
   cursor: pointer;
   font-size: 12px;
   white-space: nowrap;
+  transition: background 120ms ease;
 }
 
 .tool-button span {
@@ -140,6 +141,7 @@ button {
   background: #2c3034;
   cursor: pointer;
   font-size: 12px;
+  transition: background 120ms ease, color 120ms ease;
 }
 
 .tab.active {
@@ -181,6 +183,7 @@ button {
   text-align: left;
   cursor: pointer;
   font-size: 12px;
+  transition: background 120ms ease;
 }
 
 .tree-item::before {
@@ -294,6 +297,7 @@ button {
   border-bottom: 1px solid #3c3f42;
   color: #f3f6f9;
   background: #2e2f31;
+  transition: background 120ms ease;
 }
 
 .download-row:nth-child(even) {
@@ -481,6 +485,7 @@ button {
   background: #3a3d40;
   cursor: pointer;
   font-size: 12px;
+  transition: border-color 120ms ease, background 120ms ease;
 }
 
 .row-actions button:hover {
@@ -510,6 +515,7 @@ button {
   display: block;
   height: 100%;
   background: #25a8ee;
+  transition: width 300ms linear;
 }
 
 .empty-state {
@@ -675,6 +681,7 @@ button {
   cursor: pointer;
   text-align: left;
   font-size: 13px;
+  transition: background 120ms ease, border-left-color 150ms ease, color 120ms ease;
 }
 
 .preferences-nav-item:hover {
@@ -1305,6 +1312,48 @@ button {
 
 .form-error {
   animation: form-error-in 180ms ease forwards;
+}
+
+@keyframes skeleton-shine {
+  from { background-position: -200% center; }
+  to { background-position: 200% center; }
+}
+
+.skeleton-row {
+  height: 38px;
+  background: linear-gradient(90deg, #2a2b2d 25%, #38393c 50%, #2a2b2d 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shine 1.4s ease-in-out infinite;
+  pointer-events: none;
+  border-bottom: 1px solid #3c3f42;
+}
+
+.skeleton-row:nth-child(even) {
+  background: linear-gradient(90deg, #262729 25%, #333436 50%, #262729 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shine 1.4s ease-in-out infinite;
+}
+
+@keyframes count-bump {
+  0% { color: #7dd3fc; transform: scale(1.25); }
+  100% { color: inherit; transform: scale(1); }
+}
+
+.tab-count {
+  display: inline-block;
+  animation: count-bump 450ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes progress-complete {
+  0%   { background: #25a8ee; }
+  25%  { background: #b8e9ff; }
+  100% { background: #1c6e30; }
+}
+
+.progress-track.completing span {
+  width: 100% !important;
+  transition: none;
+  animation: progress-complete 700ms ease forwards;
 }
 
 @media (max-width: 900px) {

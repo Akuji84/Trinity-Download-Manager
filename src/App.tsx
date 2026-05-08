@@ -376,6 +376,11 @@ function preferenceSectionLabel(sectionId: PreferencesSectionId) {
 
 function App() {
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
+  const [jobsInitialized, setJobsInitialized] = useState(false);
+  const [completingJobIds, setCompletingJobIds] = useState<Set<string>>(new Set());
+  const [activeCountPulsing, setActiveCountPulsing] = useState(false);
+  const prevJobStatesRef = useRef<Map<string, string>>(new Map());
+  const prevActiveCountRef = useRef(0);
   const [systemIcons, setSystemIcons] = useState<Record<string, string>>({});
   const [url, setUrl] = useState("");
   const [outputFolder, setOutputFolder] = useState("");
@@ -631,6 +636,53 @@ function App() {
     return () => window.clearInterval(intervalId);
   }, [jobs]);
 
+  // Detect Running → Completed transitions to trigger the progress bar flash
+  useEffect(() => {
+    if (!jobsInitialized) {
+      prevJobStatesRef.current = new Map(jobs.map((j) => [j.id, j.state]));
+      return;
+    }
+    const prevStates = prevJobStatesRef.current;
+    const newCompleting: string[] = [];
+    for (const job of jobs) {
+      if (prevStates.get(job.id) === "Running" && job.state === "Completed") {
+        newCompleting.push(job.id);
+      }
+    }
+    prevJobStatesRef.current = new Map(jobs.map((j) => [j.id, j.state]));
+    if (newCompleting.length === 0) return;
+    setCompletingJobIds((prev) => {
+      const next = new Set(prev);
+      newCompleting.forEach((id) => next.add(id));
+      return next;
+    });
+    const timer = setTimeout(() => {
+      setCompletingJobIds((prev) => {
+        const next = new Set(prev);
+        newCompleting.forEach((id) => next.delete(id));
+        return next;
+      });
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [jobs, jobsInitialized]);
+
+  // Pulse the Active tab count when a new download starts.
+  // Derived inline from jobs to avoid referencing activeCount before its declaration.
+  useEffect(() => {
+    const count = jobs.filter((j) => j.state === "Running").length;
+    if (!jobsInitialized) {
+      prevActiveCountRef.current = count;
+      return;
+    }
+    if (count > prevActiveCountRef.current) {
+      setActiveCountPulsing(true);
+      const timer = setTimeout(() => setActiveCountPulsing(false), 500);
+      prevActiveCountRef.current = count;
+      return () => clearTimeout(timer);
+    }
+    prevActiveCountRef.current = count;
+  }, [jobs, jobsInitialized]);
+
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     listen<DownloadProgressEvent>("download-progress", (event) => {
@@ -748,6 +800,7 @@ function App() {
   async function refreshJobs() {
     const savedJobs = await invoke<DownloadJob[]>("list_download_jobs");
     setJobs(savedJobs);
+    setJobsInitialized(true);
     setSelectedJobIds((currentIds) =>
       currentIds.filter((id) => savedJobs.some((job) => job.id === id)),
     );
@@ -2738,10 +2791,10 @@ function App() {
               All ({jobs.length})
             </button>
             <button
-              className={`tab ${activeTab === "active" ? "active" : ""}`}
+              className={`tab ${activeTab === "active" ? "active" : ""}${activeCountPulsing ? " tab-count-pulsing" : ""}`}
               onClick={() => setActiveTab("active")}
             >
-              Active ({activeCount})
+              Active (<span key={activeCountPulsing ? "p" : "n"} className={activeCountPulsing ? "tab-count" : undefined}>{activeCount}</span>)
             </button>
             <button
               className={`tab ${activeTab === "queued" ? "active" : ""}`}
@@ -2886,7 +2939,13 @@ function App() {
                 <span>Actions</span>
               </div>
               <div className="download-list" key={activeTab}>
-                {visibleJobs.length === 0 ? (
+                {!jobsInitialized ? (
+                  <>
+                    {[0, 1, 2, 3].map((i) => (
+                      <div key={i} className="skeleton-row" />
+                    ))}
+                  </>
+                ) : visibleJobs.length === 0 ? (
                   <div className="empty-state">
                     <h3>No matching downloads</h3>
                     <p>Adjust the active filters or create a new download job.</p>
@@ -3038,7 +3097,7 @@ function App() {
                             </button>
                           </div>
                         </div>
-                        <div className={`progress-track${job.state === "Running" ? " active" : ""}`}>
+                        <div className={`progress-track${job.state === "Running" ? " active" : ""}${completingJobIds.has(job.id) ? " completing" : ""}`}>
                           <span style={{ width: `${progressPercent(job)}%` }} />
                         </div>
                       </article>

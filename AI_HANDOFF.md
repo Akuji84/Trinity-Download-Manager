@@ -36,6 +36,26 @@
   - `ask` blocks creation with an explicit conflict error
 - The runtime download path was updated to stop auto-renaming on start so it does not override the chosen file-exists policy.
 
+## 2026-05-08 - Second batch of General preferences
+
+- The following General settings are now persisted and actively enforced:
+  - `remove_deleted_files`
+  - `remove_completed_files`
+  - `show_tray_activity`
+  - `use_custom_sort_order`
+- Completed-file cleanup is now conditional:
+  - when `remove_deleted_files` is enabled, Trinity removes completed jobs whose on-disk file has been deleted
+  - when disabled, Trinity leaves completed jobs in the list even if the file disappears
+- Completed download auto-removal is now wired in the frontend:
+  - when `remove_completed_files` is enabled, jobs remove themselves from the list after the completion flash animation finishes
+- Manual queue ordering is now a real opt-in:
+  - drag-and-drop reordering and queue up/down actions are disabled unless `use_custom_sort_order` is enabled
+- Tray activity is now driven by the saved setting:
+  - when enabled, the tray tooltip reflects active and queued counts
+  - when disabled, the tooltip stays at the neutral app name
+- `bottom_panel_follows_selection` is still only persisted at this point.
+  The preferences page exposes it, but there is no actual bottom details panel in the current UI for that setting to control yet.
+
 ## Product Goal
 
 Build Trinity Download Manager into a professional desktop download manager comparable to tools like Free Download Manager, with a long-term goal of being reliable enough for thousands of users.

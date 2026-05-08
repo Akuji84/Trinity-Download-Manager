@@ -276,6 +276,41 @@ impl Storage {
         self.connection.execute(
             "
             INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('remove_deleted_files', '1');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('remove_completed_files', '0');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('bottom_panel_follows_selection', '1');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('show_tray_activity', '1');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('use_custom_sort_order', '0');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
             VALUES ('browser_intercept_downloads', '1');
             ",
             [],
@@ -1100,6 +1135,31 @@ impl Storage {
                 _ => "rename".to_string(),
             })
             .unwrap_or(defaults.file_exists_action);
+        let remove_deleted_files = self
+            .get_setting("remove_deleted_files")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.remove_deleted_files);
+        let remove_completed_files = self
+            .get_setting("remove_completed_files")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.remove_completed_files);
+        let bottom_panel_follows_selection = self
+            .get_setting("bottom_panel_follows_selection")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.bottom_panel_follows_selection);
+        let show_tray_activity = self
+            .get_setting("show_tray_activity")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.show_tray_activity);
+        let use_custom_sort_order = self
+            .get_setting("use_custom_sort_order")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.use_custom_sort_order);
         let browser_intercept_downloads = self
             .get_setting("browser_intercept_downloads")?
             .and_then(|value| value.parse::<u8>().ok())
@@ -1155,6 +1215,11 @@ impl Storage {
             show_save_as_button,
             delete_button_action,
             file_exists_action,
+            remove_deleted_files,
+            remove_completed_files,
+            bottom_panel_follows_selection,
+            show_tray_activity,
+            use_custom_sort_order,
             browser_intercept_downloads,
             browser_start_without_confirmation,
             browser_skip_domains,
@@ -1216,6 +1281,30 @@ impl Storage {
         )?;
         self.upsert_setting("delete_button_action", &settings.delete_button_action)?;
         self.upsert_setting("file_exists_action", &settings.file_exists_action)?;
+        self.upsert_setting(
+            "remove_deleted_files",
+            if settings.remove_deleted_files { "1" } else { "0" },
+        )?;
+        self.upsert_setting(
+            "remove_completed_files",
+            if settings.remove_completed_files { "1" } else { "0" },
+        )?;
+        self.upsert_setting(
+            "bottom_panel_follows_selection",
+            if settings.bottom_panel_follows_selection {
+                "1"
+            } else {
+                "0"
+            },
+        )?;
+        self.upsert_setting(
+            "show_tray_activity",
+            if settings.show_tray_activity { "1" } else { "0" },
+        )?;
+        self.upsert_setting(
+            "use_custom_sort_order",
+            if settings.use_custom_sort_order { "1" } else { "0" },
+        )?;
         self.upsert_setting(
             "browser_intercept_downloads",
             if settings.browser_intercept_downloads { "1" } else { "0" },

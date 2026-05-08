@@ -64,6 +64,7 @@ struct AppState {
     watched_directories: Mutex<Vec<PathBuf>>,
     queue_running: AtomicBool,
     close_to_tray: AtomicBool,
+    show_tray_activity: AtomicBool,
 }
 
 const EXTENSION_BRIDGE_HOST: &str = "127.0.0.1";
@@ -80,6 +81,33 @@ fn focus_main_window(app: &AppHandle) {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+    }
+}
+
+fn tray_tooltip_for_jobs(jobs: &[DownloadJob], show_activity: bool) -> String {
+    if !show_activity {
+        return "Trinity Download Manager".to_string();
+    }
+
+    let active_count = jobs
+        .iter()
+        .filter(|job| matches!(job.state, DownloadState::Running))
+        .count();
+    let queued_count = jobs
+        .iter()
+        .filter(|job| matches!(job.state, DownloadState::Queued))
+        .count();
+
+    if active_count == 0 && queued_count == 0 {
+        return "Trinity Download Manager".to_string();
+    }
+
+    format!("Trinity Download Manager - Active: {active_count}, Queued: {queued_count}")
+}
+
+fn update_tray_tooltip(app: &AppHandle, jobs: &[DownloadJob], show_activity: bool) {
+    if let Some(tray) = app.tray_by_id("main-tray") {
+        let _ = tray.set_tooltip(Some(tray_tooltip_for_jobs(jobs, show_activity)));
     }
 }
 
@@ -376,6 +404,11 @@ fn update_app_settings(
         show_save_as_button: request.show_save_as_button,
         delete_button_action: normalize_delete_button_action(&request.delete_button_action),
         file_exists_action: normalize_file_exists_action(&request.file_exists_action),
+        remove_deleted_files: request.remove_deleted_files,
+        remove_completed_files: request.remove_completed_files,
+        bottom_panel_follows_selection: request.bottom_panel_follows_selection,
+        show_tray_activity: request.show_tray_activity,
+        use_custom_sort_order: request.use_custom_sort_order,
         browser_intercept_downloads: request.browser_intercept_downloads,
         browser_start_without_confirmation: request.browser_start_without_confirmation,
         browser_skip_domains: request.browser_skip_domains.trim().to_string(),
@@ -386,6 +419,9 @@ fn update_app_settings(
         browser_ignore_insert_key: request.browser_ignore_insert_key,
     };
     state.close_to_tray.store(request.close_to_tray, Ordering::Relaxed);
+    state
+        .show_tray_activity
+        .store(request.show_tray_activity, Ordering::Relaxed);
 
     let storage = state
         .storage
@@ -397,7 +433,12 @@ fn update_app_settings(
     drop(storage);
 
     sync_launch_at_startup_setting(settings.launch_at_startup)?;
-    pump_queue(app)?;
+    pump_queue(app.clone())?;
+    if let Ok(storage) = state.storage.lock() {
+        if let Ok(jobs) = load_jobs_with_cleanup(&storage) {
+            update_tray_tooltip(&app, &jobs, settings.show_tray_activity);
+        }
+    }
 
     Ok(settings)
 }
@@ -728,13 +769,15 @@ fn update_download_speed_limit(
 }
 
 #[tauri::command]
-fn list_download_jobs(state: State<'_, AppState>) -> Result<Vec<DownloadJob>, String> {
+fn list_download_jobs(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<DownloadJob>, String> {
     let storage = state
         .storage
         .lock()
         .map_err(|_| "Storage lock is unavailable.".to_string())?;
     let jobs = load_jobs_with_cleanup(&storage).map_err(|error| error.to_string())?;
+    drop(storage);
     sync_completed_file_watchers(&state, &jobs)?;
+    update_tray_tooltip(&app, &jobs, state.show_tray_activity.load(Ordering::Relaxed));
     Ok(jobs)
 }
 
@@ -1573,6 +1616,11 @@ fn open_storage(app: &AppHandle) -> Result<Storage, String> {
 
 fn load_jobs_with_cleanup(storage: &Storage) -> rusqlite::Result<Vec<DownloadJob>> {
     let mut jobs = storage.list_download_jobs()?;
+    let settings = storage.get_app_settings()?;
+    if !settings.remove_deleted_files {
+        return Ok(jobs);
+    }
+
     let missing_completed_job_ids = jobs
         .iter()
         .filter(|job| {
@@ -1596,20 +1644,34 @@ fn load_jobs_with_cleanup(storage: &Storage) -> rusqlite::Result<Vec<DownloadJob
 }
 
 fn sync_completed_file_watchers(state: &AppState, jobs: &[DownloadJob]) -> Result<(), String> {
-    let mut next_directories = jobs
-        .iter()
-        .filter(|job| matches!(job.state, DownloadState::Completed))
-        .filter_map(|job| {
-            let output_path = job.output_path.trim();
-            if output_path.is_empty() {
-                return None;
-            }
+    let remove_deleted_files = {
+        let storage = state
+            .storage
+            .lock()
+            .map_err(|_| "Storage lock is unavailable.".to_string())?;
+        storage
+            .get_app_settings()
+            .map(|settings| settings.remove_deleted_files)
+            .map_err(|error| error.to_string())?
+    };
+    let mut next_directories = if remove_deleted_files {
+        jobs
+            .iter()
+            .filter(|job| matches!(job.state, DownloadState::Completed))
+            .filter_map(|job| {
+                let output_path = job.output_path.trim();
+                if output_path.is_empty() {
+                    return None;
+                }
 
-            PathBuf::from(output_path)
-                .parent()
-                .map(|parent| parent.to_path_buf())
-        })
-        .collect::<Vec<_>>();
+                PathBuf::from(output_path)
+                    .parent()
+                    .map(|parent| parent.to_path_buf())
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
     next_directories.sort();
     next_directories.dedup();
 
@@ -1675,6 +1737,16 @@ fn handle_file_watch_event(app: &AppHandle, kind: &EventKind) -> Result<(), Stri
     if jobs_after < jobs_before {
         app.emit("downloads-changed", ())
             .map_err(|error| error.to_string())?;
+    }
+
+    if let Ok(storage) = open_storage(app) {
+        if let Ok(jobs) = storage.list_download_jobs() {
+            let show_tray_activity = storage
+                .get_app_settings()
+                .map(|settings| settings.show_tray_activity)
+                .unwrap_or(true);
+            update_tray_tooltip(app, &jobs, show_tray_activity);
+        }
     }
 
     Ok(())
@@ -1951,6 +2023,7 @@ pub fn run() {
                 watched_directories: Mutex::new(Vec::new()),
                 queue_running: AtomicBool::new(true),
                 close_to_tray: AtomicBool::new(initial_settings.close_to_tray),
+                show_tray_activity: AtomicBool::new(initial_settings.show_tray_activity),
             });
             let state = app.state::<AppState>();
             let jobs = {
@@ -1991,9 +2064,9 @@ pub fn run() {
             let separator = tauri::menu::PredefinedMenuItem::separator(app)?;
             let close_item = tauri::menu::MenuItem::with_id(app, "close", "Close Trinity", true, None::<&str>)?;
             let tray_menu = tauri::menu::Menu::with_items(app, &[&open_item, &separator, &close_item])?;
-            let mut tray_builder = tauri::tray::TrayIconBuilder::new()
+            let mut tray_builder = tauri::tray::TrayIconBuilder::with_id("main-tray")
                 .menu(&tray_menu)
-                .tooltip("Trinity Download Manager")
+                .tooltip(tray_tooltip_for_jobs(&jobs, initial_settings.show_tray_activity))
                 .on_tray_icon_event(|tray, event| {
                     match event {
                         tauri::tray::TrayIconEvent::Click { button, button_state, .. }

@@ -77,6 +77,11 @@ type AppSettings = {
   show_save_as_button: boolean;
   delete_button_action: "remove" | "delete" | "ask";
   file_exists_action: "rename" | "overwrite" | "ask";
+  remove_deleted_files: boolean;
+  remove_completed_files: boolean;
+  bottom_panel_follows_selection: boolean;
+  show_tray_activity: boolean;
+  use_custom_sort_order: boolean;
   browser_intercept_downloads: boolean;
   browser_start_without_confirmation: boolean;
   browser_skip_domains: string;
@@ -388,6 +393,7 @@ function App() {
   const [activeCountPulsing, setActiveCountPulsing] = useState(false);
   const prevJobStatesRef = useRef<Map<string, string>>(new Map());
   const prevActiveCountRef = useRef(0);
+  const autoRemovingCompletedIdsRef = useRef<Set<string>>(new Set());
   const [systemIcons, setSystemIcons] = useState<Record<string, string>>({});
   const [url, setUrl] = useState("");
   const [outputFolder, setOutputFolder] = useState("");
@@ -434,6 +440,11 @@ function App() {
     show_save_as_button: true,
     delete_button_action: "ask",
     file_exists_action: "rename",
+    remove_deleted_files: true,
+    remove_completed_files: false,
+    bottom_panel_follows_selection: true,
+    show_tray_activity: true,
+    use_custom_sort_order: false,
     browser_intercept_downloads: true,
     browser_start_without_confirmation: false,
     browser_skip_domains: "accounts.google.com, drive.google.com",
@@ -508,6 +519,11 @@ function App() {
           showSaveAsButton: loadedSettings.show_save_as_button,
           deleteButtonAction: loadedSettings.delete_button_action,
           fileExistsAction: loadedSettings.file_exists_action,
+          removeDeletedFiles: loadedSettings.remove_deleted_files,
+          removeCompletedFiles: loadedSettings.remove_completed_files,
+          bottomPanelFollowsSelection: loadedSettings.bottom_panel_follows_selection,
+          showTrayActivity: loadedSettings.show_tray_activity,
+          useCustomSortOrder: loadedSettings.use_custom_sort_order,
           browserInterceptDownloads: loadedSettings.browser_intercept_downloads,
           browserStartWithoutConfirmation: loadedSettings.browser_start_without_confirmation,
           browserSkipDomains: loadedSettings.browser_skip_domains,
@@ -697,15 +713,42 @@ function App() {
       newCompleting.forEach((id) => next.add(id));
       return next;
     });
-    const timer = setTimeout(() => {
+    const animationTimer = setTimeout(() => {
       setCompletingJobIds((prev) => {
         const next = new Set(prev);
         newCompleting.forEach((id) => next.delete(id));
         return next;
       });
     }, 800);
-    return () => clearTimeout(timer);
-  }, [jobs, jobsInitialized]);
+    const autoRemoveIds = settings.remove_completed_files
+      ? newCompleting.filter((id) => {
+          if (autoRemovingCompletedIdsRef.current.has(id)) {
+            return false;
+          }
+          autoRemovingCompletedIdsRef.current.add(id);
+          return true;
+        })
+      : [];
+    const removeTimer =
+      autoRemoveIds.length > 0
+        ? setTimeout(() => {
+            autoRemoveIds.forEach((id) => {
+              removeJobFromList(id)
+                .catch(console.error)
+                .finally(() => {
+                  autoRemovingCompletedIdsRef.current.delete(id);
+                });
+            });
+          }, 820)
+        : null;
+    return () => {
+      clearTimeout(animationTimer);
+      if (removeTimer) {
+        clearTimeout(removeTimer);
+        autoRemoveIds.forEach((id) => autoRemovingCompletedIdsRef.current.delete(id));
+      }
+    };
+  }, [jobs, jobsInitialized, settings.remove_completed_files]);
 
   // Pulse the Active tab count when a new download starts.
   // Derived inline from jobs to avoid referencing activeCount before its declaration.
@@ -953,6 +996,11 @@ function App() {
           show_save_as_button: currentSettings.show_save_as_button,
           delete_button_action: currentSettings.delete_button_action,
           file_exists_action: currentSettings.file_exists_action,
+          remove_deleted_files: currentSettings.remove_deleted_files,
+          remove_completed_files: currentSettings.remove_completed_files,
+          bottom_panel_follows_selection: currentSettings.bottom_panel_follows_selection,
+          show_tray_activity: currentSettings.show_tray_activity,
+          use_custom_sort_order: currentSettings.use_custom_sort_order,
           browser_intercept_downloads: currentSettings.browser_intercept_downloads,
           browser_start_without_confirmation:
             currentSettings.browser_start_without_confirmation,
@@ -1070,7 +1118,7 @@ function App() {
   }
 
   async function moveSelectedJobUp() {
-    if (selectedJobs.length !== 1) {
+    if (!settings.use_custom_sort_order || selectedJobs.length !== 1) {
       return;
     }
 
@@ -1079,7 +1127,7 @@ function App() {
   }
 
   async function moveSelectedJobDown() {
-    if (selectedJobs.length !== 1) {
+    if (!settings.use_custom_sort_order || selectedJobs.length !== 1) {
       return;
     }
 
@@ -1100,7 +1148,7 @@ function App() {
   }
 
   async function reorderQueueJob(draggedId: string, targetId: string) {
-    if (draggedId === targetId) {
+    if (!settings.use_custom_sort_order || draggedId === targetId) {
       return;
     }
 
@@ -1133,6 +1181,11 @@ function App() {
         show_save_as_button: preferencesDraft.showSaveAsButton,
         delete_button_action: preferencesDraft.deleteButtonAction,
         file_exists_action: preferencesDraft.fileExistsAction,
+        remove_deleted_files: preferencesDraft.removeDeletedFiles,
+        remove_completed_files: preferencesDraft.removeCompletedFiles,
+        bottom_panel_follows_selection: preferencesDraft.bottomPanelFollowsSelection,
+        show_tray_activity: preferencesDraft.showTrayActivity,
+        use_custom_sort_order: preferencesDraft.useCustomSortOrder,
         browser_intercept_downloads: preferencesDraft.browserInterceptDownloads,
         browser_start_without_confirmation:
           preferencesDraft.browserStartWithoutConfirmation,
@@ -1166,6 +1219,11 @@ function App() {
       showSaveAsButton: updatedSettings.show_save_as_button,
       deleteButtonAction: updatedSettings.delete_button_action,
       fileExistsAction: updatedSettings.file_exists_action,
+      removeDeletedFiles: updatedSettings.remove_deleted_files,
+      removeCompletedFiles: updatedSettings.remove_completed_files,
+      bottomPanelFollowsSelection: updatedSettings.bottom_panel_follows_selection,
+      showTrayActivity: updatedSettings.show_tray_activity,
+      useCustomSortOrder: updatedSettings.use_custom_sort_order,
       browserInterceptDownloads: updatedSettings.browser_intercept_downloads,
       browserStartWithoutConfirmation: updatedSettings.browser_start_without_confirmation,
       browserSkipDomains: updatedSettings.browser_skip_domains,
@@ -1201,6 +1259,11 @@ function App() {
       showSaveAsButton: settings.show_save_as_button,
       deleteButtonAction: settings.delete_button_action,
       fileExistsAction: settings.file_exists_action,
+      removeDeletedFiles: settings.remove_deleted_files,
+      removeCompletedFiles: settings.remove_completed_files,
+      bottomPanelFollowsSelection: settings.bottom_panel_follows_selection,
+      showTrayActivity: settings.show_tray_activity,
+      useCustomSortOrder: settings.use_custom_sort_order,
       browserInterceptDownloads: settings.browser_intercept_downloads,
       browserStartWithoutConfirmation: settings.browser_start_without_confirmation,
       browserSkipDomains: settings.browser_skip_domains,
@@ -1323,7 +1386,7 @@ function App() {
   }
 
   function handleRowDragStart(job: DownloadJob) {
-    if (!isQueueManageable(job)) {
+    if (!settings.use_custom_sort_order || !isQueueManageable(job)) {
       return;
     }
 
@@ -1332,7 +1395,7 @@ function App() {
   }
 
   function handleRowDrop(job: DownloadJob) {
-    if (!draggedJobId || draggedJobId === job.id) {
+    if (!settings.use_custom_sort_order || !draggedJobId || draggedJobId === job.id) {
       setDraggedJobId(null);
       setDropTargetJobId(null);
       return;
@@ -1373,7 +1436,10 @@ function App() {
   const canStopSelected = selectedJobs.some((job) => job.state === "Running");
   const canStopAll = jobs.some((job) => job.state === "Running");
   const canDeleteSelected = selectedJobs.some((job) => job.state !== "Running");
-  const canMoveSelected = selectedJobs.length === 1 && isQueueManageable(selectedJobs[0]);
+  const canMoveSelected =
+    settings.use_custom_sort_order &&
+    selectedJobs.length === 1 &&
+    isQueueManageable(selectedJobs[0]);
   const canChangePrioritySelected = selectedJobs.some(isQueueManageable);
   const scheduleNow = new Date(scheduleClock);
 
@@ -3116,7 +3182,8 @@ function App() {
                     const nextScheduledStart = waitingForSchedule
                       ? formatNextScheduledStart(job, scheduleNow)
                       : "";
-                    const queuePolicySummary = isQueueManageable(job)
+                    const queuePolicySummary =
+                      settings.use_custom_sort_order && isQueueManageable(job)
                       ? `Queue: ${formatPriorityLabel(job.priority)} / #${job.queue_position}`
                       : "";
 
@@ -3125,7 +3192,7 @@ function App() {
                         className={`download-row ${deletingJobIds.has(job.id) ? "deleting " : ""}${job.id === newestJobId ? "new-job " : ""}${isSelected ? "selected" : ""} ${
                           dropTargetJobId === job.id ? "drop-target" : ""
                         }`}
-                        draggable={isQueueManageable(job)}
+                        draggable={settings.use_custom_sort_order && isQueueManageable(job)}
                         key={job.id}
                         onClick={() => toggleJobSelection(job.id)}
                         onDragEnd={() => {

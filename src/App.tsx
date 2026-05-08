@@ -69,7 +69,9 @@ type AppSettings = {
   bandwidth_schedule_end: string;
   bandwidth_schedule_limit_kbps: number;
   close_to_tray: boolean;
+  launch_at_startup: boolean;
   start_minimized: boolean;
+  startup_prompt_answered: boolean;
   browser_intercept_downloads: boolean;
   browser_start_without_confirmation: boolean;
   browser_skip_domains: string;
@@ -390,6 +392,10 @@ function App() {
   const [newestJobId, setNewestJobId] = useState<string | null>(null);
   const [deletingJobIds, setDeletingJobIds] = useState<Set<string>>(new Set());
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isStartupPromptOpen, setIsStartupPromptOpen] = useState(false);
+  const [isStartupPromptAnimatingOut, setIsStartupPromptAnimatingOut] = useState(false);
+  const [isStartupPromptSaving, setIsStartupPromptSaving] = useState(false);
+  const [startupPromptError, setStartupPromptError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [isSchedulerEnabled, setIsSchedulerEnabled] = useState(false);
@@ -415,7 +421,9 @@ function App() {
     bandwidth_schedule_end: "06:00",
     bandwidth_schedule_limit_kbps: 512,
     close_to_tray: true,
+    launch_at_startup: false,
     start_minimized: false,
+    startup_prompt_answered: false,
     browser_intercept_downloads: true,
     browser_start_without_confirmation: false,
     browser_skip_domains: "accounts.google.com, drive.google.com",
@@ -472,6 +480,7 @@ function App() {
           bandwidthScheduleEnd: loadedSettings.bandwidth_schedule_end,
           bandwidthScheduleLimitKbps: loadedSettings.bandwidth_schedule_limit_kbps,
           closeToTray: loadedSettings.close_to_tray,
+          launchAtStartup: loadedSettings.launch_at_startup,
           startMinimized: loadedSettings.start_minimized,
           browserInterceptDownloads: loadedSettings.browser_intercept_downloads,
           browserStartWithoutConfirmation: loadedSettings.browser_start_without_confirmation,
@@ -482,6 +491,10 @@ function App() {
           browserUseNativeFallback: loadedSettings.browser_use_native_fallback,
           browserIgnoreInsertKey: loadedSettings.browser_ignore_insert_key,
         }));
+        if (!loadedSettings.startup_prompt_answered) {
+          setStartupPromptError("");
+          setIsStartupPromptOpen(true);
+        }
       })
       .catch(console.error);
     refreshJobs();
@@ -876,6 +889,63 @@ function App() {
     }, 220);
   }
 
+  function closeStartupPrompt() {
+    setIsStartupPromptAnimatingOut(true);
+    setTimeout(() => {
+      setIsStartupPromptOpen(false);
+      setIsStartupPromptAnimatingOut(false);
+      setStartupPromptError("");
+    }, 220);
+  }
+
+  async function resolveStartupPrompt(launchAtStartup: boolean) {
+    setIsStartupPromptSaving(true);
+    setStartupPromptError("");
+
+    try {
+      const currentSettings = settingsRef.current;
+      const updatedSettings = await invoke<AppSettings>("update_app_settings", {
+        request: {
+          max_concurrent_downloads: currentSettings.max_concurrent_downloads,
+          retry_enabled: currentSettings.retry_enabled,
+          retry_attempts: currentSettings.retry_attempts,
+          retry_delay_seconds: currentSettings.retry_delay_seconds,
+          default_connection_count: currentSettings.default_connection_count,
+          default_download_speed_limit_kbps: currentSettings.default_download_speed_limit_kbps,
+          bandwidth_schedule_enabled: currentSettings.bandwidth_schedule_enabled,
+          bandwidth_schedule_start: currentSettings.bandwidth_schedule_start,
+          bandwidth_schedule_end: currentSettings.bandwidth_schedule_end,
+          bandwidth_schedule_limit_kbps: currentSettings.bandwidth_schedule_limit_kbps,
+          close_to_tray: currentSettings.close_to_tray,
+          launch_at_startup: launchAtStartup,
+          start_minimized: currentSettings.start_minimized,
+          startup_prompt_answered: true,
+          browser_intercept_downloads: currentSettings.browser_intercept_downloads,
+          browser_start_without_confirmation:
+            currentSettings.browser_start_without_confirmation,
+          browser_skip_domains: currentSettings.browser_skip_domains,
+          browser_skip_extensions: currentSettings.browser_skip_extensions,
+          browser_capture_extensions: currentSettings.browser_capture_extensions,
+          browser_minimum_size_mb: currentSettings.browser_minimum_size_mb,
+          browser_use_native_fallback: currentSettings.browser_use_native_fallback,
+          browser_ignore_insert_key: currentSettings.browser_ignore_insert_key,
+        },
+      });
+      setSettings(updatedSettings);
+      setPreferencesDraft((currentDraft) => ({
+        ...currentDraft,
+        launchAtStartup: updatedSettings.launch_at_startup,
+        startMinimized: updatedSettings.start_minimized,
+        closeToTray: updatedSettings.close_to_tray,
+      }));
+      closeStartupPrompt();
+    } catch (caughtError) {
+      setStartupPromptError(String(caughtError));
+    } finally {
+      setIsStartupPromptSaving(false);
+    }
+  }
+
   async function deleteJob(id: string) {
     setDeletingJobIds((prev) => new Set([...prev, id]));
     await new Promise((resolve) => setTimeout(resolve, 280));
@@ -988,7 +1058,9 @@ function App() {
         bandwidth_schedule_end: preferencesDraft.bandwidthScheduleEnd,
         bandwidth_schedule_limit_kbps: preferencesDraft.bandwidthScheduleLimitKbps,
         close_to_tray: preferencesDraft.closeToTray,
+        launch_at_startup: preferencesDraft.launchAtStartup,
         start_minimized: preferencesDraft.startMinimized,
+        startup_prompt_answered: settings.startup_prompt_answered,
         browser_intercept_downloads: preferencesDraft.browserInterceptDownloads,
         browser_start_without_confirmation:
           preferencesDraft.browserStartWithoutConfirmation,
@@ -1015,6 +1087,7 @@ function App() {
       bandwidthScheduleEnd: updatedSettings.bandwidth_schedule_end,
       bandwidthScheduleLimitKbps: updatedSettings.bandwidth_schedule_limit_kbps,
       closeToTray: updatedSettings.close_to_tray,
+      launchAtStartup: updatedSettings.launch_at_startup,
       startMinimized: updatedSettings.start_minimized,
       browserInterceptDownloads: updatedSettings.browser_intercept_downloads,
       browserStartWithoutConfirmation: updatedSettings.browser_start_without_confirmation,
@@ -1044,6 +1117,7 @@ function App() {
       bandwidthScheduleEnd: settings.bandwidth_schedule_end,
       bandwidthScheduleLimitKbps: settings.bandwidth_schedule_limit_kbps,
       closeToTray: settings.close_to_tray,
+      launchAtStartup: settings.launch_at_startup,
       startMinimized: settings.start_minimized,
       browserInterceptDownloads: settings.browser_intercept_downloads,
       browserStartWithoutConfirmation: settings.browser_start_without_confirmation,
@@ -3241,6 +3315,50 @@ function App() {
                 </button>
               </div>
             </form>
+          </section>
+        </div>
+      ) : null}
+
+      {isStartupPromptOpen ? (
+        <div
+          className={`modal-backdrop${isStartupPromptAnimatingOut ? " closing" : ""}`}
+          role="presentation"
+        >
+          <section
+            aria-labelledby="startup-prompt-title"
+            className={`modal startup-prompt-modal${isStartupPromptAnimatingOut ? " closing" : ""}`}
+            role="dialog"
+          >
+            <div className="modal-header">
+              <h3 id="startup-prompt-title">Launch Trinity at startup?</h3>
+            </div>
+            <div className="startup-prompt-body">
+              <p>
+                Start Trinity automatically when Windows starts so browser handoff and queued
+                downloads are ready sooner.
+              </p>
+              <p className="startup-prompt-note">
+                You can change this later in <strong>Options &gt; General &gt; Startup</strong>.
+              </p>
+              {startupPromptError ? <p className="form-error">{startupPromptError}</p> : null}
+              <div className="form-actions startup-prompt-actions">
+                <button
+                  disabled={isStartupPromptSaving}
+                  type="button"
+                  onClick={() => resolveStartupPrompt(false)}
+                >
+                  No
+                </button>
+                <button
+                  className="primary-action"
+                  disabled={isStartupPromptSaving}
+                  type="button"
+                  onClick={() => resolveStartupPrompt(true)}
+                >
+                  {isStartupPromptSaving ? "Saving..." : "Yes, enable"}
+                </button>
+              </div>
+            </div>
           </section>
         </div>
       ) : null}

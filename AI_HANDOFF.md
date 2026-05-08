@@ -1,5 +1,19 @@
 # Trinity Download Manager AI Handoff
 
+## 2026-05-07 - Startup opt-in and Windows launch registration
+
+- Trinity now persists two additional app settings:
+  - `launch_at_startup`
+  - `startup_prompt_answered`
+- On Windows, `update_app_settings` now synchronizes Trinity with the current user Run key:
+  - `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+  - value name: `Trinity Download Manager`
+- App startup also re-syncs the Run key from saved settings so installed state and app state stay aligned.
+- The frontend now shows a first-run opt-in prompt that asks whether Trinity should launch at startup.
+- That prompt is animated with the same modal backdrop and enter/exit motion used elsewhere in the app.
+- The General > Startup preference controls are now fully wired to the backend instead of being frontend-only placeholders.
+- The startup prompt is intentionally one-time. After the user answers, future changes happen through Options.
+
 ## Product Goal
 
 Build Trinity Download Manager into a professional desktop download manager comparable to tools like Free Download Manager, with a long-term goal of being reliable enough for thousands of users.

@@ -33,6 +33,8 @@ use url::Url;
 use uuid::Uuid;
 use chrono::Timelike;
 #[cfg(target_os = "windows")]
+use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+#[cfg(target_os = "windows")]
 use windows::{
     core::PCWSTR,
     Win32::{
@@ -68,6 +70,10 @@ const EXTENSION_BRIDGE_HOST: &str = "127.0.0.1";
 const EXTENSION_BRIDGE_PORT: u16 = 38491;
 const EXTENSION_DOWNLOAD_EVENT: &str = "extension-download-request";
 const EXTENSION_OPEN_OPTIONS_EVENT: &str = "extension-open-options";
+#[cfg(target_os = "windows")]
+const WINDOWS_RUN_KEY_PATH: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+#[cfg(target_os = "windows")]
+const WINDOWS_RUN_VALUE_NAME: &str = "Trinity Download Manager";
 
 fn focus_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
@@ -75,6 +81,36 @@ fn focus_main_window(app: &AppHandle) {
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
+}
+
+#[cfg(target_os = "windows")]
+fn sync_launch_at_startup_setting(enabled: bool) -> Result<(), String> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let (run_key, _) = hkcu
+        .create_subkey(WINDOWS_RUN_KEY_PATH)
+        .map_err(|error| format!("Failed to open Windows startup settings: {error}"))?;
+
+    if enabled {
+        let current_exe = std::env::current_exe()
+            .map_err(|error| format!("Failed to resolve Trinity executable path: {error}"))?;
+        let command = format!("\"{}\"", current_exe.display());
+        run_key
+            .set_value(WINDOWS_RUN_VALUE_NAME, &command)
+            .map_err(|error| format!("Failed to enable launch at startup: {error}"))?;
+    } else {
+        match run_key.delete_value(WINDOWS_RUN_VALUE_NAME) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("Failed to disable launch at startup: {error}")),
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn sync_launch_at_startup_setting(_enabled: bool) -> Result<(), String> {
+    Ok(())
 }
 
 fn resolved_extension_url(request: &ExtensionDownloadRequest) -> &str {
@@ -283,7 +319,9 @@ fn update_app_settings(
         bandwidth_schedule_end: normalize_time_setting(&request.bandwidth_schedule_end)?,
         bandwidth_schedule_limit_kbps: request.bandwidth_schedule_limit_kbps.min(1024 * 1024),
         close_to_tray: request.close_to_tray,
+        launch_at_startup: request.launch_at_startup,
         start_minimized: request.start_minimized,
+        startup_prompt_answered: request.startup_prompt_answered,
         browser_intercept_downloads: request.browser_intercept_downloads,
         browser_start_without_confirmation: request.browser_start_without_confirmation,
         browser_skip_domains: request.browser_skip_domains.trim().to_string(),
@@ -304,6 +342,7 @@ fn update_app_settings(
         .map_err(|error| error.to_string())?;
     drop(storage);
 
+    sync_launch_at_startup_setting(settings.launch_at_startup)?;
     pump_queue(app)?;
 
     Ok(settings)
@@ -1845,6 +1884,12 @@ pub fn run() {
                 ))
             })?;
             start_extension_bridge(app.handle().clone()).map_err(|message| {
+                Box::<dyn std::error::Error>::from(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    message,
+                ))
+            })?;
+            sync_launch_at_startup_setting(initial_settings.launch_at_startup).map_err(|message| {
                 Box::<dyn std::error::Error>::from(std::io::Error::new(
                     std::io::ErrorKind::Other,
                     message,

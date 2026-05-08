@@ -1061,6 +1061,12 @@ button {
   background: #252a2d;
 }
 
+.startup-prompt-modal {
+  width: min(480px, calc(100vw - 32px));
+  border-color: #161b20;
+  background: linear-gradient(180deg, #24292d 0%, #202427 100%);
+}
+
 .modal-header {
   display: flex;
   height: 38px;
@@ -1095,6 +1101,32 @@ button {
 .new-download-form {
   gap: 7px;
   padding: 9px 6px 8px 10px;
+}
+
+.startup-prompt-body {
+  display: grid;
+  gap: 14px;
+  padding: 18px 18px 16px;
+  color: #dbe4ec;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.startup-prompt-body p {
+  margin: 0;
+}
+
+.startup-prompt-note {
+  color: #9fb2c2;
+}
+
+.startup-prompt-note strong {
+  color: #eef4fa;
+  font-weight: 600;
+}
+
+.startup-prompt-actions {
+  margin-top: 4px;
 }
 
 .add-form label {

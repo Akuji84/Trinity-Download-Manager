@@ -220,7 +220,21 @@ impl Storage {
         self.connection.execute(
             "
             INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('launch_at_startup', '0');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
             VALUES ('start_minimized', '0');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('startup_prompt_answered', '0');
             ",
             [],
         )?;
@@ -1005,11 +1019,21 @@ impl Storage {
             .and_then(|value| value.parse::<u8>().ok())
             .map(|value| value != 0)
             .unwrap_or(defaults.close_to_tray);
+        let launch_at_startup = self
+            .get_setting("launch_at_startup")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.launch_at_startup);
         let start_minimized = self
             .get_setting("start_minimized")?
             .and_then(|value| value.parse::<u8>().ok())
             .map(|value| value != 0)
             .unwrap_or(defaults.start_minimized);
+        let startup_prompt_answered = self
+            .get_setting("startup_prompt_answered")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.startup_prompt_answered);
         let browser_intercept_downloads = self
             .get_setting("browser_intercept_downloads")?
             .and_then(|value| value.parse::<u8>().ok())
@@ -1057,7 +1081,9 @@ impl Storage {
             bandwidth_schedule_end,
             bandwidth_schedule_limit_kbps,
             close_to_tray,
+            launch_at_startup,
             start_minimized,
+            startup_prompt_answered,
             browser_intercept_downloads,
             browser_start_without_confirmation,
             browser_skip_domains,
@@ -1100,8 +1126,16 @@ impl Storage {
             if settings.close_to_tray { "1" } else { "0" },
         )?;
         self.upsert_setting(
+            "launch_at_startup",
+            if settings.launch_at_startup { "1" } else { "0" },
+        )?;
+        self.upsert_setting(
             "start_minimized",
             if settings.start_minimized { "1" } else { "0" },
+        )?;
+        self.upsert_setting(
+            "startup_prompt_answered",
+            if settings.startup_prompt_answered { "1" } else { "0" },
         )?;
         self.upsert_setting(
             "browser_intercept_downloads",

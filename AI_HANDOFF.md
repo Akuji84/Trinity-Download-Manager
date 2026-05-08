@@ -1089,6 +1089,17 @@ Exit criteria:
 - `app/ping` now reports only the active production endpoints.
 - Existing debug log files on disk may still exist from earlier runs, but the app and extension no longer write to them.
 
+### 2026-05-08 — Live proxy settings
+**Commit:** `7cffea5`
+
+- Added 5 proxy fields to `AppSettings`, `UpdateAppSettingsRequest`, and their `Default` impl in `models.rs`: `proxy_mode` ("system"/"none"/"manual"), `proxy_host`, `proxy_port` (u16), `proxy_username`, `proxy_password`.
+- Seeded, read, and written in `storage.rs` via the existing key-value settings table.
+- Added `build_http_client(settings)` in `lib.rs` that builds a `reqwest::Client` with the correct proxy: `no_proxy()` for "none", `Proxy::all(host:port).basic_auth(...)` for "manual", and system default for "system".
+- Added `http_client: Mutex<Client>` to `AppState`; built from saved settings on startup.
+- `inspect_download_url` and `spawn_download` both pull the client from state instead of calling `Client::new()`. Client is rebuilt in `update_app_settings` whenever proxy settings change.
+- `download_to_disk` in `download_engine.rs` now accepts the client as a parameter instead of creating one.
+- Frontend: proxy fields wired through `AppSettings` type, `saveSettings`, `resolveStartupPrompt`, `openPreferencesPage`, and post-save draft sync. Manual fields are shown/hidden based on `proxyMode`. Network section badge changed from "Placeholder" to "Live".
+
 ## Next Step
 
 Keep shrinking the remaining legacy resolver/re-discovery logic so browser-observed request and response data are the primary source of truth throughout the extension and app.

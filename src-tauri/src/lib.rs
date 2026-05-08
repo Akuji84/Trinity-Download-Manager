@@ -747,32 +747,41 @@ fn pause_download_job(state: State<'_, AppState>, id: String) -> Result<(), Stri
 #[tauri::command]
 fn reveal_in_folder(path: String) -> Result<(), String> {
     let path = std::path::Path::new(&path);
-    if !path.exists() {
-        return Err("File does not exist.".to_string());
-    }
+    let target_path = if path.exists() {
+        path.to_path_buf()
+    } else if let Some(parent) = path.parent().filter(|parent| parent.exists()) {
+        parent.to_path_buf()
+    } else {
+        return Err("Folder does not exist.".to_string());
+    };
 
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("explorer")
-            .args(["/select,", &path.to_string_lossy()])
-            .spawn()
-            .map_err(|e| e.to_string())?;
+        let mut command = std::process::Command::new("explorer");
+        if target_path.is_file() {
+            command.args(["/select,", &target_path.to_string_lossy()]);
+        } else {
+            command.arg(&target_path);
+        }
+        command.spawn().map_err(|e| e.to_string())?;
     }
 
     #[cfg(target_os = "macos")]
     {
-        std::process::Command::new("open")
-            .args(["-R", &path.to_string_lossy()])
-            .spawn()
-            .map_err(|e| e.to_string())?;
+        let mut command = std::process::Command::new("open");
+        if target_path.is_file() {
+            command.args(["-R", &target_path.to_string_lossy()]);
+        } else {
+            command.arg(&target_path);
+        }
+        command.spawn().map_err(|e| e.to_string())?;
     }
 
     #[cfg(target_os = "linux")]
     {
         // xdg-open the parent folder; no universal "select file" on Linux
-        let parent = path.parent().unwrap_or(path);
         std::process::Command::new("xdg-open")
-            .arg(parent)
+            .arg(&target_path)
             .spawn()
             .map_err(|e| e.to_string())?;
     }

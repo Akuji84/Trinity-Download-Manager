@@ -983,11 +983,16 @@ Exit criteria:
 - Important design constraint:
   - production capture and download logic should continue to be driven by generic browser-observed behavior and real protocol semantics, not by special casing this harness's URLs or HTML structure
 
+### 2026-05-07 - Consolidate on browser-observed takeover and hide debug/test entry points
+**Commit:** `pending`
+
+- Browser-managed `downloads.onCreated` takeover is now the normal capture path in the extension.
+- The old resolver-first page interception path has been demoted to browser fallback behavior instead of trying to win capture early.
+- `content.js` and `page-hook.js` no longer intercept page clicks or programmatic navigations in normal operation.
+- The extension popup no longer exposes the debug watcher toggle or debug log path.
+- The local download test harness remains in the repo root for manual use, but it is no longer advertised through the main `package.json` scripts or the top-level `README.md`.
+- This keeps the architecture aligned with the browser-observed-first model and reduces the chance that older pre-capture logic overrides the working takeover path.
+
 ## Next Step
 
-Use the new local harness to run a stable behavior matrix and validate the browser-observed-first takeover path end to end:
-- direct static file
-- redirected file
-- gated/session-bound download
-- JS-triggered browser download
-- resumable large file
+Keep shrinking the remaining legacy resolver/re-discovery logic so browser-observed request and response data are the primary source of truth throughout the extension and app.

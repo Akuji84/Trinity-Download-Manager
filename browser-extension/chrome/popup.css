@@ -17,14 +17,6 @@ body {
   font-size: 11px;
 }
 
-.popup-debug-path {
-  padding: 0 16px 8px;
-  color: #7a3f00;
-  font-size: 10px;
-  line-height: 1.3;
-  word-break: break-word;
-}
-
 .menu-item {
   border: 0;
   background: transparent;
@@ -37,10 +29,6 @@ body {
 
 .menu-item:hover {
   background: #e8e8e8;
-}
-
-.menu-item-debug {
-  color: #7a3f00;
 }
 
 .menu-item:disabled {

@@ -7,7 +7,6 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "harness": "node download-test-harness/server.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

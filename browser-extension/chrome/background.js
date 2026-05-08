@@ -934,8 +934,8 @@ async function pingBridge() {
 }
 
 async function getPopupState() {
-  const [{ capturePaused = false, excludedSites = [], debugMode = false }, currentTab] = await Promise.all([
-    chrome.storage.local.get([STORAGE_KEYS.capturePaused, STORAGE_KEYS.excludedSites, STORAGE_KEYS.debugMode]),
+  const [{ capturePaused = false, excludedSites = [] }, currentTab] = await Promise.all([
+    chrome.storage.local.get([STORAGE_KEYS.capturePaused, STORAGE_KEYS.excludedSites]),
     getActiveTab(),
   ]);
   const siteHost = extractHost(currentTab?.url ?? "");
@@ -945,8 +945,6 @@ async function getPopupState() {
     capturePaused,
     siteExcluded: siteHost ? excludedSites.includes(siteHost) : false,
     siteHost,
-    debugMode,
-    debugLogPath: await getDebugLogPath(),
   };
 }
 
@@ -1185,65 +1183,7 @@ async function captureDownloadClick(payload) {
     });
     return { captured: false, fallbackToBrowser: true };
   }
-
-  if (!payload || !isHttpUrl(payload.url)) {
-    await showBridgeBadge("ERR", "#6a1b1b");
-    return { captured: false, fallbackToBrowser: false };
-  }
-
-  const {
-    capturePaused = false,
-    excludedSites = [],
-  } = await chrome.storage.local.get([
-    STORAGE_KEYS.capturePaused,
-    STORAGE_KEYS.excludedSites,
-  ]);
-
-  if (capturePaused) {
-    return { captured: false, fallbackToBrowser: true };
-  }
-
-  const pageHost = extractHost(payload.page_url || payload.referrer || "");
-  if (pageHost && excludedSites.includes(pageHost)) {
-    return { captured: false, fallbackToBrowser: true };
-  }
-
-  if (!cachedBridgeAlive && !(await pingBridge())) {
-    cachedBridgeAlive = false;
-    await showBridgeBadge("ERR", "#6a1b1b");
-    return { captured: false, fallbackToBrowser: false };
-  }
-
-  const resolvedPayload = await resolveCapturePayloadForTrinity(payload);
-  if (!resolvedPayload) {
-    console.error("Trinity could not resolve a direct downloadable file from the browser candidate", payload.url);
-    await showBridgeBadge("ERR", "#6a1b1b");
-    return {
-      captured: false,
-      fallbackToBrowser: false,
-      error: "Could not resolve a direct downloadable file.",
-    };
-  }
-
-  const sentToTrinity = await sendToTrinity(resolvedPayload);
-
-  if (!sentToTrinity) {
-    await showBridgeBadge("ERR", "#6a1b1b");
-    return {
-      captured: false,
-      fallbackToBrowser: false,
-      error: "Trinity bridge handoff failed.",
-    };
-  }
-
-  markRecentlyCaptured(resolvedPayload.final_url || resolvedPayload.url);
-  markRecentlyCaptured(resolvedPayload.url);
-  if (resolvedPayload.page_url) {
-    markRecentlyCaptured(resolvedPayload.page_url);
-  }
-
-  await showBridgeBadge("CAP", "#145d29");
-  return { captured: true, fallbackToBrowser: false };
+  return { captured: false, fallbackToBrowser: true };
 }
 
 async function resolveCapturePayloadForTrinity(payload, depth = 0, visited = new Set()) {

@@ -22,10 +22,4 @@ Build the frontend:
 npm run build
 ```
 
-Run the standalone download behavior test harness:
-
-```bash
-npm run harness
-```
-
 See `AI_HANDOFF.md` for product scope, roadmap, decisions, and progress notes.

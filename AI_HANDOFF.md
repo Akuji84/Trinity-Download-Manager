@@ -1115,6 +1115,24 @@ Exit criteria:
 - `download_to_disk` in `download_engine.rs` now accepts the client as a parameter instead of creating one.
 - Frontend: proxy fields wired through `AppSettings` type, `saveSettings`, `resolveStartupPrompt`, `openPreferencesPage`, and post-save draft sync. Manual fields are shown/hidden based on `proxyMode`. Network section badge changed from "Placeholder" to "Live".
 
+### 2026-05-08 - Native Windows notifications for real download events
+**Commit:** `pending`
+
+- Added persisted Advanced > Notifications settings across the full settings path:
+  - `notify_added`
+  - `notify_completed`
+  - `notify_failed`
+  - `notify_inactive_only`
+  - `play_sounds`
+- Installed and initialized `tauri-plugin-notification` in both the frontend and Tauri backend.
+- React now drives native OS toasts from actual download state transitions instead of placeholder UI state:
+  - new job appears in the list -> optional `Download added`
+  - state transition to `Completed` -> optional `Download completed`
+  - state transition to `Failed` -> optional `Download failed`
+- Notifications do not replay on initial app load. A baseline snapshot of existing jobs is taken first, then only subsequent transitions emit toasts.
+- `notify_inactive_only` suppresses toasts while the Trinity window is visible and focused.
+- `play_sounds` maps to the notification plugin's `silent` flag. On Windows this means native toast sound behavior is controlled by the OS notification system rather than a custom in-app sound layer.
+
 ## Next Step
 
 Keep shrinking the remaining legacy resolver/re-discovery logic so browser-observed request and response data are the primary source of truth throughout the extension and app.

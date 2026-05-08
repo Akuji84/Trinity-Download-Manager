@@ -3,6 +3,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
+  isPermissionGranted,
+  requestPermission,
+  sendNotification,
+} from "@tauri-apps/plugin-notification";
+import {
   ArrowLeft,
   ArrowDown,
   ArrowUp,
@@ -98,6 +103,11 @@ type AppSettings = {
   proxy_port: number;
   proxy_username: string;
   proxy_password: string;
+  notify_added: boolean;
+  notify_completed: boolean;
+  notify_failed: boolean;
+  notify_inactive_only: boolean;
+  play_sounds: boolean;
 };
 
 type DownloadProgressEvent = {
@@ -400,7 +410,11 @@ function App() {
   const [completingJobIds, setCompletingJobIds] = useState<Set<string>>(new Set());
   const [activeCountPulsing, setActiveCountPulsing] = useState(false);
   const prevJobStatesRef = useRef<Map<string, string>>(new Map());
+  const prevNotificationStatesRef = useRef<Map<string, DownloadState>>(new Map());
+  const prevJobIdsRef = useRef<Set<string>>(new Set());
   const prevActiveCountRef = useRef(0);
+  const notificationBaselineReadyRef = useRef(false);
+  const notificationPermissionRef = useRef<boolean | null>(null);
   const autoRemovingCompletedIdsRef = useRef<Set<string>>(new Set());
   const [systemIcons, setSystemIcons] = useState<Record<string, string>>({});
   const [url, setUrl] = useState("");
@@ -469,6 +483,11 @@ function App() {
     proxy_port: 8080,
     proxy_username: "",
     proxy_password: "",
+    notify_added: false,
+    notify_completed: true,
+    notify_failed: true,
+    notify_inactive_only: true,
+    play_sounds: false,
   });
   const [preferencesDraft, setPreferencesDraft] = useState<PreferencesDraft>(() =>
     createPreferencesDraft(3),
@@ -504,6 +523,53 @@ function App() {
     }
 
     return "";
+  }
+
+  function shouldUseInactiveOnlyNotifications(currentSettings: AppSettings) {
+    return (
+      currentSettings.notify_inactive_only &&
+      document.visibilityState === "visible" &&
+      document.hasFocus()
+    );
+  }
+
+  async function ensureNotificationPermission() {
+    if (notificationPermissionRef.current === true) {
+      return true;
+    }
+    if (notificationPermissionRef.current === false) {
+      return false;
+    }
+
+    const alreadyGranted = await isPermissionGranted();
+    if (alreadyGranted) {
+      notificationPermissionRef.current = true;
+      return true;
+    }
+
+    const permission = await requestPermission();
+    const granted = permission === "granted";
+    notificationPermissionRef.current = granted;
+    return granted;
+  }
+
+  async function sendNativeNotification(title: string, body: string) {
+    const currentSettings = settingsRef.current;
+    if (shouldUseInactiveOnlyNotifications(currentSettings)) {
+      return;
+    }
+
+    const permissionGranted = await ensureNotificationPermission();
+    if (!permissionGranted) {
+      return;
+    }
+
+    sendNotification({
+      title,
+      body,
+      group: "downloads",
+      silent: !currentSettings.play_sounds,
+    });
   }
 
   useEffect(() => {
@@ -551,6 +617,16 @@ function App() {
           browserMinimumSizeMb: loadedSettings.browser_minimum_size_mb,
           browserUseNativeFallback: loadedSettings.browser_use_native_fallback,
           browserIgnoreInsertKey: loadedSettings.browser_ignore_insert_key,
+          proxyMode: loadedSettings.proxy_mode,
+          proxyHost: loadedSettings.proxy_host,
+          proxyPort: String(loadedSettings.proxy_port),
+          proxyUsername: loadedSettings.proxy_username,
+          proxyPassword: loadedSettings.proxy_password,
+          notifyAdded: loadedSettings.notify_added,
+          notifyCompleted: loadedSettings.notify_completed,
+          notifyFailed: loadedSettings.notify_failed,
+          notifyInactiveOnly: loadedSettings.notify_inactive_only,
+          playSounds: loadedSettings.play_sounds,
         }));
         if (!loadedSettings.startup_prompt_answered) {
           setStartupPromptError("");
@@ -713,6 +789,73 @@ function App() {
   }, [jobs]);
 
   // Detect Running → Completed transitions to trigger the progress bar flash
+  useEffect(() => {
+    if (!jobsInitialized || notificationBaselineReadyRef.current) {
+      return;
+    }
+
+    prevJobIdsRef.current = new Set(jobs.map((job) => job.id));
+    prevNotificationStatesRef.current = new Map(jobs.map((job) => [job.id, job.state]));
+    notificationBaselineReadyRef.current = true;
+  }, [jobs, jobsInitialized]);
+
+  useEffect(() => {
+    if (!jobsInitialized || !notificationBaselineReadyRef.current) {
+      return;
+    }
+
+    const previousIds = prevJobIdsRef.current;
+    const currentIds = new Set(jobs.map((job) => job.id));
+    const addedJobs = jobs.filter((job) => !previousIds.has(job.id));
+    prevJobIdsRef.current = currentIds;
+
+    if (!settings.notify_added || addedJobs.length === 0) {
+      return;
+    }
+
+    for (const job of addedJobs) {
+      void sendNativeNotification("Download added", job.file_name).catch(console.error);
+    }
+  }, [jobs, jobsInitialized, settings.notify_added]);
+
+  useEffect(() => {
+    if (!jobsInitialized || !notificationBaselineReadyRef.current) {
+      return;
+    }
+
+    const previousStates = prevNotificationStatesRef.current;
+    const completedJobs: DownloadJob[] = [];
+    const failedJobs: DownloadJob[] = [];
+
+    for (const job of jobs) {
+      const previousState = previousStates.get(job.id);
+      if (previousState && previousState !== job.state) {
+        if (job.state === "Completed") {
+          completedJobs.push(job);
+        } else if (job.state === "Failed") {
+          failedJobs.push(job);
+        }
+      }
+    }
+
+    prevNotificationStatesRef.current = new Map(jobs.map((job) => [job.id, job.state]));
+
+    if (settings.notify_completed) {
+      for (const job of completedJobs) {
+        void sendNativeNotification("Download completed", job.file_name).catch(console.error);
+      }
+    }
+
+    if (settings.notify_failed) {
+      for (const job of failedJobs) {
+        const body = job.error_message?.trim()
+          ? `${job.file_name}\n${job.error_message.trim()}`
+          : job.file_name;
+        void sendNativeNotification("Download failed", body).catch(console.error);
+      }
+    }
+  }, [jobs, jobsInitialized, settings.notify_completed, settings.notify_failed]);
+
   useEffect(() => {
     if (!jobsInitialized) {
       prevJobStatesRef.current = new Map(jobs.map((j) => [j.id, j.state]));
@@ -1037,6 +1180,11 @@ function App() {
           proxy_port: currentSettings.proxy_port,
           proxy_username: currentSettings.proxy_username,
           proxy_password: currentSettings.proxy_password,
+          notify_added: currentSettings.notify_added,
+          notify_completed: currentSettings.notify_completed,
+          notify_failed: currentSettings.notify_failed,
+          notify_inactive_only: currentSettings.notify_inactive_only,
+          play_sounds: currentSettings.play_sounds,
         },
       });
       setSettings(updatedSettings);
@@ -1045,6 +1193,11 @@ function App() {
         launchAtStartup: updatedSettings.launch_at_startup,
         startMinimized: updatedSettings.start_minimized,
         closeToTray: updatedSettings.close_to_tray,
+        notifyAdded: updatedSettings.notify_added,
+        notifyCompleted: updatedSettings.notify_completed,
+        notifyFailed: updatedSettings.notify_failed,
+        notifyInactiveOnly: updatedSettings.notify_inactive_only,
+        playSounds: updatedSettings.play_sounds,
       }));
       closeStartupPrompt();
     } catch (caughtError) {
@@ -1230,6 +1383,11 @@ function App() {
         proxy_port: parseInt(preferencesDraft.proxyPort, 10) || 8080,
         proxy_username: preferencesDraft.proxyUsername,
         proxy_password: preferencesDraft.proxyPassword,
+        notify_added: preferencesDraft.notifyAdded,
+        notify_completed: preferencesDraft.notifyCompleted,
+        notify_failed: preferencesDraft.notifyFailed,
+        notify_inactive_only: preferencesDraft.notifyInactiveOnly,
+        play_sounds: preferencesDraft.playSounds,
       },
     });
     setSettings(updatedSettings);
@@ -1275,7 +1433,20 @@ function App() {
       proxyPort: String(updatedSettings.proxy_port),
       proxyUsername: updatedSettings.proxy_username,
       proxyPassword: updatedSettings.proxy_password,
+      notifyAdded: updatedSettings.notify_added,
+      notifyCompleted: updatedSettings.notify_completed,
+      notifyFailed: updatedSettings.notify_failed,
+      notifyInactiveOnly: updatedSettings.notify_inactive_only,
+      playSounds: updatedSettings.play_sounds,
     }));
+    if (
+      updatedSettings.notify_added ||
+      updatedSettings.notify_completed ||
+      updatedSettings.notify_failed
+    ) {
+      notificationPermissionRef.current = null;
+      void ensureNotificationPermission().catch(console.error);
+    }
     setPreferencesStatus("Settings saved.");
     await refreshJobs();
   }
@@ -1323,6 +1494,11 @@ function App() {
       proxyPort: String(settings.proxy_port),
       proxyUsername: settings.proxy_username,
       proxyPassword: settings.proxy_password,
+      notifyAdded: settings.notify_added,
+      notifyCompleted: settings.notify_completed,
+      notifyFailed: settings.notify_failed,
+      notifyInactiveOnly: settings.notify_inactive_only,
+      playSounds: settings.play_sounds,
     }));
     setPreferencesStatus("");
     setActivePreferencesSection("general");

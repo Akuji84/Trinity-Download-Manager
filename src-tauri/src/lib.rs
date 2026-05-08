@@ -454,6 +454,11 @@ fn update_app_settings(
         proxy_port: request.proxy_port,
         proxy_username: request.proxy_username.trim().to_string(),
         proxy_password: request.proxy_password.clone(),
+        notify_added: request.notify_added,
+        notify_completed: request.notify_completed,
+        notify_failed: request.notify_failed,
+        notify_inactive_only: request.notify_inactive_only,
+        play_sounds: request.play_sounds,
     };
     state.close_to_tray.store(request.close_to_tray, Ordering::Relaxed);
     state
@@ -2057,6 +2062,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let should_hide = window

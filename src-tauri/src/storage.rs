@@ -420,6 +420,41 @@ impl Storage {
             ",
             [],
         )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('notify_added', '0');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('notify_completed', '1');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('notify_failed', '1');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('notify_inactive_only', '1');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('play_sounds', '0');
+            ",
+            [],
+        )?;
 
         Ok(())
     }
@@ -1286,6 +1321,31 @@ impl Storage {
         let proxy_password = self
             .get_setting("proxy_password")?
             .unwrap_or(defaults.proxy_password);
+        let notify_added = self
+            .get_setting("notify_added")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.notify_added);
+        let notify_completed = self
+            .get_setting("notify_completed")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.notify_completed);
+        let notify_failed = self
+            .get_setting("notify_failed")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.notify_failed);
+        let notify_inactive_only = self
+            .get_setting("notify_inactive_only")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.notify_inactive_only);
+        let play_sounds = self
+            .get_setting("play_sounds")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.play_sounds);
 
         Ok(AppSettings {
             max_concurrent_downloads,
@@ -1328,6 +1388,11 @@ impl Storage {
             proxy_port,
             proxy_username,
             proxy_password,
+            notify_added,
+            notify_completed,
+            notify_failed,
+            notify_inactive_only,
+            play_sounds,
         })
     }
 
@@ -1453,6 +1518,17 @@ impl Storage {
         self.upsert_setting("proxy_port", settings.proxy_port.to_string())?;
         self.upsert_setting("proxy_username", &settings.proxy_username)?;
         self.upsert_setting("proxy_password", &settings.proxy_password)?;
+        self.upsert_setting("notify_added", if settings.notify_added { "1" } else { "0" })?;
+        self.upsert_setting(
+            "notify_completed",
+            if settings.notify_completed { "1" } else { "0" },
+        )?;
+        self.upsert_setting("notify_failed", if settings.notify_failed { "1" } else { "0" })?;
+        self.upsert_setting(
+            "notify_inactive_only",
+            if settings.notify_inactive_only { "1" } else { "0" },
+        )?;
+        self.upsert_setting("play_sounds", if settings.play_sounds { "1" } else { "0" })?;
 
         Ok(())
     }

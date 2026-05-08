@@ -200,6 +200,11 @@ pub struct AppSettings {
     pub proxy_port: u16,
     pub proxy_username: String,
     pub proxy_password: String,
+    pub notify_added: bool,
+    pub notify_completed: bool,
+    pub notify_failed: bool,
+    pub notify_inactive_only: bool,
+    pub play_sounds: bool,
 }
 
 impl Default for AppSettings {
@@ -245,6 +250,11 @@ impl Default for AppSettings {
             proxy_port: 8080,
             proxy_username: String::new(),
             proxy_password: String::new(),
+            notify_added: false,
+            notify_completed: true,
+            notify_failed: true,
+            notify_inactive_only: true,
+            play_sounds: false,
         }
     }
 }
@@ -291,6 +301,11 @@ pub struct UpdateAppSettingsRequest {
     pub proxy_port: u16,
     pub proxy_username: String,
     pub proxy_password: String,
+    pub notify_added: bool,
+    pub notify_completed: bool,
+    pub notify_failed: bool,
+    pub notify_inactive_only: bool,
+    pub play_sounds: bool,
 }
 
 impl From<&AppSettings> for BrowserIntegrationSettings {

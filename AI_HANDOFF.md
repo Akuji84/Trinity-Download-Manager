@@ -1163,6 +1163,27 @@ Exit criteria:
 - If `allow_sleep_if_resumable` is enabled, Trinity does not block sleep when all currently running jobs are resumable.
 - Sleep-prevention state is recalculated on startup, settings changes, queue mutations, and terminal download state transitions.
 
+### 2026-05-08 - Safe updater secret boundary scaffolding
+**Commit:** `pending`
+
+- Added repo-safe release scaffolding only:
+  - `.env.release.example`
+  - `scripts/release/deploy-update.ps1`
+  - `scripts/release/README.md`
+- Expanded `.gitignore` to keep local updater/deploy secrets out of git:
+  - `.env.release*`
+  - `release-secrets/`
+  - `*.local.ps1`
+- Generated the Tauri updater signing keypair outside the repository under the local user profile:
+  - private key: `C:\Users\deeck\.trinity-release\updater\trinity-updater.key`
+  - public key: `C:\Users\deeck\.trinity-release\updater\trinity-updater.key.pub`
+- Stored the signing password outside the repository in the same local secret area.
+- Important: this step does **not** wire the app to the updater yet. It only establishes the trust boundary so later updater work can use:
+  - public key in repo/app config
+  - private signing key outside repo
+  - deploy credentials outside repo
+- Deployment to the Ubuntu update host should use SSH key auth, not password auth. The password already shared in chat should be treated as exposed and rotated before real deployment.
+
 ## Next Step
 
 Keep shrinking the remaining legacy resolver/re-discovery logic so browser-observed request and response data are the primary source of truth throughout the extension and app.

@@ -25,3 +25,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local release / updater secrets
+.env.release
+.env.release.*
+!.env.release.example
+release-secrets/
+*.local.ps1

@@ -213,6 +213,7 @@ pub struct AppSettings {
     pub allow_sleep_if_resumable: bool,
     pub check_for_updates_automatically: bool,
     pub install_updates_automatically: bool,
+    pub test_toggle: bool,
 }
 
 impl Default for AppSettings {
@@ -271,6 +272,7 @@ impl Default for AppSettings {
             allow_sleep_if_resumable: true,
             check_for_updates_automatically: true,
             install_updates_automatically: false,
+            test_toggle: false,
         }
     }
 }
@@ -330,6 +332,7 @@ pub struct UpdateAppSettingsRequest {
     pub allow_sleep_if_resumable: bool,
     pub check_for_updates_automatically: bool,
     pub install_updates_automatically: bool,
+    pub test_toggle: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

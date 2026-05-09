@@ -116,6 +116,7 @@ type AppSettings = {
   allow_sleep_if_resumable: boolean;
   check_for_updates_automatically: boolean;
   install_updates_automatically: boolean;
+  test_toggle: boolean;
 };
 
 type AppUpdaterStatus = {
@@ -286,6 +287,7 @@ type PreferencesDraft = {
   avoidSleepWithActiveDownloads: boolean;
   avoidSleepWithScheduledDownloads: boolean;
   allowSleepIfResumable: boolean;
+  testToggle: boolean;
   backupEveryHours: string;
   closeToTray: boolean;
   bottomPanelFollowsSelection: boolean;
@@ -386,6 +388,7 @@ function createPreferencesDraft(maxConcurrentDownloads: number): PreferencesDraf
     avoidSleepWithActiveDownloads: true,
     avoidSleepWithScheduledDownloads: true,
     allowSleepIfResumable: true,
+    testToggle: false,
     backupEveryHours: "3 hours",
     closeToTray: true,
     bottomPanelFollowsSelection: true,
@@ -516,6 +519,7 @@ function App() {
     allow_sleep_if_resumable: true,
     check_for_updates_automatically: true,
     install_updates_automatically: false,
+    test_toggle: false,
   });
   const [preferencesDraft, setPreferencesDraft] = useState<PreferencesDraft>(() =>
     createPreferencesDraft(3),
@@ -779,6 +783,7 @@ function App() {
           avoidSleepWithScheduledDownloads:
             loadedSettings.avoid_sleep_with_scheduled_downloads,
           allowSleepIfResumable: loadedSettings.allow_sleep_if_resumable,
+          testToggle: loadedSettings.test_toggle,
         }));
         if (!loadedSettings.startup_prompt_answered) {
           setStartupPromptError("");
@@ -1423,6 +1428,7 @@ function App() {
             currentSettings.check_for_updates_automatically,
           install_updates_automatically:
             currentSettings.install_updates_automatically,
+          test_toggle: currentSettings.test_toggle,
         },
       });
       setSettings(updatedSettings);
@@ -1447,6 +1453,7 @@ function App() {
           updatedSettings.check_for_updates_automatically,
         installUpdatesAutomatically:
           updatedSettings.install_updates_automatically,
+        testToggle: updatedSettings.test_toggle,
       }));
       closeStartupPrompt();
     } catch (caughtError) {
@@ -1648,6 +1655,7 @@ function App() {
           preferencesDraft.checkForUpdatesAutomatically,
         install_updates_automatically:
           preferencesDraft.installUpdatesAutomatically,
+        test_toggle: preferencesDraft.testToggle,
       },
     });
     setSettings(updatedSettings);
@@ -1709,6 +1717,7 @@ function App() {
         updatedSettings.check_for_updates_automatically,
       installUpdatesAutomatically:
         updatedSettings.install_updates_automatically,
+      testToggle: updatedSettings.test_toggle,
     }));
     if (
       updatedSettings.notify_added ||
@@ -2401,6 +2410,16 @@ function App() {
                           type="checkbox"
                         />
                         Install updates automatically
+                      </label>
+                      <label className="preferences-toggle">
+                        <input
+                          checked={preferencesDraft.testToggle}
+                          onChange={(event) =>
+                            setPreferenceValue("testToggle", event.currentTarget.checked)
+                          }
+                          type="checkbox"
+                        />
+                        Test
                       </label>
                     </div>
                     <div className="preferences-update-card">

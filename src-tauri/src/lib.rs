@@ -725,6 +725,7 @@ fn update_app_settings(
         allow_sleep_if_resumable: request.allow_sleep_if_resumable,
         check_for_updates_automatically: request.check_for_updates_automatically,
         install_updates_automatically: request.install_updates_automatically,
+        test_toggle: request.test_toggle,
     };
     state.close_to_tray.store(request.close_to_tray, Ordering::Relaxed);
     state

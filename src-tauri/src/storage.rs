@@ -511,6 +511,13 @@ impl Storage {
             ",
             [],
         )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('test_toggle', '0');
+            ",
+            [],
+        )?;
 
         Ok(())
     }
@@ -1438,6 +1445,11 @@ impl Storage {
             .and_then(|value| value.parse::<u8>().ok())
             .map(|value| value != 0)
             .unwrap_or(defaults.install_updates_automatically);
+        let test_toggle = self
+            .get_setting("test_toggle")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.test_toggle);
 
         Ok(AppSettings {
             max_concurrent_downloads,
@@ -1493,6 +1505,7 @@ impl Storage {
             allow_sleep_if_resumable,
             check_for_updates_automatically,
             install_updates_automatically,
+            test_toggle,
         })
     }
 
@@ -1674,6 +1687,7 @@ impl Storage {
                 "0"
             },
         )?;
+        self.upsert_setting("test_toggle", if settings.test_toggle { "1" } else { "0" })?;
 
         Ok(())
     }

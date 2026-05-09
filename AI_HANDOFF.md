@@ -37,6 +37,18 @@
   - upload artifacts/signatures to the server
   - point release builds at the real `TRINITY_UPDATE_BASE_URL`
 
+## 2026-05-09 - Update subdomain and host service
+
+- `updates.akuji.org` is now live behind the existing Cloudflare Tunnel on the Ubuntu server.
+- The server-side updater host is isolated from the main app services:
+  - `cloudflared` ingress now routes `updates.akuji.org` to `http://localhost:8092`
+  - `trinity-updates.service` serves a dedicated static directory
+  - release artifact root on the server is `/home/phoenyx/trinity-updates/releases`
+- This keeps updater hosting separate from the application repo and separate from the other site services while reusing the existing tunnel pattern already used for `dashboard.akuji.org`, `bugs.akuji.org`, and `leaderboards.akuji.org`.
+- Local release scaffolding now points at:
+  - `TRINITY_UPDATE_BASE_URL=https://updates.akuji.org`
+  - upload path `/home/phoenyx/trinity-updates/releases`
+
 ## 2026-05-07 - Startup opt-in and Windows launch registration
 
 - Trinity now persists two additional app settings:

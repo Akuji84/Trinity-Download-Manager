@@ -40,3 +40,17 @@ What still depends on your local release environment:
 - the private signing key
 - server deployment access
 - publishing the manifest and artifacts
+
+## Current update host
+
+The updater host is now exposed publicly at:
+
+- `https://updates.akuji.org`
+
+Server-side shape:
+
+- Cloudflare Tunnel ingress forwards `updates.akuji.org` to `http://127.0.0.1:8092`
+- the local static artifact root is `/home/phoenyx/trinity-updates/releases`
+- `trinity-updates.service` serves that directory
+
+That service and tunnel config live on the Ubuntu server only. No tunnel credentials or deploy secrets belong in this repo.

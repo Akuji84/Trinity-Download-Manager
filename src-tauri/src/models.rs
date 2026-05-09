@@ -211,6 +211,8 @@ pub struct AppSettings {
     pub avoid_sleep_with_active_downloads: bool,
     pub avoid_sleep_with_scheduled_downloads: bool,
     pub allow_sleep_if_resumable: bool,
+    pub check_for_updates_automatically: bool,
+    pub install_updates_automatically: bool,
 }
 
 impl Default for AppSettings {
@@ -267,6 +269,8 @@ impl Default for AppSettings {
             avoid_sleep_with_active_downloads: true,
             avoid_sleep_with_scheduled_downloads: true,
             allow_sleep_if_resumable: true,
+            check_for_updates_automatically: true,
+            install_updates_automatically: false,
         }
     }
 }
@@ -324,6 +328,22 @@ pub struct UpdateAppSettingsRequest {
     pub avoid_sleep_with_active_downloads: bool,
     pub avoid_sleep_with_scheduled_downloads: bool,
     pub allow_sleep_if_resumable: bool,
+    pub check_for_updates_automatically: bool,
+    pub install_updates_automatically: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AppUpdateInfo {
+    pub current_version: String,
+    pub version: String,
+    pub body: Option<String>,
+    pub date: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AppUpdaterStatus {
+    pub configured: bool,
+    pub current_version: String,
 }
 
 impl From<&AppSettings> for BrowserIntegrationSettings {

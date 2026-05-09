@@ -114,6 +114,20 @@ type AppSettings = {
   avoid_sleep_with_active_downloads: boolean;
   avoid_sleep_with_scheduled_downloads: boolean;
   allow_sleep_if_resumable: boolean;
+  check_for_updates_automatically: boolean;
+  install_updates_automatically: boolean;
+};
+
+type AppUpdaterStatus = {
+  configured: boolean;
+  current_version: string;
+};
+
+type AppUpdateInfo = {
+  current_version: string;
+  version: string;
+  body: string | null;
+  date: string | null;
 };
 
 type DownloadProgressEvent = {
@@ -500,6 +514,8 @@ function App() {
     avoid_sleep_with_active_downloads: true,
     avoid_sleep_with_scheduled_downloads: true,
     allow_sleep_if_resumable: true,
+    check_for_updates_automatically: true,
+    install_updates_automatically: false,
   });
   const [preferencesDraft, setPreferencesDraft] = useState<PreferencesDraft>(() =>
     createPreferencesDraft(3),
@@ -507,6 +523,18 @@ function App() {
   const [activePreferencesSection, setActivePreferencesSection] =
     useState<PreferencesSectionId>("general");
   const [preferencesStatus, setPreferencesStatus] = useState("");
+  const [updaterStatus, setUpdaterStatus] = useState<AppUpdaterStatus>({
+    configured: false,
+    current_version: "0.1.0",
+  });
+  const [availableUpdate, setAvailableUpdate] = useState<AppUpdateInfo | null>(null);
+  const [isCheckingForUpdate, setIsCheckingForUpdate] = useState(false);
+  const [isInstallingUpdate, setIsInstallingUpdate] = useState(false);
+  const [updateStatusMessage, setUpdateStatusMessage] = useState("");
+  const [updateDownloadProgress, setUpdateDownloadProgress] = useState<{
+    downloadedBytes: number;
+    totalBytes: number | null;
+  } | null>(null);
   const [activeTab, setActiveTab] = useState<DownloadTabId>("all");
   const [activeCategory, setActiveCategory] = useState<CategoryFilterId>("all");
   const [queueSearch, setQueueSearch] = useState("");
@@ -517,6 +545,7 @@ function App() {
   const preferencesContentRef = useRef<HTMLElement | null>(null);
   const pendingIconKeysRef = useRef<Set<string>>(new Set());
   const settingsRef = useRef(settings);
+  const autoUpdateCheckStartedRef = useRef(false);
   const effectiveUrlMetadata = browserObservedMetadata ?? urlMetadata;
   const extensionDisplayFileName =
     pendingSuggestedFileName.trim() ||
@@ -584,11 +613,67 @@ function App() {
     });
   }
 
+  async function checkForUpdates(options?: { silentIfCurrent?: boolean; autoInstall?: boolean }) {
+    if (!updaterStatus.configured || isCheckingForUpdate || isInstallingUpdate) {
+      return;
+    }
+
+    setIsCheckingForUpdate(true);
+    setUpdateStatusMessage("Checking for updates...");
+
+    try {
+      const update = await invoke<AppUpdateInfo | null>("check_for_app_update");
+      setAvailableUpdate(update);
+
+      if (update) {
+        setUpdateStatusMessage(`Update ${update.version} is available.`);
+        if (options?.autoInstall) {
+          await installAvailableUpdate();
+        }
+      } else {
+        setUpdateDownloadProgress(null);
+        if (!options?.silentIfCurrent) {
+          setUpdateStatusMessage("Trinity is up to date.");
+        } else {
+          setUpdateStatusMessage("");
+        }
+      }
+    } catch (caughtError) {
+      setUpdateStatusMessage(String(caughtError));
+    } finally {
+      setIsCheckingForUpdate(false);
+    }
+  }
+
+  async function installAvailableUpdate() {
+    if (!updaterStatus.configured || isInstallingUpdate) {
+      return;
+    }
+
+    setIsInstallingUpdate(true);
+    setUpdateStatusMessage("Preparing update...");
+    setUpdateDownloadProgress({ downloadedBytes: 0, totalBytes: null });
+
+    try {
+      await invoke("install_app_update");
+      setUpdateStatusMessage("Installer launched. Trinity will close to finish the update.");
+    } catch (caughtError) {
+      setUpdateStatusMessage(String(caughtError));
+      setUpdateDownloadProgress(null);
+    } finally {
+      setIsInstallingUpdate(false);
+    }
+  }
+
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
 
   useEffect(() => {
+    invoke<AppUpdaterStatus>("get_app_updater_status")
+      .then(setUpdaterStatus)
+      .catch(console.error);
+
     invoke<AppSettings>("get_app_settings")
       .then((loadedSettings) => {
         setSettings(loadedSettings);
@@ -621,6 +706,8 @@ function App() {
           skipWebPages: loadedSettings.skip_web_pages,
           useServerFileTime: loadedSettings.use_server_file_time,
           markDownloadedFiles: loadedSettings.mark_downloaded_files,
+          checkForUpdatesAutomatically: loadedSettings.check_for_updates_automatically,
+          installUpdatesAutomatically: loadedSettings.install_updates_automatically,
           browserInterceptDownloads: loadedSettings.browser_intercept_downloads,
           browserStartWithoutConfirmation: loadedSettings.browser_start_without_confirmation,
           browserSkipDomains: loadedSettings.browser_skip_domains,
@@ -657,6 +744,26 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (
+      !updaterStatus.configured ||
+      !settings.check_for_updates_automatically ||
+      autoUpdateCheckStartedRef.current
+    ) {
+      return;
+    }
+
+    autoUpdateCheckStartedRef.current = true;
+    void checkForUpdates({
+      silentIfCurrent: true,
+      autoInstall: settings.install_updates_automatically,
+    });
+  }, [
+    settings.check_for_updates_automatically,
+    settings.install_updates_automatically,
+    updaterStatus.configured,
+  ]);
+
+  useEffect(() => {
     let unlisten: (() => void) | null = null;
 
     listen("downloads-changed", () => {
@@ -671,6 +778,41 @@ function App() {
       unlisten?.();
       };
     }, []);
+
+  useEffect(() => {
+    let totalDownloaded = 0;
+    let unlisten: (() => void) | null = null;
+
+    listen<{
+      stage: string;
+      downloaded_bytes: number;
+      total_bytes: number | null;
+    }>("app-update-progress", (event) => {
+      if (event.payload.stage === "starting") {
+        totalDownloaded = 0;
+        setUpdateDownloadProgress({ downloadedBytes: 0, totalBytes: null });
+        setUpdateStatusMessage("Downloading update...");
+        return;
+      }
+
+      if (event.payload.stage === "downloading") {
+        totalDownloaded += event.payload.downloaded_bytes;
+        setUpdateDownloadProgress({
+          downloadedBytes: totalDownloaded,
+          totalBytes: event.payload.total_bytes,
+        });
+        setUpdateStatusMessage("Downloading update...");
+      }
+    })
+      .then((dispose) => {
+        unlisten = dispose;
+      })
+      .catch(console.error);
+
+    return () => {
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -1212,6 +1354,10 @@ function App() {
           avoid_sleep_with_scheduled_downloads:
             currentSettings.avoid_sleep_with_scheduled_downloads,
           allow_sleep_if_resumable: currentSettings.allow_sleep_if_resumable,
+          check_for_updates_automatically:
+            currentSettings.check_for_updates_automatically,
+          install_updates_automatically:
+            currentSettings.install_updates_automatically,
         },
       });
       setSettings(updatedSettings);
@@ -1232,6 +1378,10 @@ function App() {
         avoidSleepWithScheduledDownloads:
           updatedSettings.avoid_sleep_with_scheduled_downloads,
         allowSleepIfResumable: updatedSettings.allow_sleep_if_resumable,
+        checkForUpdatesAutomatically:
+          updatedSettings.check_for_updates_automatically,
+        installUpdatesAutomatically:
+          updatedSettings.install_updates_automatically,
       }));
       closeStartupPrompt();
     } catch (caughtError) {
@@ -1429,6 +1579,10 @@ function App() {
         avoid_sleep_with_scheduled_downloads:
           preferencesDraft.avoidSleepWithScheduledDownloads,
         allow_sleep_if_resumable: preferencesDraft.allowSleepIfResumable,
+        check_for_updates_automatically:
+          preferencesDraft.checkForUpdatesAutomatically,
+        install_updates_automatically:
+          preferencesDraft.installUpdatesAutomatically,
       },
     });
     setSettings(updatedSettings);
@@ -1486,6 +1640,10 @@ function App() {
       avoidSleepWithScheduledDownloads:
         updatedSettings.avoid_sleep_with_scheduled_downloads,
       allowSleepIfResumable: updatedSettings.allow_sleep_if_resumable,
+      checkForUpdatesAutomatically:
+        updatedSettings.check_for_updates_automatically,
+      installUpdatesAutomatically:
+        updatedSettings.install_updates_automatically,
     }));
     if (
       updatedSettings.notify_added ||
@@ -2179,6 +2337,57 @@ function App() {
                         />
                         Install updates automatically
                       </label>
+                    </div>
+                    <div className="preferences-update-card">
+                      <div className="preferences-update-summary">
+                        <strong>Current version</strong>
+                        <span>{updaterStatus.current_version}</span>
+                      </div>
+                      <div className="preferences-update-summary">
+                        <strong>Update server</strong>
+                        <span>{updaterStatus.configured ? "Configured" : "Not configured in this build"}</span>
+                      </div>
+                      {availableUpdate ? (
+                        <div className="preferences-update-summary">
+                          <strong>Available update</strong>
+                          <span>{availableUpdate.version}</span>
+                        </div>
+                      ) : null}
+                      {availableUpdate?.body ? (
+                        <p className="preferences-update-notes">{availableUpdate.body}</p>
+                      ) : null}
+                      {updateDownloadProgress ? (
+                        <p className="preferences-update-status">
+                          {updateStatusMessage}
+                          {updateDownloadProgress.totalBytes
+                            ? ` (${formatBytes(updateDownloadProgress.downloadedBytes)} / ${formatBytes(updateDownloadProgress.totalBytes)})`
+                            : ` (${formatBytes(updateDownloadProgress.downloadedBytes)})`}
+                        </p>
+                      ) : updateStatusMessage ? (
+                        <p className="preferences-update-status">{updateStatusMessage}</p>
+                      ) : null}
+                      <div className="preferences-update-actions">
+                        <button
+                          className="preferences-secondary-button"
+                          disabled={!updaterStatus.configured || isCheckingForUpdate || isInstallingUpdate}
+                          onClick={() => {
+                            void checkForUpdates();
+                          }}
+                          type="button"
+                        >
+                          {isCheckingForUpdate ? "Checking..." : "Check now"}
+                        </button>
+                        <button
+                          className="preferences-primary-button"
+                          disabled={!availableUpdate || isInstallingUpdate || isCheckingForUpdate}
+                          onClick={() => {
+                            void installAvailableUpdate();
+                          }}
+                          type="button"
+                        >
+                          {isInstallingUpdate ? "Installing..." : "Update now"}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </section>

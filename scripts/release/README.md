@@ -26,10 +26,17 @@ Use `.env.release.example` as the shape for your local environment. Create your 
 
 ## Current scope
 
-This is only the first security step:
+The app is now wired for in-app updates, but the real update host still stays outside git.
 
-- local secret layout
-- repo ignore rules
-- safe deploy script shape
+What is already live:
 
-It does **not** yet wire the app to the updater endpoint. That should happen only after the signing key and deployment path are established and kept out of git.
+- signed updater artifacts from `npm run tauri build`
+- in-app update check / install UI
+- build-time endpoint selection through `TRINITY_UPDATE_BASE_URL`
+
+What still depends on your local release environment:
+
+- the real public update URL
+- the private signing key
+- server deployment access
+- publishing the manifest and artifacts

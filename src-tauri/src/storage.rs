@@ -497,6 +497,20 @@ impl Storage {
             ",
             [],
         )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('check_for_updates_automatically', '1');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('install_updates_automatically', '0');
+            ",
+            [],
+        )?;
 
         Ok(())
     }
@@ -1414,6 +1428,16 @@ impl Storage {
             .and_then(|value| value.parse::<u8>().ok())
             .map(|value| value != 0)
             .unwrap_or(defaults.allow_sleep_if_resumable);
+        let check_for_updates_automatically = self
+            .get_setting("check_for_updates_automatically")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.check_for_updates_automatically);
+        let install_updates_automatically = self
+            .get_setting("install_updates_automatically")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.install_updates_automatically);
 
         Ok(AppSettings {
             max_concurrent_downloads,
@@ -1467,6 +1491,8 @@ impl Storage {
             avoid_sleep_with_active_downloads,
             avoid_sleep_with_scheduled_downloads,
             allow_sleep_if_resumable,
+            check_for_updates_automatically,
+            install_updates_automatically,
         })
     }
 
@@ -1631,6 +1657,22 @@ impl Storage {
         self.upsert_setting(
             "allow_sleep_if_resumable",
             if settings.allow_sleep_if_resumable { "1" } else { "0" },
+        )?;
+        self.upsert_setting(
+            "check_for_updates_automatically",
+            if settings.check_for_updates_automatically {
+                "1"
+            } else {
+                "0"
+            },
+        )?;
+        self.upsert_setting(
+            "install_updates_automatically",
+            if settings.install_updates_automatically {
+                "1"
+            } else {
+                "0"
+            },
         )?;
 
         Ok(())

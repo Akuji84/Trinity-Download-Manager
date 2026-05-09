@@ -951,6 +951,65 @@ button {
   opacity: 0.65;
 }
 
+.preferences-update-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #42484f;
+  background: #23272b;
+}
+
+.preferences-update-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: #dfe7ef;
+  font-size: 13px;
+}
+
+.preferences-update-summary strong {
+  font-weight: 600;
+}
+
+.preferences-update-summary span {
+  color: #c7d2dd;
+  text-align: right;
+}
+
+.preferences-update-notes,
+.preferences-update-status {
+  margin: 0;
+  color: #c7d2dd;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.preferences-update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.preferences-primary-button,
+.preferences-secondary-button {
+  min-width: 136px;
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid #5a6168;
+  color: #f2f6fa;
+  background: #2c3136;
+}
+
+.preferences-primary-button {
+  border-color: #1d80bf;
+  background: #0f7fc3;
+}
+
+.preferences-primary-button:disabled,
+.preferences-secondary-button:disabled {
+  opacity: 0.55;
+}
+
 .preferences-traffic-grid {
   display: grid;
   grid-template-columns: 150px repeat(3, minmax(0, 1fr));

@@ -1,5 +1,42 @@
 # Trinity Download Manager AI Handoff
 
+## 2026-05-08 - Safe in-app updater wiring
+
+- Trinity now has a real in-app updater surface in Preferences > General > Updates:
+  - `check_for_updates_automatically`
+  - `install_updates_automatically`
+  - manual `Check now`
+  - manual `Update now`
+- The updater path is intentionally split into:
+  - a public trust boundary committed in repo
+  - a private deployment boundary kept outside git
+- Safe committed pieces:
+  - updater public key
+  - updater UI
+  - runtime updater commands
+  - placeholder updater config in `src-tauri/tauri.conf.json`
+- Non-committed pieces:
+  - updater private signing key
+  - updater private key password
+  - deploy SSH key
+  - real update host / server access
+- Runtime behavior:
+  - the app checks for updates through Rust commands using `tauri_plugin_updater::UpdaterExt`
+  - the update endpoint comes from the build-time env var `TRINITY_UPDATE_BASE_URL`
+  - if that env var is missing when the installer is built, the updater UI stays visible but reports `Not configured in this build`
+- `tauri.conf.json` now includes:
+  - `bundle.createUpdaterArtifacts = true`
+  - a safe placeholder updater endpoint required by the Tauri bundler
+  - the public updater key
+- Installer builds now generate signed updater artifacts:
+  - `.msi` and `.exe` bundles
+  - matching `.sig` files
+- This is app-side wiring only.
+  The next updater step is release publishing:
+  - generate the hosted manifest JSON
+  - upload artifacts/signatures to the server
+  - point release builds at the real `TRINITY_UPDATE_BASE_URL`
+
 ## 2026-05-07 - Startup opt-in and Windows launch registration
 
 - Trinity now persists two additional app settings:

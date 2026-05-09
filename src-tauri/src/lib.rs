@@ -18,10 +18,10 @@ use std::{
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use notify::{event::ModifyKind, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use models::{
-    AppSettings, AppStatus, BrowserIntegrationSettings, CreateDownloadJobRequest, DownloadJob,
-    DownloadProgressEvent, DownloadState, DownloadUrlMetadata, ExtensionDownloadRequest,
-    ReorderDownloadJobRequest, UpdateAppSettingsRequest, UpdateDownloadPriorityRequest,
-    UpdateDownloadSpeedLimitRequest,
+    AppSettings, AppStatus, AppUpdateInfo, AppUpdaterStatus, BrowserIntegrationSettings,
+    CreateDownloadJobRequest, DownloadJob, DownloadProgressEvent, DownloadState,
+    DownloadUrlMetadata, ExtensionDownloadRequest, ReorderDownloadJobRequest,
+    UpdateAppSettingsRequest, UpdateDownloadPriorityRequest, UpdateDownloadSpeedLimitRequest,
 };
 use reqwest::{
     header::{CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_RANGE, COOKIE, RANGE, REFERER, USER_AGENT},
@@ -29,6 +29,7 @@ use reqwest::{
 };
 use storage::Storage;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_updater::UpdaterExt;
 use url::Url;
 use uuid::Uuid;
 use chrono::Timelike;
@@ -74,6 +75,9 @@ const EXTENSION_BRIDGE_HOST: &str = "127.0.0.1";
 const EXTENSION_BRIDGE_PORT: u16 = 38491;
 const EXTENSION_DOWNLOAD_EVENT: &str = "extension-download-request";
 const EXTENSION_OPEN_OPTIONS_EVENT: &str = "extension-open-options";
+const APP_UPDATE_EVENT: &str = "app-update-progress";
+const TRINITY_UPDATER_PUBLIC_KEY: &str =
+    "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE5OTZBQzVFMkE1OERBMTcKUldRWDJsZ3FYcXlXR2NKZ2ZJcW9RWWpQSTVheTdUa2p2aFVGdmpTK1E3eGhlaCtlYnhyODMzaHMK";
 #[cfg(target_os = "windows")]
 const WINDOWS_RUN_KEY_PATH: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 #[cfg(target_os = "windows")]
@@ -202,6 +206,29 @@ fn normalize_proxy_mode(value: &str) -> String {
         "manual" => "manual".to_string(),
         _ => "system".to_string(),
     }
+}
+
+#[derive(serde::Serialize, Clone)]
+struct AppUpdateProgressEvent {
+    stage: String,
+    downloaded_bytes: usize,
+    total_bytes: Option<u64>,
+}
+
+fn updater_endpoint() -> Option<Url> {
+    let base_url = option_env!("TRINITY_UPDATE_BASE_URL")
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let manifest_url = if base_url.ends_with(".json") {
+        base_url.to_string()
+    } else {
+        format!("{}/latest.json", base_url.trim_end_matches('/'))
+    };
+    Url::parse(&manifest_url).ok()
+}
+
+fn updater_is_configured() -> bool {
+    updater_endpoint().is_some()
 }
 
 #[cfg(target_os = "windows")]
@@ -548,6 +575,92 @@ fn get_app_settings(state: State<'_, AppState>) -> Result<AppSettings, String> {
 }
 
 #[tauri::command]
+fn get_app_updater_status(app: AppHandle) -> AppUpdaterStatus {
+    AppUpdaterStatus {
+        configured: updater_is_configured(),
+        current_version: app.package_info().version.to_string(),
+    }
+}
+
+#[tauri::command]
+async fn check_for_app_update(app: AppHandle) -> Result<Option<AppUpdateInfo>, String> {
+    let endpoint = updater_endpoint().ok_or_else(|| {
+        "Updater is not configured in this build. Set TRINITY_UPDATE_BASE_URL before building the installer."
+            .to_string()
+    })?;
+
+    let update = app
+        .updater_builder()
+        .pubkey(TRINITY_UPDATER_PUBLIC_KEY)
+        .endpoints(vec![endpoint])
+        .map_err(|error| error.to_string())?
+        .build()
+        .map_err(|error| error.to_string())?
+        .check()
+        .await
+        .map_err(|error| error.to_string())?;
+
+    Ok(update.map(|release| AppUpdateInfo {
+        current_version: release.current_version,
+        version: release.version,
+        body: release.body,
+        date: release.date.map(|date| date.to_string()),
+    }))
+}
+
+#[tauri::command]
+async fn install_app_update(app: AppHandle) -> Result<(), String> {
+    let endpoint = updater_endpoint().ok_or_else(|| {
+        "Updater is not configured in this build. Set TRINITY_UPDATE_BASE_URL before building the installer."
+            .to_string()
+    })?;
+
+    let updater = app
+        .updater_builder()
+        .pubkey(TRINITY_UPDATER_PUBLIC_KEY)
+        .endpoints(vec![endpoint])
+        .map_err(|error| error.to_string())?
+        .build()
+        .map_err(|error| error.to_string())?;
+
+    let update = updater
+        .check()
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "No update is currently available.".to_string())?;
+
+    let app_for_progress = app.clone();
+    app.emit(
+        APP_UPDATE_EVENT,
+        AppUpdateProgressEvent {
+            stage: "starting".to_string(),
+            downloaded_bytes: 0,
+            total_bytes: None,
+        },
+    )
+    .map_err(|error| error.to_string())?;
+
+    update
+        .download_and_install(
+            move |chunk_length, content_length| {
+                let _ = app_for_progress.emit(
+                    APP_UPDATE_EVENT,
+                    AppUpdateProgressEvent {
+                        stage: "downloading".to_string(),
+                        downloaded_bytes: chunk_length,
+                        total_bytes: content_length.map(|value| value as u64),
+                    },
+                );
+            },
+            || {},
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
 fn update_app_settings(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -605,6 +718,8 @@ fn update_app_settings(
         avoid_sleep_with_active_downloads: request.avoid_sleep_with_active_downloads,
         avoid_sleep_with_scheduled_downloads: request.avoid_sleep_with_scheduled_downloads,
         allow_sleep_if_resumable: request.allow_sleep_if_resumable,
+        check_for_updates_automatically: request.check_for_updates_automatically,
+        install_updates_automatically: request.install_updates_automatically,
     };
     state.close_to_tray.store(request.close_to_tray, Ordering::Relaxed);
     state
@@ -2243,6 +2358,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let should_hide = window
@@ -2389,6 +2505,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_status,
             get_app_settings,
+            get_app_updater_status,
+            check_for_app_update,
+            install_app_update,
             update_app_settings,
             get_default_download_folder,
             get_system_file_icon,

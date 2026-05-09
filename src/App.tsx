@@ -546,6 +546,10 @@ function App() {
   const pendingIconKeysRef = useRef<Set<string>>(new Set());
   const settingsRef = useRef(settings);
   const autoUpdateCheckStartedRef = useRef(false);
+  const isCheckingForUpdateRef = useRef(false);
+  const isInstallingUpdateRef = useRef(false);
+  const notifiedAvailableUpdateVersionRef = useRef<string | null>(null);
+  const notifiedReadyUpdateVersionRef = useRef<string | null>(null);
   const effectiveUrlMetadata = browserObservedMetadata ?? urlMetadata;
   const extensionDisplayFileName =
     pendingSuggestedFileName.trim() ||
@@ -613,8 +617,16 @@ function App() {
     });
   }
 
-  async function checkForUpdates(options?: { silentIfCurrent?: boolean; autoInstall?: boolean }) {
-    if (!updaterStatus.configured || isCheckingForUpdate || isInstallingUpdate) {
+  async function checkForUpdates(options?: {
+    silentIfCurrent?: boolean;
+    autoInstall?: boolean;
+    notifyIfFound?: boolean;
+  }) {
+    if (
+      !updaterStatus.configured ||
+      isCheckingForUpdateRef.current ||
+      isInstallingUpdateRef.current
+    ) {
       return;
     }
 
@@ -627,8 +639,18 @@ function App() {
 
       if (update) {
         setUpdateStatusMessage(`Update ${update.version} is available.`);
+        if (
+          options?.notifyIfFound !== false &&
+          notifiedAvailableUpdateVersionRef.current !== update.version
+        ) {
+          notifiedAvailableUpdateVersionRef.current = update.version;
+          void sendNativeNotification(
+            "Trinity update available",
+            `Version ${update.version} is available.`,
+          );
+        }
         if (options?.autoInstall) {
-          await installAvailableUpdate();
+          await installAvailableUpdate(update);
         }
       } else {
         setUpdateDownloadProgress(null);
@@ -645,18 +667,34 @@ function App() {
     }
   }
 
-  async function installAvailableUpdate() {
-    if (!updaterStatus.configured || isInstallingUpdate) {
+  async function installAvailableUpdate(updateToInstall?: AppUpdateInfo | null) {
+    if (!updaterStatus.configured || isInstallingUpdateRef.current) {
       return;
     }
 
+    const targetVersion = updateToInstall?.version ?? availableUpdate?.version ?? null;
     setIsInstallingUpdate(true);
     setUpdateStatusMessage("Preparing update...");
     setUpdateDownloadProgress({ downloadedBytes: 0, totalBytes: null });
 
     try {
       await invoke("install_app_update");
-      setUpdateStatusMessage("Installer launched. Trinity will close to finish the update.");
+      try {
+        await invoke("show_main_window");
+      } catch (caughtError) {
+        console.error(caughtError);
+      }
+      if (targetVersion && notifiedReadyUpdateVersionRef.current !== targetVersion) {
+        notifiedReadyUpdateVersionRef.current = targetVersion;
+      }
+      void sendNativeNotification(
+        "Trinity update ready",
+        targetVersion
+          ? `Version ${targetVersion} is ready to finish installing.`
+          : "A Trinity update is ready to finish installing.",
+      );
+      setAvailableUpdate(null);
+      setUpdateStatusMessage("Update ready. Trinity will close to finish the installation.");
     } catch (caughtError) {
       setUpdateStatusMessage(String(caughtError));
       setUpdateDownloadProgress(null);
@@ -668,6 +706,14 @@ function App() {
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
+
+  useEffect(() => {
+    isCheckingForUpdateRef.current = isCheckingForUpdate;
+  }, [isCheckingForUpdate]);
+
+  useEffect(() => {
+    isInstallingUpdateRef.current = isInstallingUpdate;
+  }, [isInstallingUpdate]);
 
   useEffect(() => {
     invoke<AppUpdaterStatus>("get_app_updater_status")
@@ -756,12 +802,31 @@ function App() {
     void checkForUpdates({
       silentIfCurrent: true,
       autoInstall: settings.install_updates_automatically,
+      notifyIfFound: true,
     });
   }, [
     settings.check_for_updates_automatically,
     settings.install_updates_automatically,
     updaterStatus.configured,
   ]);
+
+  useEffect(() => {
+    if (!updaterStatus.configured || !settings.check_for_updates_automatically) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void checkForUpdates({
+        silentIfCurrent: true,
+        autoInstall: settingsRef.current.install_updates_automatically,
+        notifyIfFound: true,
+      });
+    }, 10 * 60 * 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [settings.check_for_updates_automatically, updaterStatus.configured]);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;

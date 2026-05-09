@@ -583,6 +583,11 @@ fn get_app_updater_status(app: AppHandle) -> AppUpdaterStatus {
 }
 
 #[tauri::command]
+fn show_main_window(app: AppHandle) {
+    focus_main_window(&app);
+}
+
+#[tauri::command]
 async fn check_for_app_update(app: AppHandle) -> Result<Option<AppUpdateInfo>, String> {
     let endpoint = updater_endpoint().ok_or_else(|| {
         "Updater is not configured in this build. Set TRINITY_UPDATE_BASE_URL before building the installer."
@@ -2506,6 +2511,7 @@ pub fn run() {
             app_status,
             get_app_settings,
             get_app_updater_status,
+            show_main_window,
             check_for_app_update,
             install_app_update,
             update_app_settings,

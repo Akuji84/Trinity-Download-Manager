@@ -143,6 +143,20 @@ impl Storage {
         self.connection.execute(
             "
             INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('theme', 'Dark');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('compact_downloads', '0');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
             VALUES ('max_concurrent_downloads', '3');
             ",
             [],
@@ -511,14 +525,6 @@ impl Storage {
             ",
             [],
         )?;
-        self.connection.execute(
-            "
-            INSERT OR IGNORE INTO settings (key, value)
-            VALUES ('test_toggle', '0');
-            ",
-            [],
-        )?;
-
         Ok(())
     }
 
@@ -1192,6 +1198,18 @@ impl Storage {
 
     pub fn get_app_settings(&self) -> Result<AppSettings> {
         let defaults = AppSettings::default();
+        let theme = self
+            .get_setting("theme")?
+            .map(|value| match value.trim().to_ascii_lowercase().as_str() {
+                "midnight" => "Midnight".to_string(),
+                _ => "Dark".to_string(),
+            })
+            .unwrap_or(defaults.theme);
+        let compact_downloads = self
+            .get_setting("compact_downloads")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.compact_downloads);
         let max_concurrent_downloads = self
             .get_setting("max_concurrent_downloads")?
             .and_then(|value| value.parse::<usize>().ok())
@@ -1445,13 +1463,9 @@ impl Storage {
             .and_then(|value| value.parse::<u8>().ok())
             .map(|value| value != 0)
             .unwrap_or(defaults.install_updates_automatically);
-        let test_toggle = self
-            .get_setting("test_toggle")?
-            .and_then(|value| value.parse::<u8>().ok())
-            .map(|value| value != 0)
-            .unwrap_or(defaults.test_toggle);
-
         Ok(AppSettings {
+            theme,
+            compact_downloads,
             max_concurrent_downloads,
             retry_enabled,
             retry_attempts,
@@ -1505,11 +1519,15 @@ impl Storage {
             allow_sleep_if_resumable,
             check_for_updates_automatically,
             install_updates_automatically,
-            test_toggle,
         })
     }
 
     pub fn update_app_settings(&self, settings: &AppSettings) -> Result<()> {
+        self.upsert_setting("theme", &settings.theme)?;
+        self.upsert_setting(
+            "compact_downloads",
+            if settings.compact_downloads { "1" } else { "0" },
+        )?;
         self.upsert_setting(
             "max_concurrent_downloads",
             settings.max_concurrent_downloads.to_string(),
@@ -1687,8 +1705,6 @@ impl Storage {
                 "0"
             },
         )?;
-        self.upsert_setting("test_toggle", if settings.test_toggle { "1" } else { "0" })?;
-
         Ok(())
     }
 

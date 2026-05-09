@@ -41,6 +41,11 @@ button {
   background: #242628;
 }
 
+.theme-midnight.app-shell {
+  color: #e6eef9;
+  background: #0d1622;
+}
+
 .command-bar {
   display: flex;
   align-items: stretch;
@@ -394,6 +399,49 @@ button {
   font-weight: 400;
 }
 
+.compact-downloads .download-row {
+  min-height: 32px;
+}
+
+.compact-downloads .download-primary-row {
+  min-height: 30px;
+}
+
+.compact-downloads .download-primary-row > span,
+.compact-downloads .download-primary-row > div {
+  padding: 2px 6px;
+}
+
+.compact-downloads .download-file-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.compact-downloads .download-name strong {
+  font-size: 13px;
+}
+
+.compact-downloads .download-name small,
+.compact-downloads .download-name em {
+  font-size: 10px;
+}
+
+.compact-downloads .state-pill {
+  min-width: 60px;
+  padding: 1px 5px;
+  font-size: 11px;
+}
+
+.compact-downloads .row-actions {
+  gap: 3px;
+}
+
+.compact-downloads .row-actions button {
+  height: 22px;
+  padding: 0 6px;
+  font-size: 11px;
+}
+
 .download-name small {
   color: #9db0c0;
   font-size: 11px;
@@ -560,6 +608,78 @@ button {
 
 .bottom-bar strong:first-of-type {
   margin-left: auto;
+}
+
+.theme-midnight .command-bar,
+.theme-midnight .table-filters,
+.theme-midnight .preferences-strip,
+.theme-midnight .modal-header {
+  background: #122131;
+}
+
+.theme-midnight .tabs,
+.theme-midnight .table-head,
+.theme-midnight .preferences-update-card,
+.theme-midnight .download-table {
+  background: #101c29;
+}
+
+.theme-midnight .main-pane,
+.theme-midnight .preferences-content,
+.theme-midnight .preferences-page,
+.theme-midnight .new-download-modal,
+.theme-midnight .startup-prompt-modal {
+  background: #0f1824;
+}
+
+.theme-midnight .category-tree,
+.theme-midnight .preferences-sidebar {
+  background: #0a121c;
+}
+
+.theme-midnight .download-row {
+  background: #142130;
+}
+
+.theme-midnight .download-row:nth-child(even) {
+  background: #101b28;
+}
+
+.theme-midnight .download-row:hover,
+.theme-midnight .preferences-nav-item:hover,
+.theme-midnight .tool-button:hover,
+.theme-midnight .icon-button:hover,
+.theme-midnight .preferences-back:hover {
+  background: #1b3148;
+}
+
+.theme-midnight .download-row.selected,
+.theme-midnight .preferences-nav-item.active {
+  background: #17384f;
+}
+
+.theme-midnight .bottom-bar {
+  background: #08111a;
+}
+
+.theme-midnight .table-search,
+.theme-midnight .table-filters select,
+.theme-midnight .table-search input,
+.theme-midnight .preferences-field input,
+.theme-midnight .preferences-field select,
+.theme-midnight .preferences-path-row input,
+.theme-midnight .preferences-traffic-grid input,
+.theme-midnight .preferences-traffic-grid select,
+.theme-midnight .add-form input {
+  background: #09131d;
+}
+
+.theme-midnight .row-actions button,
+.theme-midnight .preferences-secondary-action,
+.theme-midnight .browser-install-button,
+.theme-midnight .preferences-path-button,
+.theme-midnight .form-actions button {
+  background: #1a2a3b;
 }
 
 .view-slot {

@@ -184,6 +184,13 @@ fn normalize_default_folder_mode(value: &str) -> String {
     }
 }
 
+fn normalize_theme(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "midnight" => "Midnight".to_string(),
+        _ => "Dark".to_string(),
+    }
+}
+
 fn normalize_delete_button_action(value: &str) -> String {
     match value.trim() {
         "remove" => "remove".to_string(),
@@ -672,6 +679,8 @@ fn update_app_settings(
     request: UpdateAppSettingsRequest,
 ) -> Result<AppSettings, String> {
     let settings = AppSettings {
+        theme: normalize_theme(&request.theme),
+        compact_downloads: request.compact_downloads,
         max_concurrent_downloads: request.max_concurrent_downloads.clamp(1, 10),
         retry_enabled: request.retry_enabled,
         retry_attempts: request.retry_attempts.clamp(0, 10),
@@ -725,7 +734,6 @@ fn update_app_settings(
         allow_sleep_if_resumable: request.allow_sleep_if_resumable,
         check_for_updates_automatically: request.check_for_updates_automatically,
         install_updates_automatically: request.install_updates_automatically,
-        test_toggle: request.test_toggle,
     };
     state.close_to_tray.store(request.close_to_tray, Ordering::Relaxed);
     state

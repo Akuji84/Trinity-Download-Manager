@@ -63,6 +63,8 @@ type DownloadJob = {
 };
 
 type AppSettings = {
+  theme: string;
+  compact_downloads: boolean;
   max_concurrent_downloads: number;
   retry_enabled: boolean;
   retry_attempts: number;
@@ -116,7 +118,6 @@ type AppSettings = {
   allow_sleep_if_resumable: boolean;
   check_for_updates_automatically: boolean;
   install_updates_automatically: boolean;
-  test_toggle: boolean;
 };
 
 type AppUpdaterStatus = {
@@ -287,7 +288,6 @@ type PreferencesDraft = {
   avoidSleepWithActiveDownloads: boolean;
   avoidSleepWithScheduledDownloads: boolean;
   allowSleepIfResumable: boolean;
-  testToggle: boolean;
   backupEveryHours: string;
   closeToTray: boolean;
   bottomPanelFollowsSelection: boolean;
@@ -306,7 +306,7 @@ type PreferencesDraft = {
 
 function createPreferencesDraft(maxConcurrentDownloads: number): PreferencesDraft {
   return {
-    theme: "System",
+    theme: "Dark",
     uiStyle: "Trinity Classic",
     language: "English (United States)",
     launchAtStartup: false,
@@ -388,7 +388,6 @@ function createPreferencesDraft(maxConcurrentDownloads: number): PreferencesDraf
     avoidSleepWithActiveDownloads: true,
     avoidSleepWithScheduledDownloads: true,
     allowSleepIfResumable: true,
-    testToggle: false,
     backupEveryHours: "3 hours",
     closeToTray: true,
     bottomPanelFollowsSelection: true,
@@ -466,6 +465,8 @@ function App() {
   const [scheduleClock, setScheduleClock] = useState(() => Date.now());
   const [selectedJobIds, setSelectedJobIds] = useState<string[]>([]);
   const [settings, setSettings] = useState<AppSettings>({
+    theme: "Dark",
+    compact_downloads: false,
     max_concurrent_downloads: 3,
     retry_enabled: true,
     retry_attempts: 3,
@@ -519,7 +520,6 @@ function App() {
     allow_sleep_if_resumable: true,
     check_for_updates_automatically: true,
     install_updates_automatically: false,
-    test_toggle: false,
   });
   const [preferencesDraft, setPreferencesDraft] = useState<PreferencesDraft>(() =>
     createPreferencesDraft(3),
@@ -539,6 +539,8 @@ function App() {
     downloadedBytes: number;
     totalBytes: number | null;
   } | null>(null);
+  const appThemeClass = settings.theme === "Midnight" ? " theme-midnight" : " theme-dark";
+  const compactDownloadsClass = settings.compact_downloads ? " compact-downloads" : "";
   const [activeTab, setActiveTab] = useState<DownloadTabId>("all");
   const [activeCategory, setActiveCategory] = useState<CategoryFilterId>("all");
   const [queueSearch, setQueueSearch] = useState("");
@@ -729,6 +731,8 @@ function App() {
         setSettings(loadedSettings);
         setPreferencesDraft((currentDraft) => ({
           ...currentDraft,
+          theme: loadedSettings.theme,
+          compactDownloads: loadedSettings.compact_downloads,
           maxConcurrentDownloads: loadedSettings.max_concurrent_downloads,
           autoRetryFailedDownloads: loadedSettings.retry_enabled,
           retryMode: loadedSettings.retry_enabled ? "auto" : "manual",
@@ -783,7 +787,6 @@ function App() {
           avoidSleepWithScheduledDownloads:
             loadedSettings.avoid_sleep_with_scheduled_downloads,
           allowSleepIfResumable: loadedSettings.allow_sleep_if_resumable,
-          testToggle: loadedSettings.test_toggle,
         }));
         if (!loadedSettings.startup_prompt_answered) {
           setStartupPromptError("");
@@ -1370,6 +1373,8 @@ function App() {
       const currentSettings = settingsRef.current;
       const updatedSettings = await invoke<AppSettings>("update_app_settings", {
         request: {
+          theme: currentSettings.theme,
+          compact_downloads: currentSettings.compact_downloads,
           max_concurrent_downloads: currentSettings.max_concurrent_downloads,
           retry_enabled: currentSettings.retry_enabled,
           retry_attempts: currentSettings.retry_attempts,
@@ -1428,12 +1433,13 @@ function App() {
             currentSettings.check_for_updates_automatically,
           install_updates_automatically:
             currentSettings.install_updates_automatically,
-          test_toggle: currentSettings.test_toggle,
         },
       });
       setSettings(updatedSettings);
       setPreferencesDraft((currentDraft) => ({
         ...currentDraft,
+        theme: updatedSettings.theme,
+        compactDownloads: updatedSettings.compact_downloads,
         launchAtStartup: updatedSettings.launch_at_startup,
         startMinimized: updatedSettings.start_minimized,
         closeToTray: updatedSettings.close_to_tray,
@@ -1453,7 +1459,6 @@ function App() {
           updatedSettings.check_for_updates_automatically,
         installUpdatesAutomatically:
           updatedSettings.install_updates_automatically,
-        testToggle: updatedSettings.test_toggle,
       }));
       closeStartupPrompt();
     } catch (caughtError) {
@@ -1598,6 +1603,8 @@ function App() {
     event.preventDefault();
     const updatedSettings = await invoke<AppSettings>("update_app_settings", {
       request: {
+        theme: preferencesDraft.theme,
+        compact_downloads: preferencesDraft.compactDownloads,
         max_concurrent_downloads: preferencesDraft.maxConcurrentDownloads,
         retry_enabled: preferencesDraft.retryMode === "auto",
         retry_attempts: preferencesDraft.retryAttempts,
@@ -1655,12 +1662,13 @@ function App() {
           preferencesDraft.checkForUpdatesAutomatically,
         install_updates_automatically:
           preferencesDraft.installUpdatesAutomatically,
-        test_toggle: preferencesDraft.testToggle,
       },
     });
     setSettings(updatedSettings);
     setPreferencesDraft((currentDraft) => ({
       ...currentDraft,
+      theme: updatedSettings.theme,
+      compactDownloads: updatedSettings.compact_downloads,
       maxConcurrentDownloads: updatedSettings.max_concurrent_downloads,
       autoRetryFailedDownloads: updatedSettings.retry_enabled,
       retryMode: updatedSettings.retry_enabled ? "auto" : "manual",
@@ -1717,7 +1725,6 @@ function App() {
         updatedSettings.check_for_updates_automatically,
       installUpdatesAutomatically:
         updatedSettings.install_updates_automatically,
-      testToggle: updatedSettings.test_toggle,
     }));
     if (
       updatedSettings.notify_added ||
@@ -1734,6 +1741,8 @@ function App() {
   function openPreferencesPage() {
     setPreferencesDraft((currentDraft) => ({
       ...currentDraft,
+      theme: settings.theme,
+      compactDownloads: settings.compact_downloads,
       maxConcurrentDownloads: settings.max_concurrent_downloads,
       autoRetryFailedDownloads: settings.retry_enabled,
       retryMode: settings.retry_enabled ? "auto" : "manual",
@@ -1957,7 +1966,7 @@ function App() {
   const scheduleNow = new Date(scheduleClock);
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell${appThemeClass}${compactDownloadsClass}`}>
       <section className="command-bar" aria-label="Download commands">
         <button className="tool-button add" onClick={() => openBlankAddDialog()}>
           <span>
@@ -2147,7 +2156,7 @@ function App() {
                       <h3>General</h3>
                       <p>Desktop behavior, default folders, updates, and list behavior.</p>
                     </div>
-                    <span className="preferences-badge live">Live + placeholders</span>
+                    <span className="preferences-badge live">Mostly live</span>
                   </div>
                   <div className="preferences-grid two-column">
                     <label className="preferences-field">
@@ -2156,9 +2165,8 @@ function App() {
                         onChange={(event) => setPreferenceValue("theme", event.currentTarget.value)}
                         value={preferencesDraft.theme}
                       >
-                        <option>System</option>
                         <option>Dark</option>
-                        <option>Light</option>
+                        <option>Midnight</option>
                       </select>
                     </label>
                     <label className="preferences-field">
@@ -2410,16 +2418,6 @@ function App() {
                           type="checkbox"
                         />
                         Install updates automatically
-                      </label>
-                      <label className="preferences-toggle">
-                        <input
-                          checked={preferencesDraft.testToggle}
-                          onChange={(event) =>
-                            setPreferenceValue("testToggle", event.currentTarget.checked)
-                          }
-                          type="checkbox"
-                        />
-                        Test
                       </label>
                     </div>
                     <div className="preferences-update-card">

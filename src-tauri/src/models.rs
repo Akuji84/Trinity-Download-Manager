@@ -160,6 +160,8 @@ pub struct BrowserIntegrationSettings {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AppSettings {
+    pub theme: String,
+    pub compact_downloads: bool,
     pub max_concurrent_downloads: usize,
     pub retry_enabled: bool,
     pub retry_attempts: u32,
@@ -213,12 +215,13 @@ pub struct AppSettings {
     pub allow_sleep_if_resumable: bool,
     pub check_for_updates_automatically: bool,
     pub install_updates_automatically: bool,
-    pub test_toggle: bool,
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
+            theme: "Dark".to_string(),
+            compact_downloads: false,
             max_concurrent_downloads: 3,
             retry_enabled: true,
             retry_attempts: 3,
@@ -272,13 +275,14 @@ impl Default for AppSettings {
             allow_sleep_if_resumable: true,
             check_for_updates_automatically: true,
             install_updates_automatically: false,
-            test_toggle: false,
         }
     }
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateAppSettingsRequest {
+    pub theme: String,
+    pub compact_downloads: bool,
     pub max_concurrent_downloads: usize,
     pub retry_enabled: bool,
     pub retry_attempts: u32,
@@ -332,7 +336,6 @@ pub struct UpdateAppSettingsRequest {
     pub allow_sleep_if_resumable: bool,
     pub check_for_updates_automatically: bool,
     pub install_updates_automatically: bool,
-    pub test_toggle: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

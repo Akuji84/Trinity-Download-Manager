@@ -1982,6 +1982,10 @@ function App() {
     .filter((job) => job.state === "Running")
     .reduce((total, job) => total + job.speed_bps, 0);
   const selectedJobs = jobs.filter((job) => selectedJobIds.includes(job.id));
+  const selectedJobEtaSeconds =
+    selectedJobs.length === 1 ? estimateDownloadEtaSeconds(selectedJobs[0]) : null;
+  const queueEtaSeconds = estimateQueueEtaSeconds(jobs, globalSpeed);
+  const bottomBarEtaSeconds = selectedJobEtaSeconds ?? queueEtaSeconds;
   const canResumeSelected = selectedJobs.some(canStart);
   const canStopSelected = selectedJobs.some((job) => job.state === "Running");
   const canStopAll = jobs.some((job) => job.state === "Running");
@@ -3852,6 +3856,14 @@ function App() {
                             {settings.show_built_in_tags && queuePolicySummary ? (
                               <small className="queue-policy-detail">{queuePolicySummary}</small>
                             ) : null}
+                            {(() => {
+                              const jobEtaSeconds = estimateDownloadEtaSeconds(job);
+                              return jobEtaSeconds !== null ? (
+                                <small className="eta-detail">
+                                  ETA {formatEta(jobEtaSeconds)}
+                                </small>
+                              ) : null;
+                            })()}
                             {job.error_message && job.state !== "Paused" ? (
                               <em title={job.error_message}>{job.error_message}</em>
                             ) : null}
@@ -3940,6 +3952,9 @@ function App() {
       </div>
 
       <footer className="bottom-bar">
+        <span className="eta-summary">
+          ETA {bottomBarEtaSeconds !== null ? formatEta(bottomBarEtaSeconds) : "--"}
+        </span>
         <strong>Down {formatBytes(globalSpeed)}/s</strong>
         <strong>Up 0 B/s</strong>
       </footer>
@@ -4496,6 +4511,58 @@ function formatSize(job: DownloadJob) {
   }
 
   return "";
+}
+
+function estimateDownloadEtaSeconds(job: DownloadJob) {
+  if (job.state !== "Running" || !job.total_bytes || job.speed_bps <= 0) {
+    return null;
+  }
+
+  const remainingBytes = job.total_bytes - job.downloaded_bytes;
+  if (remainingBytes <= 0) {
+    return 0;
+  }
+
+  return Math.ceil(remainingBytes / job.speed_bps);
+}
+
+function estimateQueueEtaSeconds(jobs: DownloadJob[], globalSpeed: number) {
+  if (globalSpeed <= 0) {
+    return null;
+  }
+
+  const remainingBytes = jobs
+    .filter((job) => job.state === "Running" && job.total_bytes !== null)
+    .reduce((total, job) => {
+      const pendingBytes = Math.max(0, (job.total_bytes ?? 0) - job.downloaded_bytes);
+      return total + pendingBytes;
+    }, 0);
+
+  if (remainingBytes <= 0) {
+    return null;
+  }
+
+  return Math.ceil(remainingBytes / globalSpeed);
+}
+
+function formatEta(totalSeconds: number) {
+  if (totalSeconds <= 0) {
+    return "0s";
+  }
+
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+
+  return `${seconds}s`;
 }
 
 function formatBytes(bytes: number) {

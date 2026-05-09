@@ -460,6 +460,10 @@ button {
   color: #b2d8ff;
 }
 
+.download-name .eta-detail {
+  color: #9ce6b0;
+}
+
 .download-name .speed-policy-detail {
   color: #b5dfb4;
 }
@@ -603,6 +607,11 @@ button {
 .bottom-bar strong {
   color: #d5ffd0;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.bottom-bar .eta-summary {
+  color: #d7e2ec;
   font-variant-numeric: tabular-nums;
 }
 

@@ -1149,6 +1149,20 @@ Exit criteria:
   - `%url%` -> source URL
 - Arguments are split with a simple quote-aware parser before spawning the external process.
 
+### 2026-05-08 - Live Windows sleep-prevention settings
+**Commit:** `pending`
+
+- Wired the Advanced > Power management settings end to end:
+  - `avoid_sleep_with_active_downloads`
+  - `avoid_sleep_with_scheduled_downloads`
+  - `allow_sleep_if_resumable`
+- Added real Windows sleep-prevention handling with `SetThreadExecutionState`.
+- Trinity now keeps the system awake when:
+  - active downloads are running and the active-downloads setting is enabled
+  - queued scheduled jobs exist and the scheduled-work setting is enabled
+- If `allow_sleep_if_resumable` is enabled, Trinity does not block sleep when all currently running jobs are resumable.
+- Sleep-prevention state is recalculated on startup, settings changes, queue mutations, and terminal download state transitions.
+
 ## Next Step
 
 Keep shrinking the remaining legacy resolver/re-discovery logic so browser-observed request and response data are the primary source of truth throughout the extension and app.

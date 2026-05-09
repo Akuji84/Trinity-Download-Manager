@@ -111,6 +111,9 @@ type AppSettings = {
   completion_hook_enabled: boolean;
   completion_hook_path: string;
   completion_hook_arguments: string;
+  avoid_sleep_with_active_downloads: boolean;
+  avoid_sleep_with_scheduled_downloads: boolean;
+  allow_sleep_if_resumable: boolean;
 };
 
 type DownloadProgressEvent = {
@@ -494,6 +497,9 @@ function App() {
     completion_hook_enabled: false,
     completion_hook_path: "",
     completion_hook_arguments: "%path%",
+    avoid_sleep_with_active_downloads: true,
+    avoid_sleep_with_scheduled_downloads: true,
+    allow_sleep_if_resumable: true,
   });
   const [preferencesDraft, setPreferencesDraft] = useState<PreferencesDraft>(() =>
     createPreferencesDraft(3),
@@ -636,6 +642,10 @@ function App() {
           completionHookEnabled: loadedSettings.completion_hook_enabled,
           completionHookPath: loadedSettings.completion_hook_path,
           completionHookArguments: loadedSettings.completion_hook_arguments,
+          avoidSleepWithActiveDownloads: loadedSettings.avoid_sleep_with_active_downloads,
+          avoidSleepWithScheduledDownloads:
+            loadedSettings.avoid_sleep_with_scheduled_downloads,
+          allowSleepIfResumable: loadedSettings.allow_sleep_if_resumable,
         }));
         if (!loadedSettings.startup_prompt_answered) {
           setStartupPromptError("");
@@ -1197,6 +1207,11 @@ function App() {
           completion_hook_enabled: currentSettings.completion_hook_enabled,
           completion_hook_path: currentSettings.completion_hook_path,
           completion_hook_arguments: currentSettings.completion_hook_arguments,
+          avoid_sleep_with_active_downloads:
+            currentSettings.avoid_sleep_with_active_downloads,
+          avoid_sleep_with_scheduled_downloads:
+            currentSettings.avoid_sleep_with_scheduled_downloads,
+          allow_sleep_if_resumable: currentSettings.allow_sleep_if_resumable,
         },
       });
       setSettings(updatedSettings);
@@ -1213,6 +1228,10 @@ function App() {
         completionHookEnabled: updatedSettings.completion_hook_enabled,
         completionHookPath: updatedSettings.completion_hook_path,
         completionHookArguments: updatedSettings.completion_hook_arguments,
+        avoidSleepWithActiveDownloads: updatedSettings.avoid_sleep_with_active_downloads,
+        avoidSleepWithScheduledDownloads:
+          updatedSettings.avoid_sleep_with_scheduled_downloads,
+        allowSleepIfResumable: updatedSettings.allow_sleep_if_resumable,
       }));
       closeStartupPrompt();
     } catch (caughtError) {
@@ -1406,6 +1425,10 @@ function App() {
         completion_hook_enabled: preferencesDraft.completionHookEnabled,
         completion_hook_path: preferencesDraft.completionHookPath,
         completion_hook_arguments: preferencesDraft.completionHookArguments,
+        avoid_sleep_with_active_downloads: preferencesDraft.avoidSleepWithActiveDownloads,
+        avoid_sleep_with_scheduled_downloads:
+          preferencesDraft.avoidSleepWithScheduledDownloads,
+        allow_sleep_if_resumable: preferencesDraft.allowSleepIfResumable,
       },
     });
     setSettings(updatedSettings);
@@ -1459,6 +1482,10 @@ function App() {
       completionHookEnabled: updatedSettings.completion_hook_enabled,
       completionHookPath: updatedSettings.completion_hook_path,
       completionHookArguments: updatedSettings.completion_hook_arguments,
+      avoidSleepWithActiveDownloads: updatedSettings.avoid_sleep_with_active_downloads,
+      avoidSleepWithScheduledDownloads:
+        updatedSettings.avoid_sleep_with_scheduled_downloads,
+      allowSleepIfResumable: updatedSettings.allow_sleep_if_resumable,
     }));
     if (
       updatedSettings.notify_added ||
@@ -1523,6 +1550,9 @@ function App() {
       completionHookEnabled: settings.completion_hook_enabled,
       completionHookPath: settings.completion_hook_path,
       completionHookArguments: settings.completion_hook_arguments,
+      avoidSleepWithActiveDownloads: settings.avoid_sleep_with_active_downloads,
+      avoidSleepWithScheduledDownloads: settings.avoid_sleep_with_scheduled_downloads,
+      allowSleepIfResumable: settings.allow_sleep_if_resumable,
     }));
     setPreferencesStatus("");
     setActivePreferencesSection("general");

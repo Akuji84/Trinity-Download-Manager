@@ -476,6 +476,27 @@ impl Storage {
             ",
             [],
         )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('avoid_sleep_with_active_downloads', '1');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('avoid_sleep_with_scheduled_downloads', '1');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('allow_sleep_if_resumable', '1');
+            ",
+            [],
+        )?;
 
         Ok(())
     }
@@ -1378,6 +1399,21 @@ impl Storage {
         let completion_hook_arguments = self
             .get_setting("completion_hook_arguments")?
             .unwrap_or(defaults.completion_hook_arguments);
+        let avoid_sleep_with_active_downloads = self
+            .get_setting("avoid_sleep_with_active_downloads")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.avoid_sleep_with_active_downloads);
+        let avoid_sleep_with_scheduled_downloads = self
+            .get_setting("avoid_sleep_with_scheduled_downloads")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.avoid_sleep_with_scheduled_downloads);
+        let allow_sleep_if_resumable = self
+            .get_setting("allow_sleep_if_resumable")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.allow_sleep_if_resumable);
 
         Ok(AppSettings {
             max_concurrent_downloads,
@@ -1428,6 +1464,9 @@ impl Storage {
             completion_hook_enabled,
             completion_hook_path,
             completion_hook_arguments,
+            avoid_sleep_with_active_downloads,
+            avoid_sleep_with_scheduled_downloads,
+            allow_sleep_if_resumable,
         })
     }
 
@@ -1572,6 +1611,26 @@ impl Storage {
         self.upsert_setting(
             "completion_hook_arguments",
             &settings.completion_hook_arguments,
+        )?;
+        self.upsert_setting(
+            "avoid_sleep_with_active_downloads",
+            if settings.avoid_sleep_with_active_downloads {
+                "1"
+            } else {
+                "0"
+            },
+        )?;
+        self.upsert_setting(
+            "avoid_sleep_with_scheduled_downloads",
+            if settings.avoid_sleep_with_scheduled_downloads {
+                "1"
+            } else {
+                "0"
+            },
+        )?;
+        self.upsert_setting(
+            "allow_sleep_if_resumable",
+            if settings.allow_sleep_if_resumable { "1" } else { "0" },
         )?;
 
         Ok(())

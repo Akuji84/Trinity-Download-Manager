@@ -52,6 +52,7 @@ use windows::{
             },
             WindowsAndMessaging::{DestroyIcon, DrawIconEx, GetSystemMetrics, DI_NORMAL, HICON, SM_CXSMICON, SM_CYSMICON},
         },
+        System::Power::{SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED},
     },
 };
 
@@ -66,6 +67,7 @@ struct AppState {
     queue_running: AtomicBool,
     close_to_tray: AtomicBool,
     show_tray_activity: AtomicBool,
+    sleep_prevention_active: AtomicBool,
 }
 
 const EXTENSION_BRIDGE_HOST: &str = "127.0.0.1";
@@ -200,6 +202,68 @@ fn normalize_proxy_mode(value: &str) -> String {
         "manual" => "manual".to_string(),
         _ => "system".to_string(),
     }
+}
+
+#[cfg(target_os = "windows")]
+fn apply_sleep_prevention_state(state: &AppState, should_prevent_sleep: bool) {
+    let previous_state = state
+        .sleep_prevention_active
+        .swap(should_prevent_sleep, Ordering::Relaxed);
+    if previous_state == should_prevent_sleep {
+        return;
+    }
+
+    let execution_state = if should_prevent_sleep {
+        ES_CONTINUOUS | ES_SYSTEM_REQUIRED
+    } else {
+        ES_CONTINUOUS
+    };
+
+    unsafe {
+        let _ = SetThreadExecutionState(execution_state);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn apply_sleep_prevention_state(_state: &AppState, _should_prevent_sleep: bool) {}
+
+fn update_sleep_prevention(app: &AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let (settings, jobs) = {
+        let storage = state
+            .storage
+            .lock()
+            .map_err(|_| "Storage lock is unavailable.".to_string())?;
+        let settings = storage
+            .get_app_settings()
+            .map_err(|error| error.to_string())?;
+        let jobs = storage
+            .list_download_jobs()
+            .map_err(|error| error.to_string())?;
+        (settings, jobs)
+    };
+
+    let running_jobs = jobs
+        .iter()
+        .filter(|job| matches!(job.state, DownloadState::Running))
+        .collect::<Vec<_>>();
+    let has_non_resumable_running_jobs = running_jobs.iter().any(|job| !job.is_resumable);
+    let has_running_jobs = !running_jobs.is_empty();
+    let has_pending_scheduled_jobs = jobs.iter().any(|job| {
+        matches!(job.state, DownloadState::Queued) && job.scheduler_enabled
+    });
+
+    let should_prevent_sleep_for_active = settings.avoid_sleep_with_active_downloads
+        && has_running_jobs
+        && !(settings.allow_sleep_if_resumable && !has_non_resumable_running_jobs);
+    let should_prevent_sleep_for_scheduled = settings.avoid_sleep_with_scheduled_downloads
+        && has_pending_scheduled_jobs;
+
+    apply_sleep_prevention_state(
+        &state,
+        should_prevent_sleep_for_active || should_prevent_sleep_for_scheduled,
+    );
+    Ok(())
 }
 
 fn parse_command_arguments(value: &str) -> Vec<String> {
@@ -538,6 +602,9 @@ fn update_app_settings(
         completion_hook_enabled: request.completion_hook_enabled,
         completion_hook_path: request.completion_hook_path.trim().to_string(),
         completion_hook_arguments: request.completion_hook_arguments.trim().to_string(),
+        avoid_sleep_with_active_downloads: request.avoid_sleep_with_active_downloads,
+        avoid_sleep_with_scheduled_downloads: request.avoid_sleep_with_scheduled_downloads,
+        allow_sleep_if_resumable: request.allow_sleep_if_resumable,
     };
     state.close_to_tray.store(request.close_to_tray, Ordering::Relaxed);
     state
@@ -557,6 +624,7 @@ fn update_app_settings(
         *client_guard = build_http_client(&settings);
     }
     sync_launch_at_startup_setting(settings.launch_at_startup)?;
+    update_sleep_prevention(&app)?;
     pump_queue(app.clone())?;
     if let Ok(storage) = state.storage.lock() {
         if let Ok(jobs) = load_jobs_with_cleanup(&storage) {
@@ -804,6 +872,7 @@ fn create_download_job(
         .ok_or_else(|| "Created job could not be loaded.".to_string())?;
 
     drop(storage);
+    update_sleep_prevention(&app)?;
     pump_queue(app)?;
 
     Ok(created_job)
@@ -825,6 +894,7 @@ fn move_download_job_up(
     drop(storage);
 
     if moved {
+        update_sleep_prevention(&app)?;
         pump_queue(app)?;
     }
 
@@ -847,6 +917,7 @@ fn move_download_job_down(
     drop(storage);
 
     if moved {
+        update_sleep_prevention(&app)?;
         pump_queue(app)?;
     }
 
@@ -869,6 +940,7 @@ fn reorder_download_job(
     drop(storage);
 
     if reordered {
+        update_sleep_prevention(&app)?;
         pump_queue(app)?;
     }
 
@@ -891,6 +963,7 @@ fn update_download_priority(
     drop(storage);
 
     if updated {
+        update_sleep_prevention(&app)?;
         pump_queue(app)?;
     }
 
@@ -899,6 +972,7 @@ fn update_download_priority(
 
 #[tauri::command]
 fn update_download_speed_limit(
+    app: AppHandle,
     state: State<'_, AppState>,
     request: UpdateDownloadSpeedLimitRequest,
 ) -> Result<bool, String> {
@@ -907,9 +981,14 @@ fn update_download_speed_limit(
         .lock()
         .map_err(|_| "Storage lock is unavailable.".to_string())?;
 
-    storage
+    let updated = storage
         .update_download_speed_limit(&request.id, request.speed_limit_kbps)
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    drop(storage);
+    if updated {
+        update_sleep_prevention(&app)?;
+    }
+    Ok(updated)
 }
 
 #[tauri::command]
@@ -949,17 +1028,27 @@ fn delete_download_job(
         )?;
     }
 
-    storage.delete_download_job(&id).map_err(|error| error.to_string())
+    let deleted = storage.delete_download_job(&id).map_err(|error| error.to_string())?;
+    drop(storage);
+    if deleted {
+        update_sleep_prevention(&app)?;
+    }
+    Ok(deleted)
 }
 
 #[tauri::command]
-fn remove_download_job(state: State<'_, AppState>, id: String) -> Result<bool, String> {
+fn remove_download_job(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<bool, String> {
     let storage = state
         .storage
         .lock()
         .map_err(|_| "Storage lock is unavailable.".to_string())?;
 
-    storage.delete_download_job(&id).map_err(|error| error.to_string())
+    let deleted = storage.delete_download_job(&id).map_err(|error| error.to_string())?;
+    drop(storage);
+    if deleted {
+        update_sleep_prevention(&app)?;
+    }
+    Ok(deleted)
 }
 
 #[tauri::command]
@@ -979,6 +1068,7 @@ fn start_download_job(
         .map_err(|error| error.to_string())?;
     drop(storage);
 
+    update_sleep_prevention(&app)?;
     pump_queue(app)?;
 
     Ok(())
@@ -1058,7 +1148,7 @@ fn reveal_in_folder(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn stop_queue(state: State<'_, AppState>) -> Result<(), String> {
+fn stop_queue(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     state.queue_running.store(false, Ordering::Relaxed);
 
     let active_controls = state
@@ -1073,6 +1163,7 @@ fn stop_queue(state: State<'_, AppState>) -> Result<(), String> {
         control.pause_requested.store(true, Ordering::Relaxed);
     }
 
+    update_sleep_prevention(&app)?;
     Ok(())
 }
 
@@ -1394,6 +1485,8 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
         if let (Some(settings), Some(job)) = (completion_hook_settings.as_ref(), completion_hook_job.as_ref()) {
             execute_completion_hook(settings, job);
         }
+
+        let _ = update_sleep_prevention(&app);
 
         if should_pump_now {
             let _ = pump_queue(app);
@@ -2205,6 +2298,7 @@ pub fn run() {
                 queue_running: AtomicBool::new(true),
                 close_to_tray: AtomicBool::new(initial_settings.close_to_tray),
                 show_tray_activity: AtomicBool::new(initial_settings.show_tray_activity),
+                sleep_prevention_active: AtomicBool::new(false),
             });
             let state = app.state::<AppState>();
             let jobs = {
@@ -2234,6 +2328,12 @@ pub fn run() {
                 ))
             })?;
             sync_launch_at_startup_setting(initial_settings.launch_at_startup).map_err(|message| {
+                Box::<dyn std::error::Error>::from(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    message,
+                ))
+            })?;
+            update_sleep_prevention(app.handle()).map_err(|message| {
                 Box::<dyn std::error::Error>::from(std::io::Error::new(
                     std::io::ErrorKind::Other,
                     message,

@@ -208,6 +208,9 @@ pub struct AppSettings {
     pub completion_hook_enabled: bool,
     pub completion_hook_path: String,
     pub completion_hook_arguments: String,
+    pub avoid_sleep_with_active_downloads: bool,
+    pub avoid_sleep_with_scheduled_downloads: bool,
+    pub allow_sleep_if_resumable: bool,
 }
 
 impl Default for AppSettings {
@@ -261,6 +264,9 @@ impl Default for AppSettings {
             completion_hook_enabled: false,
             completion_hook_path: String::new(),
             completion_hook_arguments: "%path%".to_string(),
+            avoid_sleep_with_active_downloads: true,
+            avoid_sleep_with_scheduled_downloads: true,
+            allow_sleep_if_resumable: true,
         }
     }
 }
@@ -315,6 +321,9 @@ pub struct UpdateAppSettingsRequest {
     pub completion_hook_enabled: bool,
     pub completion_hook_path: String,
     pub completion_hook_arguments: String,
+    pub avoid_sleep_with_active_downloads: bool,
+    pub avoid_sleep_with_scheduled_downloads: bool,
+    pub allow_sleep_if_resumable: bool,
 }
 
 impl From<&AppSettings> for BrowserIntegrationSettings {

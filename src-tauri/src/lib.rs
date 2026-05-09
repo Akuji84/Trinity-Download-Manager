@@ -705,6 +705,7 @@ fn update_app_settings(
         bottom_panel_follows_selection: request.bottom_panel_follows_selection,
         show_tray_activity: request.show_tray_activity,
         use_custom_sort_order: request.use_custom_sort_order,
+        show_built_in_tags: request.show_built_in_tags,
         skip_web_pages: request.skip_web_pages,
         use_server_file_time: request.use_server_file_time,
         mark_downloaded_files: request.mark_downloaded_files,

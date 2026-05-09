@@ -89,6 +89,7 @@ type AppSettings = {
   bottom_panel_follows_selection: boolean;
   show_tray_activity: boolean;
   use_custom_sort_order: boolean;
+  show_built_in_tags: boolean;
   skip_web_pages: boolean;
   use_server_file_time: boolean;
   mark_downloaded_files: boolean;
@@ -493,6 +494,7 @@ function App() {
     bottom_panel_follows_selection: true,
     show_tray_activity: true,
     use_custom_sort_order: false,
+    show_built_in_tags: true,
     skip_web_pages: true,
     use_server_file_time: false,
     mark_downloaded_files: true,
@@ -765,6 +767,7 @@ function App() {
           bottomPanelFollowsSelection: loadedSettings.bottom_panel_follows_selection,
           showTrayActivity: loadedSettings.show_tray_activity,
           useCustomSortOrder: loadedSettings.use_custom_sort_order,
+          showBuiltInTags: loadedSettings.show_built_in_tags,
           skipWebPages: loadedSettings.skip_web_pages,
           useServerFileTime: loadedSettings.use_server_file_time,
           markDownloadedFiles: loadedSettings.mark_downloaded_files,
@@ -1420,6 +1423,7 @@ function App() {
           bottom_panel_follows_selection: currentSettings.bottom_panel_follows_selection,
           show_tray_activity: currentSettings.show_tray_activity,
           use_custom_sort_order: currentSettings.use_custom_sort_order,
+          show_built_in_tags: currentSettings.show_built_in_tags,
           skip_web_pages: currentSettings.skip_web_pages,
           use_server_file_time: currentSettings.use_server_file_time,
           mark_downloaded_files: currentSettings.mark_downloaded_files,
@@ -1650,6 +1654,7 @@ function App() {
         bottom_panel_follows_selection: preferencesDraft.bottomPanelFollowsSelection,
         show_tray_activity: preferencesDraft.showTrayActivity,
         use_custom_sort_order: preferencesDraft.useCustomSortOrder,
+        show_built_in_tags: preferencesDraft.showBuiltInTags,
         skip_web_pages: preferencesDraft.skipWebPages,
         use_server_file_time: preferencesDraft.useServerFileTime,
         mark_downloaded_files: preferencesDraft.markDownloadedFiles,
@@ -1714,6 +1719,7 @@ function App() {
       bottomPanelFollowsSelection: updatedSettings.bottom_panel_follows_selection,
       showTrayActivity: updatedSettings.show_tray_activity,
       useCustomSortOrder: updatedSettings.use_custom_sort_order,
+      showBuiltInTags: updatedSettings.show_built_in_tags,
       skipWebPages: updatedSettings.skip_web_pages,
       useServerFileTime: updatedSettings.use_server_file_time,
       markDownloadedFiles: updatedSettings.mark_downloaded_files,
@@ -1788,6 +1794,7 @@ function App() {
       bottomPanelFollowsSelection: settings.bottom_panel_follows_selection,
       showTrayActivity: settings.show_tray_activity,
       useCustomSortOrder: settings.use_custom_sort_order,
+      showBuiltInTags: settings.show_built_in_tags,
       skipWebPages: settings.skip_web_pages,
       useServerFileTime: settings.use_server_file_time,
       markDownloadedFiles: settings.mark_downloaded_files,
@@ -3831,18 +3838,18 @@ function App() {
                                   <small title={job.url}>{job.url}</small>
                               </div>
                             </div>
-                            {job.scheduler_enabled ? (
+                            {settings.show_built_in_tags && job.scheduler_enabled ? (
                               <small className="schedule-detail" title={scheduleSummary}>
                                 {scheduleSummary}
                               </small>
                             ) : null}
-                            {waitingForSchedule ? (
+                            {settings.show_built_in_tags && waitingForSchedule ? (
                               <small className="schedule-detail waiting">
                                 Waiting for schedule window
                                 {nextScheduledStart ? ` - Next start ${nextScheduledStart}` : ""}
                               </small>
                             ) : null}
-                            {queuePolicySummary ? (
+                            {settings.show_built_in_tags && queuePolicySummary ? (
                               <small className="queue-policy-detail">{queuePolicySummary}</small>
                             ) : null}
                             {job.error_message && job.state !== "Paused" ? (

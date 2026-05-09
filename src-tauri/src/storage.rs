@@ -325,6 +325,13 @@ impl Storage {
         self.connection.execute(
             "
             INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('show_built_in_tags', '1');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
             VALUES ('skip_web_pages', '1');
             ",
             [],
@@ -1332,6 +1339,11 @@ impl Storage {
             .and_then(|value| value.parse::<u8>().ok())
             .map(|value| value != 0)
             .unwrap_or(defaults.use_custom_sort_order);
+        let show_built_in_tags = self
+            .get_setting("show_built_in_tags")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.show_built_in_tags);
         let skip_web_pages = self
             .get_setting("skip_web_pages")?
             .and_then(|value| value.parse::<u8>().ok())
@@ -1490,6 +1502,7 @@ impl Storage {
             bottom_panel_follows_selection,
             show_tray_activity,
             use_custom_sort_order,
+            show_built_in_tags,
             skip_web_pages,
             use_server_file_time,
             mark_downloaded_files,
@@ -1600,6 +1613,10 @@ impl Storage {
         self.upsert_setting(
             "use_custom_sort_order",
             if settings.use_custom_sort_order { "1" } else { "0" },
+        )?;
+        self.upsert_setting(
+            "show_built_in_tags",
+            if settings.show_built_in_tags { "1" } else { "0" },
         )?;
         self.upsert_setting(
             "skip_web_pages",

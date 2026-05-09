@@ -205,6 +205,9 @@ pub struct AppSettings {
     pub notify_failed: bool,
     pub notify_inactive_only: bool,
     pub play_sounds: bool,
+    pub completion_hook_enabled: bool,
+    pub completion_hook_path: String,
+    pub completion_hook_arguments: String,
 }
 
 impl Default for AppSettings {
@@ -255,6 +258,9 @@ impl Default for AppSettings {
             notify_failed: true,
             notify_inactive_only: true,
             play_sounds: false,
+            completion_hook_enabled: false,
+            completion_hook_path: String::new(),
+            completion_hook_arguments: "%path%".to_string(),
         }
     }
 }
@@ -306,6 +312,9 @@ pub struct UpdateAppSettingsRequest {
     pub notify_failed: bool,
     pub notify_inactive_only: bool,
     pub play_sounds: bool,
+    pub completion_hook_enabled: bool,
+    pub completion_hook_path: String,
+    pub completion_hook_arguments: String,
 }
 
 impl From<&AppSettings> for BrowserIntegrationSettings {

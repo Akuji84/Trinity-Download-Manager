@@ -108,6 +108,9 @@ type AppSettings = {
   notify_failed: boolean;
   notify_inactive_only: boolean;
   play_sounds: boolean;
+  completion_hook_enabled: boolean;
+  completion_hook_path: string;
+  completion_hook_arguments: string;
 };
 
 type DownloadProgressEvent = {
@@ -488,6 +491,9 @@ function App() {
     notify_failed: true,
     notify_inactive_only: true,
     play_sounds: false,
+    completion_hook_enabled: false,
+    completion_hook_path: "",
+    completion_hook_arguments: "%path%",
   });
   const [preferencesDraft, setPreferencesDraft] = useState<PreferencesDraft>(() =>
     createPreferencesDraft(3),
@@ -627,6 +633,9 @@ function App() {
           notifyFailed: loadedSettings.notify_failed,
           notifyInactiveOnly: loadedSettings.notify_inactive_only,
           playSounds: loadedSettings.play_sounds,
+          completionHookEnabled: loadedSettings.completion_hook_enabled,
+          completionHookPath: loadedSettings.completion_hook_path,
+          completionHookArguments: loadedSettings.completion_hook_arguments,
         }));
         if (!loadedSettings.startup_prompt_answered) {
           setStartupPromptError("");
@@ -1185,6 +1194,9 @@ function App() {
           notify_failed: currentSettings.notify_failed,
           notify_inactive_only: currentSettings.notify_inactive_only,
           play_sounds: currentSettings.play_sounds,
+          completion_hook_enabled: currentSettings.completion_hook_enabled,
+          completion_hook_path: currentSettings.completion_hook_path,
+          completion_hook_arguments: currentSettings.completion_hook_arguments,
         },
       });
       setSettings(updatedSettings);
@@ -1198,6 +1210,9 @@ function App() {
         notifyFailed: updatedSettings.notify_failed,
         notifyInactiveOnly: updatedSettings.notify_inactive_only,
         playSounds: updatedSettings.play_sounds,
+        completionHookEnabled: updatedSettings.completion_hook_enabled,
+        completionHookPath: updatedSettings.completion_hook_path,
+        completionHookArguments: updatedSettings.completion_hook_arguments,
       }));
       closeStartupPrompt();
     } catch (caughtError) {
@@ -1388,6 +1403,9 @@ function App() {
         notify_failed: preferencesDraft.notifyFailed,
         notify_inactive_only: preferencesDraft.notifyInactiveOnly,
         play_sounds: preferencesDraft.playSounds,
+        completion_hook_enabled: preferencesDraft.completionHookEnabled,
+        completion_hook_path: preferencesDraft.completionHookPath,
+        completion_hook_arguments: preferencesDraft.completionHookArguments,
       },
     });
     setSettings(updatedSettings);
@@ -1438,6 +1456,9 @@ function App() {
       notifyFailed: updatedSettings.notify_failed,
       notifyInactiveOnly: updatedSettings.notify_inactive_only,
       playSounds: updatedSettings.play_sounds,
+      completionHookEnabled: updatedSettings.completion_hook_enabled,
+      completionHookPath: updatedSettings.completion_hook_path,
+      completionHookArguments: updatedSettings.completion_hook_arguments,
     }));
     if (
       updatedSettings.notify_added ||
@@ -1499,6 +1520,9 @@ function App() {
       notifyFailed: settings.notify_failed,
       notifyInactiveOnly: settings.notify_inactive_only,
       playSounds: settings.play_sounds,
+      completionHookEnabled: settings.completion_hook_enabled,
+      completionHookPath: settings.completion_hook_path,
+      completionHookArguments: settings.completion_hook_arguments,
     }));
     setPreferencesStatus("");
     setActivePreferencesSection("general");

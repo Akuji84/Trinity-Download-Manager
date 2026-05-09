@@ -1133,6 +1133,22 @@ Exit criteria:
 - `notify_inactive_only` suppresses toasts while the Trinity window is visible and focused.
 - `play_sounds` maps to the notification plugin's `silent` flag. On Windows this means native toast sound behavior is controlled by the OS notification system rather than a custom in-app sound layer.
 
+### 2026-05-08 - Live completion hook execution
+**Commit:** `pending`
+
+- Wired the Advanced > Completion hook settings through the full app settings path:
+  - `completion_hook_enabled`
+  - `completion_hook_path`
+  - `completion_hook_arguments`
+- Trinity now launches the configured executable after a download reaches the real `Completed` state in the backend.
+- The hook is executed from Rust, not the React UI, so it runs off actual completed downloads rather than front-end state.
+- Supported argument placeholders:
+  - `%path%` -> full completed file path
+  - `%folder%` -> containing folder
+  - `%name%` -> final file name
+  - `%url%` -> source URL
+- Arguments are split with a simple quote-aware parser before spawning the external process.
+
 ## Next Step
 
 Keep shrinking the remaining legacy resolver/re-discovery logic so browser-observed request and response data are the primary source of truth throughout the extension and app.

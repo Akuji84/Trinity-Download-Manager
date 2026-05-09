@@ -202,6 +202,82 @@ fn normalize_proxy_mode(value: &str) -> String {
     }
 }
 
+fn parse_command_arguments(value: &str) -> Vec<String> {
+    let mut arguments = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut escape = false;
+
+    for character in value.chars() {
+        if escape {
+            current.push(character);
+            escape = false;
+            continue;
+        }
+
+        match character {
+            '\\' => escape = true,
+            '"' | '\'' => {
+                if let Some(active_quote) = quote {
+                    if active_quote == character {
+                        quote = None;
+                    } else {
+                        current.push(character);
+                    }
+                } else {
+                    quote = Some(character);
+                }
+            }
+            character if character.is_whitespace() && quote.is_none() => {
+                if !current.is_empty() {
+                    arguments.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(character),
+        }
+    }
+
+    if !current.is_empty() {
+        arguments.push(current);
+    }
+
+    arguments
+}
+
+fn execute_completion_hook(settings: &AppSettings, job: &DownloadJob) {
+    if !settings.completion_hook_enabled {
+        return;
+    }
+
+    let executable_path = settings.completion_hook_path.trim();
+    if executable_path.is_empty() {
+        return;
+    }
+
+    let path = job.output_path.trim();
+    let folder = job.output_folder.trim();
+    let file_name = job.file_name.trim();
+    let url = job.url.trim();
+    let arguments_template = settings.completion_hook_arguments.trim();
+    let expanded_arguments = arguments_template
+        .replace("%path%", path)
+        .replace("%folder%", folder)
+        .replace("%name%", file_name)
+        .replace("%url%", url);
+    let arguments = parse_command_arguments(&expanded_arguments);
+
+    let mut command = std::process::Command::new(executable_path);
+    command.args(arguments);
+    command.current_dir(if folder.is_empty() { "." } else { folder });
+
+    if let Err(error) = command.spawn() {
+        eprintln!(
+            "Trinity completion hook failed for '{}': {}",
+            executable_path, error
+        );
+    }
+}
+
 fn unique_output_path(output_path: PathBuf) -> PathBuf {
     if !output_path.exists() {
         return output_path;
@@ -459,6 +535,9 @@ fn update_app_settings(
         notify_failed: request.notify_failed,
         notify_inactive_only: request.notify_inactive_only,
         play_sounds: request.play_sounds,
+        completion_hook_enabled: request.completion_hook_enabled,
+        completion_hook_path: request.completion_hook_path.trim().to_string(),
+        completion_hook_arguments: request.completion_hook_arguments.trim().to_string(),
     };
     state.close_to_tray.store(request.close_to_tray, Ordering::Relaxed);
     state
@@ -1189,6 +1268,9 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
             request_contexts.remove(&id);
         }
 
+        let mut completion_hook_job: Option<DownloadJob> = None;
+        let mut completion_hook_settings: Option<AppSettings> = None;
+
         let should_pump_now = {
             let Ok(storage) = state.storage.lock() else {
                 return;
@@ -1196,10 +1278,9 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
 
             match &result {
                 Ok(()) => {
-                    let total_bytes = storage
-                        .get_download_job(&id)
-                        .ok()
-                        .flatten()
+                    let completed_job = storage.get_download_job(&id).ok().flatten();
+                    let total_bytes = completed_job
+                        .as_ref()
                         .map(|job| Some(job.downloaded_bytes))
                         .unwrap_or(None);
                     let _ = storage.update_download_state(
@@ -1208,6 +1289,8 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
                         total_bytes,
                         None,
                     );
+                    completion_hook_job = storage.get_download_job(&id).ok().flatten();
+                    completion_hook_settings = storage.get_app_settings().ok();
                     if let (Some(hostname), Some(downloaded_bytes)) =
                         (hostname.as_deref(), total_bytes)
                     {
@@ -1307,6 +1390,10 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
                 }
             }
         };
+
+        if let (Some(settings), Some(job)) = (completion_hook_settings.as_ref(), completion_hook_job.as_ref()) {
+            execute_completion_hook(settings, job);
+        }
 
         if should_pump_now {
             let _ = pump_queue(app);

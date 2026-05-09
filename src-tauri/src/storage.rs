@@ -455,6 +455,27 @@ impl Storage {
             ",
             [],
         )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('completion_hook_enabled', '0');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('completion_hook_path', '');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('completion_hook_arguments', '%path%');
+            ",
+            [],
+        )?;
 
         Ok(())
     }
@@ -1346,6 +1367,17 @@ impl Storage {
             .and_then(|value| value.parse::<u8>().ok())
             .map(|value| value != 0)
             .unwrap_or(defaults.play_sounds);
+        let completion_hook_enabled = self
+            .get_setting("completion_hook_enabled")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.completion_hook_enabled);
+        let completion_hook_path = self
+            .get_setting("completion_hook_path")?
+            .unwrap_or(defaults.completion_hook_path);
+        let completion_hook_arguments = self
+            .get_setting("completion_hook_arguments")?
+            .unwrap_or(defaults.completion_hook_arguments);
 
         Ok(AppSettings {
             max_concurrent_downloads,
@@ -1393,6 +1425,9 @@ impl Storage {
             notify_failed,
             notify_inactive_only,
             play_sounds,
+            completion_hook_enabled,
+            completion_hook_path,
+            completion_hook_arguments,
         })
     }
 
@@ -1529,6 +1564,15 @@ impl Storage {
             if settings.notify_inactive_only { "1" } else { "0" },
         )?;
         self.upsert_setting("play_sounds", if settings.play_sounds { "1" } else { "0" })?;
+        self.upsert_setting(
+            "completion_hook_enabled",
+            if settings.completion_hook_enabled { "1" } else { "0" },
+        )?;
+        self.upsert_setting("completion_hook_path", &settings.completion_hook_path)?;
+        self.upsert_setting(
+            "completion_hook_arguments",
+            &settings.completion_hook_arguments,
+        )?;
 
         Ok(())
     }

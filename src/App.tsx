@@ -193,6 +193,8 @@ type CategoryFilterId =
 type PriorityFilterId = "all" | "high" | "normal" | "low";
 
 const SCHEDULE_DAYS = ["Everyday", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const SPEED_SMOOTHING_ALPHA = 0.24;
+const MIN_SPEED_SAMPLES_FOR_ETA = 3;
 const PREFERENCES_SECTIONS = [
   "general",
   "browserIntegration",
@@ -205,6 +207,13 @@ const PREFERENCES_SECTIONS = [
 ] as const;
 
 type PreferencesSectionId = (typeof PREFERENCES_SECTIONS)[number];
+
+type SpeedTelemetry = {
+  smoothedBps: number;
+  sampleCount: number;
+  lastBytes: number;
+  lastTimestampMs: number;
+};
 
 type PreferencesDraft = {
   theme: string;
@@ -439,6 +448,7 @@ function App() {
   const notificationBaselineReadyRef = useRef(false);
   const notificationPermissionRef = useRef<boolean | null>(null);
   const autoRemovingCompletedIdsRef = useRef<Set<string>>(new Set());
+  const speedTelemetryRef = useRef<Map<string, SpeedTelemetry>>(new Map());
   const [systemIcons, setSystemIcons] = useState<Record<string, string>>({});
   const [url, setUrl] = useState("");
   const [outputFolder, setOutputFolder] = useState("");
@@ -1175,9 +1185,29 @@ function App() {
   }, [jobs, jobsInitialized]);
 
   useEffect(() => {
+    const liveJobIds = new Set(jobs.map((job) => job.id));
+    for (const [jobId] of speedTelemetryRef.current) {
+      if (!liveJobIds.has(jobId)) {
+        speedTelemetryRef.current.delete(jobId);
+      }
+    }
+    jobs.forEach((job) => {
+      if (job.state !== "Running") {
+        speedTelemetryRef.current.delete(job.id);
+      }
+    });
+  }, [jobs]);
+
+  useEffect(() => {
     let unlisten: (() => void) | null = null;
     listen<DownloadProgressEvent>("download-progress", (event) => {
       const { id, downloaded_bytes, total_bytes, speed_bps } = event.payload;
+      const smoothedSpeedBps = smoothDownloadSpeed(
+        speedTelemetryRef.current,
+        id,
+        downloaded_bytes,
+        speed_bps,
+      );
       setJobs((currentJobs) =>
         currentJobs.map((job) =>
           job.id === id
@@ -1185,7 +1215,7 @@ function App() {
                 ...job,
                 downloaded_bytes,
                 total_bytes: total_bytes ?? job.total_bytes,
-                speed_bps,
+                speed_bps: smoothedSpeedBps,
               }
             : job,
         ),
@@ -1290,7 +1320,28 @@ function App() {
 
   async function refreshJobs() {
     const savedJobs = await invoke<DownloadJob[]>("list_download_jobs");
-    setJobs(savedJobs);
+    setJobs((currentJobs) =>
+      savedJobs.map((savedJob) => {
+        const currentJob = currentJobs.find((job) => job.id === savedJob.id);
+        if (savedJob.state !== "Running") {
+          speedTelemetryRef.current.delete(savedJob.id);
+          return {
+            ...savedJob,
+            speed_bps: savedJob.state === "Paused" ? 0 : savedJob.speed_bps,
+          };
+        }
+
+        const telemetry = speedTelemetryRef.current.get(savedJob.id);
+        if (!telemetry || !currentJob) {
+          return savedJob;
+        }
+
+        return {
+          ...savedJob,
+          speed_bps: currentJob.speed_bps,
+        };
+      }),
+    );
     setJobsInitialized(true);
     setSelectedJobIds((currentIds) =>
       currentIds.filter((id) => savedJobs.some((job) => job.id === id)),
@@ -1981,10 +2032,12 @@ function App() {
   const globalSpeed = jobs
     .filter((job) => job.state === "Running")
     .reduce((total, job) => total + job.speed_bps, 0);
+  const estimateJobEtaSeconds = (job: DownloadJob) =>
+    estimateDownloadEtaSeconds(job, speedTelemetryRef.current.get(job.id)?.sampleCount ?? 0);
   const selectedJobs = jobs.filter((job) => selectedJobIds.includes(job.id));
   const selectedJobEtaSeconds =
-    selectedJobs.length === 1 ? estimateDownloadEtaSeconds(selectedJobs[0]) : null;
-  const queueEtaSeconds = estimateQueueEtaSeconds(jobs, globalSpeed);
+    selectedJobs.length === 1 ? estimateJobEtaSeconds(selectedJobs[0]) : null;
+  const queueEtaSeconds = estimateQueueEtaSeconds(jobs, speedTelemetryRef.current);
   const bottomBarEtaSeconds = selectedJobEtaSeconds ?? queueEtaSeconds;
   const canResumeSelected = selectedJobs.some(canStart);
   const canStopSelected = selectedJobs.some((job) => job.state === "Running");
@@ -3857,7 +3910,7 @@ function App() {
                               <small className="queue-policy-detail">{queuePolicySummary}</small>
                             ) : null}
                             {(() => {
-                              const jobEtaSeconds = estimateDownloadEtaSeconds(job);
+                              const jobEtaSeconds = estimateJobEtaSeconds(job);
                               return jobEtaSeconds !== null ? (
                                 <small className="eta-detail">
                                   ETA {formatEta(jobEtaSeconds)}
@@ -4513,8 +4566,49 @@ function formatSize(job: DownloadJob) {
   return "";
 }
 
-function estimateDownloadEtaSeconds(job: DownloadJob) {
-  if (job.state !== "Running" || !job.total_bytes || job.speed_bps <= 0) {
+function smoothDownloadSpeed(
+  telemetryByJobId: Map<string, SpeedTelemetry>,
+  jobId: string,
+  downloadedBytes: number,
+  fallbackSpeedBps: number,
+) {
+  const now = Date.now();
+  const currentTelemetry = telemetryByJobId.get(jobId);
+  let observedSpeedBps = fallbackSpeedBps;
+
+  if (currentTelemetry) {
+    const elapsedMs = now - currentTelemetry.lastTimestampMs;
+    const transferredBytes = Math.max(0, downloadedBytes - currentTelemetry.lastBytes);
+    if (elapsedMs > 0 && transferredBytes > 0) {
+      observedSpeedBps = Math.round((transferredBytes * 1000) / elapsedMs);
+    }
+  }
+
+  const clampedObservedSpeed = Math.max(0, observedSpeedBps);
+  const smoothedBps = currentTelemetry
+    ? Math.round(
+        currentTelemetry.smoothedBps * (1 - SPEED_SMOOTHING_ALPHA) +
+          clampedObservedSpeed * SPEED_SMOOTHING_ALPHA,
+      )
+    : clampedObservedSpeed;
+
+  telemetryByJobId.set(jobId, {
+    smoothedBps,
+    sampleCount: (currentTelemetry?.sampleCount ?? 0) + 1,
+    lastBytes: downloadedBytes,
+    lastTimestampMs: now,
+  });
+
+  return smoothedBps;
+}
+
+function estimateDownloadEtaSeconds(job: DownloadJob, sampleCount: number) {
+  if (
+    job.state !== "Running" ||
+    !job.total_bytes ||
+    job.speed_bps <= 0 ||
+    sampleCount < MIN_SPEED_SAMPLES_FOR_ETA
+  ) {
     return null;
   }
 
@@ -4526,13 +4620,23 @@ function estimateDownloadEtaSeconds(job: DownloadJob) {
   return Math.ceil(remainingBytes / job.speed_bps);
 }
 
-function estimateQueueEtaSeconds(jobs: DownloadJob[], globalSpeed: number) {
-  if (globalSpeed <= 0) {
+function estimateQueueEtaSeconds(
+  jobs: DownloadJob[],
+  speedTelemetryByJobId: Map<string, SpeedTelemetry>,
+) {
+  const eligibleJobs = jobs.filter(
+    (job) =>
+      job.state === "Running" &&
+      job.total_bytes !== null &&
+      (speedTelemetryByJobId.get(job.id)?.sampleCount ?? 0) >= MIN_SPEED_SAMPLES_FOR_ETA,
+  );
+  const eligibleSpeed = eligibleJobs.reduce((total, job) => total + job.speed_bps, 0);
+
+  if (eligibleSpeed <= 0) {
     return null;
   }
 
-  const remainingBytes = jobs
-    .filter((job) => job.state === "Running" && job.total_bytes !== null)
+  const remainingBytes = eligibleJobs
     .reduce((total, job) => {
       const pendingBytes = Math.max(0, (job.total_bytes ?? 0) - job.downloaded_bytes);
       return total + pendingBytes;
@@ -4542,7 +4646,7 @@ function estimateQueueEtaSeconds(jobs: DownloadJob[], globalSpeed: number) {
     return null;
   }
 
-  return Math.ceil(remainingBytes / globalSpeed);
+  return Math.ceil(remainingBytes / eligibleSpeed);
 }
 
 function formatEta(totalSeconds: number) {

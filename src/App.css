@@ -628,7 +628,8 @@ button {
 .theme-midnight .preferences-content,
 .theme-midnight .preferences-page,
 .theme-midnight .new-download-modal,
-.theme-midnight .startup-prompt-modal {
+.theme-midnight .startup-prompt-modal,
+.theme-midnight .update-found-modal {
   background: #0f1824;
 }
 
@@ -680,6 +681,11 @@ button {
 .theme-midnight .preferences-path-button,
 .theme-midnight .form-actions button {
   background: #1a2a3b;
+}
+
+.theme-midnight .update-found-summary-item,
+.theme-midnight .update-found-panel {
+  background: #09131d;
 }
 
 .view-slot {
@@ -1246,6 +1252,12 @@ button {
   background: linear-gradient(180deg, #24292d 0%, #202427 100%);
 }
 
+.update-found-modal {
+  width: min(760px, calc(100vw - 36px));
+  border-color: #161b20;
+  background: linear-gradient(180deg, #252a2e 0%, #202428 100%);
+}
+
 .modal-header {
   display: flex;
   height: 38px;
@@ -1306,6 +1318,68 @@ button {
 
 .startup-prompt-actions {
   margin-top: 4px;
+}
+
+.update-found-body {
+  display: grid;
+  gap: 14px;
+  padding: 18px 18px 16px;
+  color: #dbe4ec;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.update-found-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.update-found-summary-item {
+  display: grid;
+  gap: 3px;
+  padding: 11px 12px;
+  border: 1px solid #41464b;
+  background: #1c2125;
+}
+
+.update-found-summary-item span {
+  color: #95a7b8;
+  font-size: 12px;
+}
+
+.update-found-summary-item strong {
+  color: #f4f8fb;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.update-found-panel {
+  display: grid;
+  gap: 6px;
+  padding: 12px 13px;
+  border: 1px solid #41464b;
+  background: #1c2125;
+}
+
+.update-found-panel h4,
+.update-found-panel p {
+  margin: 0;
+}
+
+.update-found-panel h4 {
+  color: #f4f8fb;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.update-found-panel p {
+  color: #dbe4ec;
+  white-space: pre-wrap;
+}
+
+.update-found-actions {
+  margin-top: 2px;
 }
 
 .add-form label {

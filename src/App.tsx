@@ -449,6 +449,8 @@ function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isStartupPromptOpen, setIsStartupPromptOpen] = useState(false);
   const [isStartupPromptAnimatingOut, setIsStartupPromptAnimatingOut] = useState(false);
+  const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
+  const [isUpdateModalAnimatingOut, setIsUpdateModalAnimatingOut] = useState(false);
   const [isStartupPromptSaving, setIsStartupPromptSaving] = useState(false);
   const [startupPromptError, setStartupPromptError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -645,6 +647,7 @@ function App() {
 
       if (update) {
         setUpdateStatusMessage(`Update ${update.version} is available.`);
+        openUpdateModal();
         if (
           options?.notifyIfFound !== false &&
           notifiedAvailableUpdateVersionRef.current !== update.version
@@ -660,6 +663,9 @@ function App() {
         }
       } else {
         setUpdateDownloadProgress(null);
+        if (!isInstallingUpdateRef.current && isUpdateModalOpen) {
+          closeUpdateModal();
+        }
         if (!options?.silentIfCurrent) {
           setUpdateStatusMessage("Trinity is up to date.");
         } else {
@@ -668,6 +674,7 @@ function App() {
       }
     } catch (caughtError) {
       setUpdateStatusMessage(String(caughtError));
+      openUpdateModal();
     } finally {
       setIsCheckingForUpdate(false);
     }
@@ -682,6 +689,7 @@ function App() {
     setIsInstallingUpdate(true);
     setUpdateStatusMessage("Preparing update...");
     setUpdateDownloadProgress({ downloadedBytes: 0, totalBytes: null });
+    openUpdateModal();
 
     try {
       await invoke("install_app_update");
@@ -1362,6 +1370,19 @@ function App() {
       setIsStartupPromptOpen(false);
       setIsStartupPromptAnimatingOut(false);
       setStartupPromptError("");
+    }, 220);
+  }
+
+  function openUpdateModal() {
+    setIsUpdateModalAnimatingOut(false);
+    setIsUpdateModalOpen(true);
+  }
+
+  function closeUpdateModal() {
+    setIsUpdateModalAnimatingOut(true);
+    setTimeout(() => {
+      setIsUpdateModalOpen(false);
+      setIsUpdateModalAnimatingOut(false);
     }, 220);
   }
 
@@ -4099,6 +4120,91 @@ function App() {
         </div>
       ) : null}
 
+      {isUpdateModalOpen ? (
+        <div
+          className={`modal-backdrop${isUpdateModalAnimatingOut ? " closing" : ""}`}
+          role="presentation"
+        >
+          <section
+            aria-labelledby="update-modal-title"
+            className={`modal update-found-modal${isUpdateModalAnimatingOut ? " closing" : ""}`}
+            role="dialog"
+          >
+            <div className="modal-header">
+              <h3 id="update-modal-title">
+                {isInstallingUpdate ? "Updating Trinity" : "Trinity update available"}
+              </h3>
+              <button
+                aria-label="Close"
+                disabled={isInstallingUpdate}
+                onClick={() => closeUpdateModal()}
+              >
+                <X size={17} strokeWidth={2} />
+              </button>
+            </div>
+            <div className="update-found-body">
+              <div className="update-found-summary">
+                <div className="update-found-summary-item">
+                  <span>Current version</span>
+                  <strong>{updaterStatus.current_version}</strong>
+                </div>
+                <div className="update-found-summary-item">
+                  <span>Available version</span>
+                  <strong>{availableUpdate?.version ?? "Pending"}</strong>
+                </div>
+                {availableUpdate?.date ? (
+                  <div className="update-found-summary-item">
+                    <span>Published</span>
+                    <strong>{formatUpdateDate(availableUpdate.date)}</strong>
+                  </div>
+                ) : null}
+              </div>
+
+              {availableUpdate?.body ? (
+                <section className="update-found-panel">
+                  <h4>What&apos;s new</h4>
+                  <p>{availableUpdate.body}</p>
+                </section>
+              ) : null}
+
+              {updateStatusMessage ? (
+                <section className="update-found-panel">
+                  <h4>Status</h4>
+                  <p>
+                    {updateStatusMessage}
+                    {updateDownloadProgress
+                      ? updateDownloadProgress.totalBytes
+                        ? ` (${formatBytes(updateDownloadProgress.downloadedBytes)} / ${formatBytes(updateDownloadProgress.totalBytes)})`
+                        : ` (${formatBytes(updateDownloadProgress.downloadedBytes)})`
+                      : ""}
+                  </p>
+                </section>
+              ) : null}
+
+              <div className="form-actions update-found-actions">
+                <button
+                  disabled={isInstallingUpdate}
+                  type="button"
+                  onClick={() => closeUpdateModal()}
+                >
+                  Later
+                </button>
+                <button
+                  className="primary-action"
+                  disabled={!availableUpdate || isInstallingUpdate || isCheckingForUpdate}
+                  type="button"
+                  onClick={() => {
+                    void installAvailableUpdate();
+                  }}
+                >
+                  {isInstallingUpdate ? "Installing..." : "Update now"}
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
     </main>
   );
 }
@@ -4485,6 +4591,21 @@ function deriveFileNameFromUrl(value: string) {
   } catch {
     return "";
   }
+}
+
+function formatUpdateDate(value: string) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return parsed.toLocaleString([], {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 export default App;

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { emit, emitTo, listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   isPermissionGranted,
   requestPermission,
@@ -81,6 +82,7 @@ type AppSettings = {
   startup_prompt_answered: boolean;
   default_folder_mode: "automatic" | "fixed";
   fixed_download_folder: string;
+  standalone_windows: boolean;
   show_save_as_button: boolean;
   delete_button_action: "remove" | "delete" | "ask";
   file_exists_action: "rename" | "overwrite" | "ask";
@@ -145,6 +147,14 @@ type DownloadUrlMetadata = {
   total_bytes: number | null;
 };
 
+type StandaloneAddPayload = {
+  url: string;
+  outputFolder: string;
+  suggestedFileName: string;
+  browserObserved: boolean;
+  observedMetadata: DownloadUrlMetadata | null;
+};
+
 type ExtensionDownloadRequest = {
   url: string;
   final_url?: string | null;
@@ -195,6 +205,9 @@ type PriorityFilterId = "all" | "high" | "normal" | "low";
 const SCHEDULE_DAYS = ["Everyday", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const SPEED_SMOOTHING_ALPHA = 0.24;
 const MIN_SPEED_SAMPLES_FOR_ETA = 3;
+const STANDALONE_ADD_WINDOW_LABEL = "new-download";
+const STANDALONE_ADD_EVENT = "trinity://standalone-add-payload";
+const STANDALONE_ADD_STORAGE_KEY = "trinity.standalone-add-payload";
 const PREFERENCES_SECTIONS = [
   "general",
   "browserIntegration",
@@ -497,6 +510,7 @@ function App() {
     startup_prompt_answered: false,
     default_folder_mode: "automatic",
     fixed_download_folder: "",
+    standalone_windows: false,
     show_save_as_button: true,
     delete_button_action: "ask",
     file_exists_action: "rename",
@@ -554,6 +568,8 @@ function App() {
     downloadedBytes: number;
     totalBytes: number | null;
   } | null>(null);
+  const isStandaloneAddWindow =
+    new URLSearchParams(window.location.search).get("mode") === "new-download";
   const appThemeClass = settings.theme === "Midnight" ? " theme-midnight" : " theme-dark";
   const compactDownloadsClass = settings.compact_downloads ? " compact-downloads" : "";
   const [activeTab, setActiveTab] = useState<DownloadTabId>("all");
@@ -597,6 +613,72 @@ function App() {
       document.visibilityState === "visible" &&
       document.hasFocus()
     );
+  }
+
+  function buildStandaloneAddPayload(
+    request?: Partial<StandaloneAddPayload>,
+  ): StandaloneAddPayload {
+    return {
+      url: request?.url ?? "",
+      outputFolder:
+        request?.outputFolder ?? preferredOutputFolderFromSettings(settingsRef.current),
+      suggestedFileName: request?.suggestedFileName ?? "",
+      browserObserved: request?.browserObserved ?? false,
+      observedMetadata: request?.observedMetadata ?? null,
+    };
+  }
+
+  function applyAddPayload(payload: StandaloneAddPayload) {
+    setError("");
+    setUrl(payload.url);
+    setPendingSuggestedFileName(payload.suggestedFileName);
+    setOutputFolder(payload.outputFolder);
+    setIsBrowserObservedDownload(payload.browserObserved);
+    setBrowserObservedMetadata(payload.observedMetadata);
+    setIsSchedulerEnabled(false);
+    setScheduleDays(SCHEDULE_DAYS);
+    setScheduleFrom("06:00");
+    setScheduleTo("10:00");
+    setUrlMetadata(null);
+    setUrlMetadataError("");
+    setIsAddOpen(true);
+  }
+
+  async function openStandaloneAddWindow(payload: StandaloneAddPayload) {
+    window.localStorage.setItem(STANDALONE_ADD_STORAGE_KEY, JSON.stringify(payload));
+    let addWindow = await WebviewWindow.getByLabel(STANDALONE_ADD_WINDOW_LABEL);
+    if (!addWindow) {
+      addWindow = new WebviewWindow(STANDALONE_ADD_WINDOW_LABEL, {
+        title: "New download",
+        width: 648,
+        height: 432,
+        minWidth: 600,
+        minHeight: 360,
+        resizable: true,
+        center: true,
+        url: "index.html?mode=new-download",
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        void addWindow!.once("tauri://created", () => {
+          settled = true;
+          resolve();
+        });
+        void addWindow!.once("tauri://error", (event) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          reject(new Error(String(event.payload)));
+        });
+      });
+    }
+
+    await addWindow.show();
+    await addWindow.unminimize();
+    await addWindow.setFocus();
+    await emitTo(STANDALONE_ADD_WINDOW_LABEL, STANDALONE_ADD_EVENT, payload);
   }
 
   async function ensureNotificationPermission() {
@@ -770,6 +852,7 @@ function App() {
           startMinimized: loadedSettings.start_minimized,
           defaultFolderMode: loadedSettings.default_folder_mode,
           fixedDownloadFolder: loadedSettings.fixed_download_folder,
+          standaloneWindows: loadedSettings.standalone_windows,
           showSaveAsButton: loadedSettings.show_save_as_button,
           deleteButtonAction: loadedSettings.delete_button_action,
           fileExistsAction: loadedSettings.file_exists_action,
@@ -820,6 +903,9 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (isStandaloneAddWindow) {
+      return;
+    }
     if (
       !updaterStatus.configured ||
       !settings.check_for_updates_automatically ||
@@ -835,12 +921,16 @@ function App() {
       notifyIfFound: true,
     });
   }, [
+    isStandaloneAddWindow,
     settings.check_for_updates_automatically,
     settings.install_updates_automatically,
     updaterStatus.configured,
   ]);
 
   useEffect(() => {
+    if (isStandaloneAddWindow) {
+      return;
+    }
     if (!updaterStatus.configured || !settings.check_for_updates_automatically) {
       return;
     }
@@ -856,10 +946,14 @@ function App() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [settings.check_for_updates_automatically, updaterStatus.configured]);
+  }, [isStandaloneAddWindow, settings.check_for_updates_automatically, updaterStatus.configured]);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
+
+    if (isStandaloneAddWindow) {
+      return;
+    }
 
     listen("downloads-changed", () => {
       refreshJobs().catch(console.error);
@@ -872,7 +966,7 @@ function App() {
     return () => {
       unlisten?.();
       };
-    }, []);
+    }, [isStandaloneAddWindow]);
 
   useEffect(() => {
     let totalDownloaded = 0;
@@ -912,6 +1006,10 @@ function App() {
   useEffect(() => {
     let unlisten: (() => void) | null = null;
 
+    if (isStandaloneAddWindow) {
+      return;
+    }
+
     listen<ExtensionDownloadRequest>("extension-download-request", (event) => {
       const payload = event.payload;
       const resolvedUrl = payload.final_url?.trim() || (payload.url ?? "");
@@ -950,21 +1048,21 @@ function App() {
         return;
       }
 
-      setError("");
-      setUrl(resolvedUrl);
-      setPendingSuggestedFileName(observedFileName ?? "");
-      setOutputFolder(
-        payload.output_folder?.trim() || preferredOutputFolderFromSettings(settingsRef.current),
-      );
-      setIsBrowserObservedDownload(browserObserved);
-      setBrowserObservedMetadata(observedMetadata);
-      setIsSchedulerEnabled(false);
-      setScheduleDays(SCHEDULE_DAYS);
-      setScheduleFrom("06:00");
-      setScheduleTo("10:00");
-      setUrlMetadata(null);
-      setUrlMetadataError("");
-      setIsAddOpen(true);
+      const addPayload = buildStandaloneAddPayload({
+        url: resolvedUrl,
+        outputFolder:
+          payload.output_folder?.trim() || preferredOutputFolderFromSettings(settingsRef.current),
+        suggestedFileName: observedFileName ?? "",
+        browserObserved,
+        observedMetadata,
+      });
+
+      if (settingsRef.current.standalone_windows) {
+        void openStandaloneAddWindow(addPayload).catch(console.error);
+        return;
+      }
+
+      applyAddPayload(addPayload);
     })
       .then((dispose) => {
         unlisten = dispose;
@@ -974,10 +1072,14 @@ function App() {
     return () => {
       unlisten?.();
     };
-  }, []);
+  }, [isStandaloneAddWindow]);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
+
+    if (isStandaloneAddWindow) {
+      return;
+    }
 
     listen("extension-open-options", () => {
       openPreferencesPage();
@@ -990,7 +1092,36 @@ function App() {
     return () => {
       unlisten?.();
     };
-  }, []);
+  }, [isStandaloneAddWindow]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+
+    if (!isStandaloneAddWindow) {
+      return;
+    }
+
+    const persistedPayload = window.localStorage.getItem(STANDALONE_ADD_STORAGE_KEY);
+    if (persistedPayload) {
+      try {
+        applyAddPayload(JSON.parse(persistedPayload) as StandaloneAddPayload);
+      } catch (caughtError) {
+        console.error(caughtError);
+      }
+    }
+
+    listen<StandaloneAddPayload>(STANDALONE_ADD_EVENT, (event) => {
+      applyAddPayload(event.payload);
+    })
+      .then((dispose) => {
+        unlisten = dispose;
+      })
+      .catch(console.error);
+
+    return () => {
+      unlisten?.();
+    };
+  }, [isStandaloneAddWindow]);
 
   useEffect(() => {
     if (!newestJobId) return;
@@ -1035,6 +1166,9 @@ function App() {
   }, [isSettingsOpen]);
 
   useEffect(() => {
+    if (isStandaloneAddWindow) {
+      return;
+    }
     if (!jobs.some((job) => job.state === "Running")) {
       return;
     }
@@ -1042,10 +1176,13 @@ function App() {
       refreshJobs().catch(console.error);
     }, 3000);
     return () => window.clearInterval(intervalId);
-  }, [jobs]);
+  }, [isStandaloneAddWindow, jobs]);
 
   // Detect Running → Completed transitions to trigger the progress bar flash
   useEffect(() => {
+    if (isStandaloneAddWindow) {
+      return;
+    }
     if (!jobsInitialized || notificationBaselineReadyRef.current) {
       return;
     }
@@ -1053,9 +1190,12 @@ function App() {
     prevJobIdsRef.current = new Set(jobs.map((job) => job.id));
     prevNotificationStatesRef.current = new Map(jobs.map((job) => [job.id, job.state]));
     notificationBaselineReadyRef.current = true;
-  }, [jobs, jobsInitialized]);
+  }, [isStandaloneAddWindow, jobs, jobsInitialized]);
 
   useEffect(() => {
+    if (isStandaloneAddWindow) {
+      return;
+    }
     if (!jobsInitialized || !notificationBaselineReadyRef.current) {
       return;
     }
@@ -1072,9 +1212,12 @@ function App() {
     for (const job of addedJobs) {
       void sendNativeNotification("Download added", job.file_name).catch(console.error);
     }
-  }, [jobs, jobsInitialized, settings.notify_added]);
+  }, [isStandaloneAddWindow, jobs, jobsInitialized, settings.notify_added]);
 
   useEffect(() => {
+    if (isStandaloneAddWindow) {
+      return;
+    }
     if (!jobsInitialized || !notificationBaselineReadyRef.current) {
       return;
     }
@@ -1110,7 +1253,13 @@ function App() {
         void sendNativeNotification("Download failed", body).catch(console.error);
       }
     }
-  }, [jobs, jobsInitialized, settings.notify_completed, settings.notify_failed]);
+  }, [
+    isStandaloneAddWindow,
+    jobs,
+    jobsInitialized,
+    settings.notify_completed,
+    settings.notify_failed,
+  ]);
 
   useEffect(() => {
     if (!jobsInitialized) {
@@ -1379,6 +1528,11 @@ function App() {
       setScheduleTo("10:00");
       setUrlMetadata(null);
       setUrlMetadataError("");
+      if (isStandaloneAddWindow) {
+        await emit("downloads-changed");
+        await WebviewWindow.getCurrent().close();
+        return;
+      }
       setIsAddAnimatingOut(true);
       setTimeout(() => {
         setIsAddOpen(false);
@@ -1393,22 +1547,20 @@ function App() {
   }
 
   function openBlankAddDialog() {
-    setError("");
-    setUrl("");
-    setPendingSuggestedFileName("");
-    setOutputFolder(preferredOutputFolderFromSettings(settingsRef.current));
-    setIsBrowserObservedDownload(false);
-    setBrowserObservedMetadata(null);
-    setIsSchedulerEnabled(false);
-    setScheduleDays(SCHEDULE_DAYS);
-    setScheduleFrom("06:00");
-    setScheduleTo("10:00");
-    setUrlMetadata(null);
-    setUrlMetadataError("");
-    setIsAddOpen(true);
+    const payload = buildStandaloneAddPayload();
+    if (settingsRef.current.standalone_windows && !isStandaloneAddWindow) {
+      void openStandaloneAddWindow(payload).catch(console.error);
+      return;
+    }
+
+    applyAddPayload(payload);
   }
 
   function closeAddDialog() {
+    if (isStandaloneAddWindow) {
+      void WebviewWindow.getCurrent().close();
+      return;
+    }
     setIsAddAnimatingOut(true);
     setTimeout(() => {
       setIsAddOpen(false);
@@ -1698,6 +1850,7 @@ function App() {
         startup_prompt_answered: settings.startup_prompt_answered,
         default_folder_mode: preferencesDraft.defaultFolderMode,
         fixed_download_folder: preferencesDraft.fixedDownloadFolder,
+        standalone_windows: preferencesDraft.standaloneWindows,
         show_save_as_button: preferencesDraft.showSaveAsButton,
         delete_button_action: preferencesDraft.deleteButtonAction,
         file_exists_action: preferencesDraft.fileExistsAction,
@@ -1763,6 +1916,7 @@ function App() {
       startMinimized: updatedSettings.start_minimized,
       defaultFolderMode: updatedSettings.default_folder_mode,
       fixedDownloadFolder: updatedSettings.fixed_download_folder,
+      standaloneWindows: updatedSettings.standalone_windows,
       showSaveAsButton: updatedSettings.show_save_as_button,
       deleteButtonAction: updatedSettings.delete_button_action,
       fileExistsAction: updatedSettings.file_exists_action,
@@ -1838,6 +1992,7 @@ function App() {
       startMinimized: settings.start_minimized,
       defaultFolderMode: settings.default_folder_mode,
       fixedDownloadFolder: settings.fixed_download_folder,
+      standaloneWindows: settings.standalone_windows,
       showSaveAsButton: settings.show_save_as_button,
       deleteButtonAction: settings.delete_button_action,
       fileExistsAction: settings.file_exists_action,
@@ -2078,6 +2233,151 @@ function App() {
   ]);
   const canChangePrioritySelected = selectedJobs.some(isQueueManageable);
   const scheduleNow = new Date(scheduleClock);
+  const addDownloadSurface = (
+    <section
+      aria-labelledby="add-download-title"
+      className={`modal new-download-modal${isAddAnimatingOut ? " closing" : ""}${isStandaloneAddWindow ? " standalone-window" : ""}`}
+      role="dialog"
+    >
+      <div className="modal-header">
+        <h3 id="add-download-title">New download</h3>
+        <button aria-label="Close" onClick={() => closeAddDialog()}>
+          <X size={17} strokeWidth={2} />
+        </button>
+      </div>
+      <form className="add-form new-download-form" onSubmit={createJob}>
+        {settings.show_save_as_button ? (
+          <label className="field-block">
+            <span>Save to</span>
+            <div className="path-row">
+              <input
+                onChange={(event) =>
+                  setOutputFolder(event.currentTarget.value)
+                }
+                placeholder="Leave blank to use Downloads"
+                value={outputFolder}
+              />
+              <button
+                type="button"
+                aria-label="Use default downloads folder"
+                onClick={() => useDefaultOutputFolder()}
+              >
+                <ChevronDown size={14} strokeWidth={2} />
+              </button>
+              <button
+                type="button"
+                aria-label="Browse for folder"
+                onClick={() => chooseOutputFolder()}
+              >
+                <MoreHorizontal size={18} strokeWidth={2} />
+              </button>
+            </div>
+          </label>
+        ) : null}
+        <label className="field-block">
+          <span>{isExtensionPrefilledDownload ? "File name" : "URL"}</span>
+          {isExtensionPrefilledDownload ? (
+            <input
+              onChange={(event) =>
+                setPendingSuggestedFileName(event.currentTarget.value)
+              }
+              required
+              type="text"
+              value={pendingSuggestedFileName}
+            />
+          ) : (
+            <input
+              autoFocus
+              onChange={(event) => {
+                setUrl(event.currentTarget.value);
+                setPendingSuggestedFileName("");
+              }}
+              placeholder="https://example.com/file.zip"
+              required
+              type="url"
+              value={url}
+            />
+          )}
+        </label>
+
+        <div className="scheduler-row">
+          <label className="checkbox-label">
+            <input
+              checked={isSchedulerEnabled}
+              onChange={(event) =>
+                setIsSchedulerEnabled(event.currentTarget.checked)
+              }
+              type="checkbox"
+            />
+            Scheduler
+          </label>
+          <span title={urlMetadataError || undefined}>
+            Size: {sizeMetadataLabel(urlMetadata, isUrlMetadataLoading, urlMetadataError)}
+          </span>
+        </div>
+
+        {isSchedulerEnabled ? (
+          <section className="scheduler-panel" aria-label="Scheduler">
+            <div className="day-row">
+              {SCHEDULE_DAYS.map((day) => (
+                  <label className="checkbox-label" key={day}>
+                    <input
+                      checked={scheduleDays.includes(day)}
+                      onChange={() => toggleScheduleDay(day)}
+                      type="checkbox"
+                    />
+                    {day}
+                  </label>
+                ))}
+            </div>
+            <div className="time-row">
+              <label>
+                From:
+                <span className="time-input-wrap">
+                  <input
+                    onChange={(event) => setScheduleFrom(event.currentTarget.value)}
+                    type="time"
+                    value={scheduleFrom}
+                  />
+                  <Clock3 size={14} strokeWidth={2} />
+                </span>
+              </label>
+              <label>
+                To:
+                <span className="time-input-wrap">
+                  <input
+                    onChange={(event) => setScheduleTo(event.currentTarget.value)}
+                    type="time"
+                    value={scheduleTo}
+                  />
+                  <Clock3 size={14} strokeWidth={2} />
+                </span>
+              </label>
+            </div>
+          </section>
+        ) : null}
+
+        {error ? <p className="form-error">{error}</p> : null}
+
+        <div className="form-actions">
+          <button type="button" onClick={() => closeAddDialog()}>
+            Cancel
+          </button>
+          <button className="primary-action" disabled={isSubmitting}>
+            {isSubmitting ? "Adding..." : "Download"}
+          </button>
+        </div>
+      </form>
+    </section>
+  );
+
+  if (isStandaloneAddWindow) {
+    return (
+      <main className={`standalone-add-shell${appThemeClass}`}>
+        <div className="standalone-add-backdrop">{addDownloadSurface}</div>
+      </main>
+    );
+  }
 
   return (
     <main className={`app-shell${appThemeClass}${compactDownloadsClass}`}>
@@ -4173,140 +4473,7 @@ function App() {
 
       {isAddOpen ? (
         <div className={`modal-backdrop${isAddAnimatingOut ? " closing" : ""}`} role="presentation">
-          <section
-            aria-labelledby="add-download-title"
-            className={`modal new-download-modal${isAddAnimatingOut ? " closing" : ""}`}
-            role="dialog"
-          >
-            <div className="modal-header">
-              <h3 id="add-download-title">New download</h3>
-              <button aria-label="Close" onClick={() => closeAddDialog()}>
-                <X size={17} strokeWidth={2} />
-              </button>
-            </div>
-            <form className="add-form new-download-form" onSubmit={createJob}>
-              {settings.show_save_as_button ? (
-                <label className="field-block">
-                  <span>Save to</span>
-                  <div className="path-row">
-                    <input
-                      onChange={(event) =>
-                        setOutputFolder(event.currentTarget.value)
-                      }
-                      placeholder="Leave blank to use Downloads"
-                      value={outputFolder}
-                    />
-                    <button
-                      type="button"
-                      aria-label="Use default downloads folder"
-                      onClick={() => useDefaultOutputFolder()}
-                    >
-                      <ChevronDown size={14} strokeWidth={2} />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="Browse for folder"
-                      onClick={() => chooseOutputFolder()}
-                    >
-                      <MoreHorizontal size={18} strokeWidth={2} />
-                    </button>
-                  </div>
-                </label>
-              ) : null}
-              <label className="field-block">
-                <span>{isExtensionPrefilledDownload ? "File name" : "URL"}</span>
-                {isExtensionPrefilledDownload ? (
-                  <input
-                    onChange={(event) =>
-                      setPendingSuggestedFileName(event.currentTarget.value)
-                    }
-                    required
-                    type="text"
-                    value={pendingSuggestedFileName}
-                  />
-                ) : (
-                  <input
-                    autoFocus
-                    onChange={(event) => {
-                      setUrl(event.currentTarget.value);
-                      setPendingSuggestedFileName("");
-                    }}
-                    placeholder="https://example.com/file.zip"
-                    required
-                    type="url"
-                    value={url}
-                  />
-                )}
-              </label>
-
-              <div className="scheduler-row">
-                <label className="checkbox-label">
-                  <input
-                    checked={isSchedulerEnabled}
-                    onChange={(event) =>
-                      setIsSchedulerEnabled(event.currentTarget.checked)
-                    }
-                    type="checkbox"
-                  />
-                  Scheduler
-                </label>
-                <span title={urlMetadataError || undefined}>
-                  Size: {sizeMetadataLabel(urlMetadata, isUrlMetadataLoading, urlMetadataError)}
-                </span>
-              </div>
-
-              {isSchedulerEnabled ? (
-                <section className="scheduler-panel" aria-label="Scheduler">
-                  <div className="day-row">
-                    {SCHEDULE_DAYS.map((day) => (
-                        <label className="checkbox-label" key={day}>
-                          <input
-                            checked={scheduleDays.includes(day)}
-                            onChange={() => toggleScheduleDay(day)}
-                            type="checkbox"
-                          />
-                          {day}
-                        </label>
-                      ))}
-                  </div>
-                  <div className="time-row">
-                    <label>
-                      From:
-                      <span className="time-input-wrap">
-                        <input
-                          onChange={(event) => setScheduleFrom(event.currentTarget.value)}
-                          type="time"
-                          value={scheduleFrom}
-                        />
-                        <Clock3 size={14} strokeWidth={2} />
-                      </span>
-                    </label>
-                    <label>
-                      To:
-                      <span className="time-input-wrap">
-                        <input
-                          onChange={(event) => setScheduleTo(event.currentTarget.value)}
-                          type="time"
-                          value={scheduleTo}
-                        />
-                        <Clock3 size={14} strokeWidth={2} />
-                      </span>
-                    </label>
-                  </div>
-                </section>
-              ) : null}
-
-              {error ? <p className="form-error">{error}</p> : null}
-              <div className="form-actions">
-                <button type="button" onClick={() => closeAddDialog()}>
-                  Cancel
-                </button>
-                <button className="primary-action" disabled={isSubmitting}>
-                  {isSubmitting ? "Adding..." : "Download"}
-                </button>
-              </div>
-            </form>
-          </section>
+          {addDownloadSurface}
         </div>
       ) : null}
 

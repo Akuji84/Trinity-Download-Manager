@@ -697,6 +697,7 @@ fn update_app_settings(
         startup_prompt_answered: request.startup_prompt_answered,
         default_folder_mode: normalize_default_folder_mode(&request.default_folder_mode),
         fixed_download_folder: request.fixed_download_folder.trim().to_string(),
+        standalone_windows: request.standalone_windows,
         show_save_as_button: request.show_save_as_button,
         delete_button_action: normalize_delete_button_action(&request.delete_button_action),
         file_exists_action: normalize_file_exists_action(&request.file_exists_action),

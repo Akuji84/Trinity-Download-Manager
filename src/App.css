@@ -21,6 +21,11 @@ body {
   overflow: hidden;
 }
 
+#root {
+  width: 100%;
+  height: 100%;
+}
+
 button,
 input,
 select,
@@ -811,6 +816,10 @@ button {
   background: #0b1520;
 }
 
+.theme-midnight.standalone-add-shell {
+  background: #09111a;
+}
+
 .theme-midnight .details-progress-track {
   background: #08111a;
 }
@@ -1423,6 +1432,11 @@ button {
   background: #252a2d;
 }
 
+.new-download-modal.standalone-window {
+  width: min(100%, 720px);
+  box-shadow: 0 22px 54px rgba(0, 0, 0, 0.38);
+}
+
 .startup-prompt-modal {
   width: min(480px, calc(100vw - 32px));
   border-color: #161b20;
@@ -1458,6 +1472,20 @@ button {
   color: #e8edf3;
   background: transparent;
   cursor: pointer;
+}
+
+.standalone-add-shell {
+  width: 100vw;
+  height: 100vh;
+  background: #202428;
+}
+
+.standalone-add-backdrop {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  padding: 18px;
 }
 
 .add-form {

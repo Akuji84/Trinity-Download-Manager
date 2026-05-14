@@ -269,6 +269,13 @@ impl Storage {
         self.connection.execute(
             "
             INSERT OR IGNORE INTO settings (key, value)
+            VALUES ('standalone_windows', '0');
+            ",
+            [],
+        )?;
+        self.connection.execute(
+            "
+            INSERT OR IGNORE INTO settings (key, value)
             VALUES ('show_save_as_button', '1');
             ",
             [],
@@ -1293,6 +1300,11 @@ impl Storage {
         let fixed_download_folder = self
             .get_setting("fixed_download_folder")?
             .unwrap_or(defaults.fixed_download_folder);
+        let standalone_windows = self
+            .get_setting("standalone_windows")?
+            .and_then(|value| value.parse::<u8>().ok())
+            .map(|value| value != 0)
+            .unwrap_or(defaults.standalone_windows);
         let show_save_as_button = self
             .get_setting("show_save_as_button")?
             .and_then(|value| value.parse::<u8>().ok())
@@ -1494,6 +1506,7 @@ impl Storage {
             startup_prompt_answered,
             default_folder_mode,
             fixed_download_folder,
+            standalone_windows,
             show_save_as_button,
             delete_button_action,
             file_exists_action,
@@ -1584,6 +1597,10 @@ impl Storage {
         )?;
         self.upsert_setting("default_folder_mode", &settings.default_folder_mode)?;
         self.upsert_setting("fixed_download_folder", &settings.fixed_download_folder)?;
+        self.upsert_setting(
+            "standalone_windows",
+            if settings.standalone_windows { "1" } else { "0" },
+        )?;
         self.upsert_setting(
             "show_save_as_button",
             if settings.show_save_as_button { "1" } else { "0" },

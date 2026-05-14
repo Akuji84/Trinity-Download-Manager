@@ -477,6 +477,7 @@ function App() {
   const [urlMetadataError, setUrlMetadataError] = useState("");
   const [scheduleClock, setScheduleClock] = useState(() => Date.now());
   const [selectedJobIds, setSelectedJobIds] = useState<string[]>([]);
+  const [detailsPanelJobId, setDetailsPanelJobId] = useState<string | null>(null);
   const [settings, setSettings] = useState<AppSettings>({
     theme: "Dark",
     compact_downloads: false,
@@ -2034,7 +2035,17 @@ function App() {
     .reduce((total, job) => total + job.speed_bps, 0);
   const estimateJobEtaSeconds = (job: DownloadJob) =>
     estimateDownloadEtaSeconds(job, speedTelemetryRef.current.get(job.id)?.sampleCount ?? 0);
+  const primarySelectedJobId = getPrimarySelectedJobId(selectedJobIds, jobs);
   const selectedJobs = jobs.filter((job) => selectedJobIds.includes(job.id));
+  const detailsPanelJob =
+    jobs.find((job) => job.id === detailsPanelJobId) ??
+    jobs.find((job) => job.id === primarySelectedJobId) ??
+    null;
+  const detailsPanelJobEtaSeconds = detailsPanelJob ? estimateJobEtaSeconds(detailsPanelJob) : null;
+  const detailsPanelNextSelectedJob =
+    primarySelectedJobId && primarySelectedJobId !== detailsPanelJob?.id
+      ? jobs.find((job) => job.id === primarySelectedJobId) ?? null
+      : null;
   const selectedJobEtaSeconds =
     selectedJobs.length === 1 ? estimateJobEtaSeconds(selectedJobs[0]) : null;
   const queueEtaSeconds = estimateQueueEtaSeconds(jobs, speedTelemetryRef.current);
@@ -2047,6 +2058,24 @@ function App() {
     settings.use_custom_sort_order &&
     selectedJobs.length === 1 &&
     isQueueManageable(selectedJobs[0]);
+
+  useEffect(() => {
+    if (settings.bottom_panel_follows_selection) {
+      setDetailsPanelJobId(primarySelectedJobId);
+      return;
+    }
+
+    if (detailsPanelJobId && jobs.some((job) => job.id === detailsPanelJobId)) {
+      return;
+    }
+
+    setDetailsPanelJobId(primarySelectedJobId);
+  }, [
+    detailsPanelJobId,
+    jobs,
+    primarySelectedJobId,
+    settings.bottom_panel_follows_selection,
+  ]);
   const canChangePrioritySelected = selectedJobs.some(isQueueManageable);
   const scheduleNow = new Date(scheduleClock);
 
@@ -3773,114 +3802,115 @@ function App() {
               </button>
             </aside>
 
-            <section className="download-table">
-              <div className="table-filters">
-                <label className="table-search">
-                  <Search size={14} strokeWidth={2} />
-                  <input
-                    onChange={(event) => setQueueSearch(event.currentTarget.value)}
-                    placeholder="Search downloads"
-                    value={queueSearch}
-                  />
-                </label>
-                <select
-                  onChange={(event) =>
-                    setPriorityFilter(event.currentTarget.value as PriorityFilterId)
-                  }
-                  value={priorityFilter}
-                >
-                  <option value="all">All priorities</option>
-                  <option value="high">High priority</option>
-                  <option value="normal">Normal priority</option>
-                  <option value="low">Low priority</option>
-                </select>
-                <select
-                  onChange={(event) =>
-                    setQueueScope(event.currentTarget.value as "all" | "queueOnly" | "scheduled")
-                  }
-                  value={queueScope}
-                >
-                  <option value="all">All rows</option>
-                  <option value="queueOnly">Queue-manageable</option>
-                  <option value="scheduled">Scheduled only</option>
-                </select>
-              </div>
-              <div className="table-head">
-                <span className="check-cell">
-                  <input
-                    aria-label="Select all downloads"
-                    checked={
-                      visibleJobs.length > 0 &&
-                      visibleJobs.every((job) => selectedJobIds.includes(job.id))
+            <section className="downloads-workspace">
+              <section className="download-table">
+                <div className="table-filters">
+                  <label className="table-search">
+                    <Search size={14} strokeWidth={2} />
+                    <input
+                      onChange={(event) => setQueueSearch(event.currentTarget.value)}
+                      placeholder="Search downloads"
+                      value={queueSearch}
+                    />
+                  </label>
+                  <select
+                    onChange={(event) =>
+                      setPriorityFilter(event.currentTarget.value as PriorityFilterId)
                     }
-                    onChange={toggleAllJobs}
-                    type="checkbox"
-                  />
-                </span>
-                <span>File Name</span>
-                <span>Status</span>
-                <span>Size</span>
-                <span>Transfer rate</span>
-                <span>Actions</span>
-              </div>
-              <div className="download-list" key={activeTab}>
-                {!jobsInitialized ? (
-                  <>
-                    {[0, 1, 2, 3].map((i) => (
-                      <div key={i} className="skeleton-row" />
-                    ))}
-                  </>
-                ) : visibleJobs.length === 0 ? (
-                  <div className="empty-state">
-                    <h3>No matching downloads</h3>
-                    <p>Adjust the active filters or create a new download job.</p>
-                  </div>
-                ) : (
-                  visibleJobs.map((job) => {
-                    const isSelected = selectedJobIds.includes(job.id);
-                    const waitingForSchedule = isWaitingForSchedule(job, scheduleNow);
-                    const scheduleSummary = job.scheduler_enabled
-                      ? formatScheduleSummary(job)
-                      : "";
-                    const nextScheduledStart = waitingForSchedule
-                      ? formatNextScheduledStart(job, scheduleNow)
-                      : "";
-                    const queuePolicySummary =
-                      settings.use_custom_sort_order && isQueueManageable(job)
-                      ? `Queue: ${formatPriorityLabel(job.priority)} / #${job.queue_position}`
-                      : "";
+                    value={priorityFilter}
+                  >
+                    <option value="all">All priorities</option>
+                    <option value="high">High priority</option>
+                    <option value="normal">Normal priority</option>
+                    <option value="low">Low priority</option>
+                  </select>
+                  <select
+                    onChange={(event) =>
+                      setQueueScope(event.currentTarget.value as "all" | "queueOnly" | "scheduled")
+                    }
+                    value={queueScope}
+                  >
+                    <option value="all">All rows</option>
+                    <option value="queueOnly">Queue-manageable</option>
+                    <option value="scheduled">Scheduled only</option>
+                  </select>
+                </div>
+                <div className="table-head">
+                  <span className="check-cell">
+                    <input
+                      aria-label="Select all downloads"
+                      checked={
+                        visibleJobs.length > 0 &&
+                        visibleJobs.every((job) => selectedJobIds.includes(job.id))
+                      }
+                      onChange={toggleAllJobs}
+                      type="checkbox"
+                    />
+                  </span>
+                  <span>File Name</span>
+                  <span>Status</span>
+                  <span>Size</span>
+                  <span>Transfer rate</span>
+                  <span>Actions</span>
+                </div>
+                <div className="download-list" key={activeTab}>
+                  {!jobsInitialized ? (
+                    <>
+                      {[0, 1, 2, 3].map((i) => (
+                        <div key={i} className="skeleton-row" />
+                      ))}
+                    </>
+                  ) : visibleJobs.length === 0 ? (
+                    <div className="empty-state">
+                      <h3>No matching downloads</h3>
+                      <p>Adjust the active filters or create a new download job.</p>
+                    </div>
+                  ) : (
+                    visibleJobs.map((job) => {
+                      const isSelected = selectedJobIds.includes(job.id);
+                      const waitingForSchedule = isWaitingForSchedule(job, scheduleNow);
+                      const scheduleSummary = job.scheduler_enabled
+                        ? formatScheduleSummary(job)
+                        : "";
+                      const nextScheduledStart = waitingForSchedule
+                        ? formatNextScheduledStart(job, scheduleNow)
+                        : "";
+                      const queuePolicySummary =
+                        settings.use_custom_sort_order && isQueueManageable(job)
+                          ? `Queue: ${formatPriorityLabel(job.priority)} / #${job.queue_position}`
+                          : "";
 
-                    return (
-                      <article
-                        className={`download-row ${deletingJobIds.has(job.id) ? "deleting " : ""}${job.id === newestJobId ? "new-job " : ""}${isSelected ? "selected" : ""} ${
-                          dropTargetJobId === job.id ? "drop-target" : ""
-                        }`}
-                        draggable={settings.use_custom_sort_order && isQueueManageable(job)}
-                        key={job.id}
-                        onClick={() => toggleJobSelection(job.id)}
-                        onDragEnd={() => {
-                          setDraggedJobId(null);
-                          setDropTargetJobId(null);
-                        }}
-                        onDragOver={(event) => {
-                          const draggedJob = jobs.find((candidate) => candidate.id === draggedJobId);
-                          if (!draggedJob || !canDragOntoRow(draggedJob, job)) {
-                            return;
-                          }
-                          event.preventDefault();
-                          if (dropTargetJobId !== job.id) {
-                            setDropTargetJobId(job.id);
-                          }
-                        }}
-                        onDragStart={(event) => {
-                          handleRowDragStart(job);
-                          event.dataTransfer.effectAllowed = "move";
-                          event.dataTransfer.setData("text/plain", job.id);
-                        }}
-                        onDrop={(event) => {
-                          event.preventDefault();
-                          handleRowDrop(job);
-                        }}
+                      return (
+                        <article
+                          className={`download-row ${deletingJobIds.has(job.id) ? "deleting " : ""}${job.id === newestJobId ? "new-job " : ""}${isSelected ? "selected" : ""} ${
+                            dropTargetJobId === job.id ? "drop-target" : ""
+                          }`}
+                          draggable={settings.use_custom_sort_order && isQueueManageable(job)}
+                          key={job.id}
+                          onClick={() => toggleJobSelection(job.id)}
+                          onDragEnd={() => {
+                            setDraggedJobId(null);
+                            setDropTargetJobId(null);
+                          }}
+                          onDragOver={(event) => {
+                            const draggedJob = jobs.find((candidate) => candidate.id === draggedJobId);
+                            if (!draggedJob || !canDragOntoRow(draggedJob, job)) {
+                              return;
+                            }
+                            event.preventDefault();
+                            if (dropTargetJobId !== job.id) {
+                              setDropTargetJobId(job.id);
+                            }
+                          }}
+                          onDragStart={(event) => {
+                            handleRowDragStart(job);
+                            event.dataTransfer.effectAllowed = "move";
+                            event.dataTransfer.setData("text/plain", job.id);
+                          }}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            handleRowDrop(job);
+                          }}
                         >
                           <div className="download-primary-row">
                             <span className="check-cell file-icon-cell" aria-hidden="true">
@@ -3893,112 +3923,241 @@ function App() {
                                     <strong title={job.file_name}>{job.file_name}</strong>
                                   </div>
                                   <small title={job.url}>{job.url}</small>
+                                </div>
                               </div>
-                            </div>
-                            {settings.show_built_in_tags && job.scheduler_enabled ? (
-                              <small className="schedule-detail" title={scheduleSummary}>
-                                {scheduleSummary}
-                              </small>
-                            ) : null}
-                            {settings.show_built_in_tags && waitingForSchedule ? (
-                              <small className="schedule-detail waiting">
-                                Waiting for schedule window
-                                {nextScheduledStart ? ` - Next start ${nextScheduledStart}` : ""}
-                              </small>
-                            ) : null}
-                            {settings.show_built_in_tags && queuePolicySummary ? (
-                              <small className="queue-policy-detail">{queuePolicySummary}</small>
-                            ) : null}
-                            {(() => {
-                              const jobEtaSeconds = estimateJobEtaSeconds(job);
-                              return jobEtaSeconds !== null ? (
-                                <small className="eta-detail">
-                                  ETA {formatEta(jobEtaSeconds)}
+                              {settings.show_built_in_tags && job.scheduler_enabled ? (
+                                <small className="schedule-detail" title={scheduleSummary}>
+                                  {scheduleSummary}
                                 </small>
-                              ) : null;
-                            })()}
-                            {job.error_message && job.state !== "Paused" ? (
-                              <em title={job.error_message}>{job.error_message}</em>
-                            ) : null}
-                            {job.next_retry_at ? (
-                              <em>Next retry: {formatRetryTime(job.next_retry_at)}</em>
-                            ) : null}
-                          </div>
-                          <span
-                            className={`state-pill ${
-                              waitingForSchedule
-                                ? "state-scheduled"
-                                : `state-${job.state.toLowerCase()}`
-                            }`}
-                          >
-                            {waitingForSchedule ? "Scheduled" : job.state}
-                          </span>
-                          <span>{formatSize(job)}</span>
-                          <span>{formatBytes(job.speed_bps)}/s</span>
-                          <div className="row-actions">
-                            {job.state === "Running" ? (
-                              <>
+                              ) : null}
+                              {settings.show_built_in_tags && waitingForSchedule ? (
+                                <small className="schedule-detail waiting">
+                                  Waiting for schedule window
+                                  {nextScheduledStart ? ` - Next start ${nextScheduledStart}` : ""}
+                                </small>
+                              ) : null}
+                              {settings.show_built_in_tags && queuePolicySummary ? (
+                                <small className="queue-policy-detail">{queuePolicySummary}</small>
+                              ) : null}
+                              {(() => {
+                                const jobEtaSeconds = estimateJobEtaSeconds(job);
+                                return jobEtaSeconds !== null ? (
+                                  <small className="eta-detail">
+                                    ETA {formatEta(jobEtaSeconds)}
+                                  </small>
+                                ) : null;
+                              })()}
+                              {job.error_message && job.state !== "Paused" ? (
+                                <em title={job.error_message}>{job.error_message}</em>
+                              ) : null}
+                              {job.next_retry_at ? (
+                                <em>Next retry: {formatRetryTime(job.next_retry_at)}</em>
+                              ) : null}
+                            </div>
+                            <span
+                              className={`state-pill ${
+                                waitingForSchedule
+                                  ? "state-scheduled"
+                                  : `state-${job.state.toLowerCase()}`
+                              }`}
+                            >
+                              {waitingForSchedule ? "Scheduled" : job.state}
+                            </span>
+                            <span>{formatSize(job)}</span>
+                            <span>{formatBytes(job.speed_bps)}/s</span>
+                            <div className="row-actions">
+                              {job.state === "Running" ? (
+                                <>
+                                  <button
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      pauseJob(job.id);
+                                    }}
+                                  >
+                                    Pause
+                                  </button>
+                                  <button
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      cancelJob(job.id);
+                                    }}
+                                  >
+                                    Cancel
+                                  </button>
+                                </>
+                              ) : null}
+                              {job.state === "Queued" ||
+                              job.state === "Failed" ||
+                              job.state === "Canceled" ||
+                              job.state === "Paused" ? (
                                 <button
                                   onClick={(event) => {
                                     event.stopPropagation();
-                                    pauseJob(job.id);
+                                    startJob(job.id);
                                   }}
                                 >
-                                  Pause
+                                  Start
                                 </button>
-                                <button
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    cancelJob(job.id);
-                                  }}
-                                >
-                                  Cancel
-                                </button>
-                              </>
-                            ) : null}
-                            {job.state === "Queued" ||
-                            job.state === "Failed" ||
-                            job.state === "Canceled" ||
-                            job.state === "Paused" ? (
+                              ) : null}
                               <button
+                                className="icon-only"
+                                disabled={!job.output_path}
                                 onClick={(event) => {
                                   event.stopPropagation();
-                                  startJob(job.id);
+                                  invoke("reveal_in_folder", { path: job.output_path }).catch(() => {});
+                                }}
+                                title="Show in folder"
+                              >
+                                <FolderInput size={14} strokeWidth={2} />
+                              </button>
+                              <button
+                                disabled={job.state === "Running"}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  handleDeleteAction(job.id);
                                 }}
                               >
-                                Start
+                                Delete
                               </button>
-                            ) : null}
-                            <button
-                              className="icon-only"
-                              disabled={!job.output_path}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                invoke("reveal_in_folder", { path: job.output_path }).catch(() => {});
-                              }}
-                              title="Show in folder"
-                            >
-                              <FolderInput size={14} strokeWidth={2} />
-                            </button>
-                            <button
-                              disabled={job.state === "Running"}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                handleDeleteAction(job.id);
-                              }}
-                            >
-                              Delete
-                            </button>
+                            </div>
                           </div>
-                        </div>
-                        <div className={`progress-track${job.state === "Running" ? " active" : ""}${completingJobIds.has(job.id) ? " completing" : ""}`}>
-                          <span style={{ width: `${progressPercent(job)}%` }} />
-                        </div>
-                      </article>
-                    );
-                  })
+                          <div className={`progress-track${job.state === "Running" ? " active" : ""}${completingJobIds.has(job.id) ? " completing" : ""}`}>
+                            <span style={{ width: `${progressPercent(job)}%` }} />
+                          </div>
+                        </article>
+                      );
+                    })
+                  )}
+                </div>
+              </section>
+
+              <section className="details-panel" aria-label="Download details">
+                <div className="details-panel-header">
+                  <div>
+                    <h3>Details</h3>
+                    <small>
+                      {detailsPanelJob
+                        ? settings.bottom_panel_follows_selection
+                          ? "Following current selection"
+                          : "Pinned until you switch it"
+                        : "Select a download to inspect it here"}
+                    </small>
+                  </div>
+                  {!settings.bottom_panel_follows_selection && detailsPanelNextSelectedJob ? (
+                    <button
+                      className="details-panel-sync"
+                      onClick={() => setDetailsPanelJobId(detailsPanelNextSelectedJob.id)}
+                      type="button"
+                    >
+                      Show Selected
+                    </button>
+                  ) : null}
+                </div>
+
+                {detailsPanelJob ? (
+                  <>
+                    <div className="details-panel-summary">
+                      <div className="details-panel-title">
+                        <strong title={detailsPanelJob.file_name}>{detailsPanelJob.file_name}</strong>
+                        <small title={detailsPanelJob.output_path}>{detailsPanelJob.output_path}</small>
+                      </div>
+                      <span
+                        className={`state-pill ${
+                          isWaitingForSchedule(detailsPanelJob, scheduleNow)
+                            ? "state-scheduled"
+                            : `state-${detailsPanelJob.state.toLowerCase()}`
+                        }`}
+                      >
+                        {isWaitingForSchedule(detailsPanelJob, scheduleNow)
+                          ? "Scheduled"
+                          : detailsPanelJob.state}
+                      </span>
+                    </div>
+
+                    <div className="details-progress-block">
+                      <div className="details-progress-metrics">
+                        <strong>{formatPercent(progressPercent(detailsPanelJob))}</strong>
+                        <span>
+                          {formatBytes(detailsPanelJob.downloaded_bytes)}
+                          {detailsPanelJob.total_bytes
+                            ? ` of ${formatBytes(detailsPanelJob.total_bytes)}`
+                            : ""}
+                        </span>
+                        <span>{formatBytes(detailsPanelJob.speed_bps)}/s</span>
+                        <span>
+                          ETA{" "}
+                          {detailsPanelJobEtaSeconds !== null
+                            ? formatEta(detailsPanelJobEtaSeconds)
+                            : "--"}
+                        </span>
+                      </div>
+                      <div className="details-progress-track">
+                        <span style={{ width: `${progressPercent(detailsPanelJob)}%` }} />
+                      </div>
+                    </div>
+
+                    <div className="details-grid">
+                      <div className="details-item wide">
+                        <span>Source URL</span>
+                        <strong title={detailsPanelJob.url}>{detailsPanelJob.url}</strong>
+                      </div>
+                      <div className="details-item wide">
+                        <span>Saved to</span>
+                        <strong title={detailsPanelJob.output_folder}>
+                          {detailsPanelJob.output_folder}
+                        </strong>
+                      </div>
+                      <div className="details-item">
+                        <span>Connections</span>
+                        <strong>{detailsPanelJob.connection_count}</strong>
+                      </div>
+                      <div className="details-item">
+                        <span>Resumable</span>
+                        <strong>{detailsPanelJob.is_resumable ? "Yes" : "No"}</strong>
+                      </div>
+                      <div className="details-item">
+                        <span>Priority</span>
+                        <strong>{formatPriorityLabel(detailsPanelJob.priority)}</strong>
+                      </div>
+                      <div className="details-item">
+                        <span>Queue slot</span>
+                        <strong>#{detailsPanelJob.queue_position}</strong>
+                      </div>
+                      <div className="details-item">
+                        <span>Created</span>
+                        <strong>{formatPanelDateTime(detailsPanelJob.created_at)}</strong>
+                      </div>
+                      <div className="details-item">
+                        <span>Updated</span>
+                        <strong>{formatPanelDateTime(detailsPanelJob.updated_at)}</strong>
+                      </div>
+                      <div className="details-item wide">
+                        <span>Scheduler</span>
+                        <strong>
+                          {detailsPanelJob.scheduler_enabled
+                            ? formatScheduleSummary(detailsPanelJob)
+                            : "Not scheduled"}
+                        </strong>
+                      </div>
+                      <div className="details-item wide">
+                        <span>Retry state</span>
+                        <strong>
+                          {detailsPanelJob.next_retry_at
+                            ? `Next retry ${formatRetryTime(detailsPanelJob.next_retry_at)}`
+                            : detailsPanelJob.error_message
+                              ? detailsPanelJob.error_message
+                              : "No retry pending"}
+                        </strong>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="details-empty-state">
+                    <h3>No download selected</h3>
+                    <p>Select a row to inspect file path, transfer state, scheduler details, and ETA.</p>
+                  </div>
                 )}
-              </div>
+              </section>
             </section>
           </section>
         </div>
@@ -4290,6 +4449,36 @@ function progressPercent(job: DownloadJob) {
   }
 
   return Math.min(100, Math.floor((job.downloaded_bytes / job.total_bytes) * 100));
+}
+
+function formatPercent(value: number) {
+  return `${Math.max(0, Math.min(100, value)).toFixed(0)}%`;
+}
+
+function getPrimarySelectedJobId(selectedJobIds: string[], jobs: DownloadJob[]) {
+  for (let index = selectedJobIds.length - 1; index >= 0; index -= 1) {
+    const selectedId = selectedJobIds[index];
+    if (jobs.some((job) => job.id === selectedId)) {
+      return selectedId;
+    }
+  }
+
+  return null;
+}
+
+function formatPanelDateTime(value: string) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return parsed.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 function canStart(job: DownloadJob) {

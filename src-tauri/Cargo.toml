@@ -1,6 +1,6 @@
 [package]
 name = "trinity-download-manager"
-version = "0.1.6"
+version = "0.1.7"
 description = "Professional desktop download manager"
 authors = ["Trinity Download Manager"]
 edition = "2021"

@@ -74,34 +74,44 @@ chrome.webRequest.onResponseStarted.addListener(
   ["responseHeaders", "extraHeaders"],
 );
 
-// onDeterminingFilename fires after onCreated, once Chrome has received the server's
-// response headers and resolved the real save path (Content-Disposition filename).
-// We must always call suggest() — if we don't, Chrome hangs the download indefinitely.
+// onDeterminingFilename fires after onCreated once Chrome has the server's response headers
+// and the real save path (Content-Disposition filename). Chrome PAUSES the download here
+// waiting for suggest() — no bytes are written to disk until suggest() is called.
+// We hold the suggest() callback instead of calling it immediately so handleCreatedDownload
+// can cancel the download while it is paused, preventing Chrome from writing/opening the file.
+// A safety timeout releases the hold if handleCreatedDownload never picks it up.
 chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
-  suggest({ filename: downloadItem.filename, conflictAction: "uniquify" });
-
   const basename = downloadItem.filename
     ? downloadItem.filename.replace(/\\/g, "/").split("/").filter(Boolean).at(-1) || null
     : null;
 
   const entry = determinedFilenames.get(downloadItem.id);
   if (entry && typeof entry.resolve === "function") {
-    // handleCreatedDownload is waiting — resolve its promise
+    // handleCreatedDownload registered a waiter first — hand over basename + suggest
     clearTimeout(entry.timeoutId);
     determinedFilenames.delete(downloadItem.id);
-    entry.resolve(basename);
+    entry.resolve({ basename, suggest });
   } else {
-    // Store eagerly; handleCreatedDownload will pick it up when it gets here
-    determinedFilenames.set(downloadItem.id, { basename });
-    setTimeout(() => determinedFilenames.delete(downloadItem.id), DOWNLOAD_TRANSACTION_WINDOW_MS);
+    // Store eagerly with a safety timeout in case handleCreatedDownload never claims it
+    const safetyTimeoutId = setTimeout(() => {
+      const pending = determinedFilenames.get(downloadItem.id);
+      if (pending && typeof pending.suggest === "function") {
+        pending.suggest({ filename: downloadItem.filename || "", conflictAction: "uniquify" });
+      }
+      determinedFilenames.delete(downloadItem.id);
+    }, FILENAME_DETERMINATION_TIMEOUT_MS);
+    determinedFilenames.set(downloadItem.id, { basename, suggest, safetyTimeoutId });
   }
 });
 
+// Resolves with { basename, suggest } once onDeterminingFilename fires for this download,
+// or null on timeout (fallback to header/URL derivation, safety timeout releases Chrome).
 function waitForDeterminedFilename(downloadId) {
   const existing = determinedFilenames.get(downloadId);
   if (existing && typeof existing.resolve !== "function") {
+    clearTimeout(existing.safetyTimeoutId);
     determinedFilenames.delete(downloadId);
-    return Promise.resolve(existing.basename);
+    return Promise.resolve({ basename: existing.basename, suggest: existing.suggest });
   }
 
   return new Promise((resolve) => {
@@ -111,6 +121,26 @@ function waitForDeterminedFilename(downloadId) {
     }, FILENAME_DETERMINATION_TIMEOUT_MS);
     determinedFilenames.set(downloadId, { resolve, timeoutId });
   });
+}
+
+// Releases a held suggest() immediately — used when we decide NOT to intercept a download.
+function releasePendingFilenameHold(downloadId) {
+  const entry = determinedFilenames.get(downloadId);
+  if (!entry) {
+    return;
+  }
+  clearTimeout(entry.safetyTimeoutId || entry.timeoutId);
+  determinedFilenames.delete(downloadId);
+  if (typeof entry.suggest === "function") {
+    try {
+      entry.suggest({ filename: "", conflictAction: "uniquify" });
+    } catch {
+      // ignore
+    }
+  }
+  if (typeof entry.resolve === "function") {
+    entry.resolve(null);
+  }
 }
 
 async function refreshCachedBridgeStatus() {
@@ -875,7 +905,6 @@ async function getPopupState() {
 }
 
 async function handleCreatedDownload(downloadItem) {
-  const transaction = findDownloadTransactionForItem(downloadItem);
   if (!shouldConsiderDownload(downloadItem)) {
     return;
   }
@@ -891,6 +920,7 @@ async function handleCreatedDownload(downloadItem) {
     const alive = await pingBridge();
     cachedBridgeAlive = alive;
     if (!alive) {
+      releasePendingFilenameHold(downloadItem.id);
       return;
     }
   }
@@ -901,41 +931,52 @@ async function handleCreatedDownload(downloadItem) {
   ]);
 
   if (capturePaused) {
+    releasePendingFilenameHold(downloadItem.id);
     return;
   }
 
   // Quick site check using the referrer already present on the download item
   const quickHost = extractHost(downloadItem.referrer || "");
   if (quickHost && excludedSites.includes(quickHost)) {
+    releasePendingFilenameHold(downloadItem.id);
     return;
   }
 
-  // Cancel the Chrome download immediately — before any further async work
+  // We are intercepting this download. Mark it so concurrent onCreated calls are ignored.
   interceptedDownloadIds.add(downloadItem.id);
-  try {
-    await chrome.downloads.cancel(downloadItem.id);
-  } catch (error) {
-    console.warn("Could not cancel the browser download before Trinity handoff", error);
-  }
 
-  // Resolve the page URL and the Chrome-determined filename concurrently.
-  // waitForDeterminedFilename waits for onDeterminingFilename (which fires after onCreated
-  // once Chrome has processed the server's Content-Disposition header) or times out and
-  // returns null so we fall back to the existing header/URL derivation.
-  const [pageUrl, determinedFileName] = await Promise.all([
-    resolveDownloadPageUrl(downloadItem),
+  // Wait for onDeterminingFilename — Chrome is paused here, no bytes written to disk yet.
+  // We cancel while Chrome is paused so the file is never saved or opened.
+  const [filenameResult, pageUrl] = await Promise.all([
     waitForDeterminedFilename(downloadItem.id),
+    resolveDownloadPageUrl(downloadItem),
   ]);
 
   // Re-check exclusion with the resolved page URL in case referrer wasn't set
   const resolvedHost = extractHost(pageUrl || "");
   if (resolvedHost && excludedSites.includes(resolvedHost)) {
     interceptedDownloadIds.delete(downloadItem.id);
+    if (filenameResult?.suggest) {
+      try { filenameResult.suggest({ filename: downloadItem.filename || "", conflictAction: "uniquify" }); } catch { /* ignore */ }
+    }
     return;
   }
 
+  // Cancel Chrome's download while it is paused at filename determination
+  try {
+    await chrome.downloads.cancel(downloadItem.id);
+  } catch (error) {
+    console.warn("Could not cancel the browser download before Trinity handoff", error);
+  }
+
+  // Release Chrome's filename-determination pause. Chrome ignores suggest() for canceled downloads.
+  if (filenameResult?.suggest) {
+    try { filenameResult.suggest({ filename: downloadItem.filename || "", conflictAction: "uniquify" }); } catch { /* ignore */ }
+  }
+
+  const transaction = findDownloadTransactionForItem(downloadItem);
   const observedFileName =
-    determinedFileName ||
+    filenameResult?.basename ||
     deriveObservedFileNameFromHeaders(transaction?.responseHeaders) ||
     deriveDownloadItemFileName(downloadItem);
 

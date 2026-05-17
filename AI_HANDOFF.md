@@ -1258,3 +1258,16 @@ Exit criteria:
 ## Next Step
 
 Keep shrinking the remaining legacy resolver/re-discovery logic so browser-observed request and response data are the primary source of truth throughout the extension and app.
+
+## 2026-05-17 - Torrent dialog UI cleanup (0.1.16)
+
+- **Filename override**: Added a `useEffect` in `App.tsx` that updates `pendingSuggestedFileName` when
+  `urlMetadata.file_name` ends in `.torrent` and the current suggested name does not. This ensures the
+  inspection-derived filename (e.g. `pluto_t6_game.torrent`) replaces a generic browser-observed name
+  like `download` once inspection completes.
+- **Removed "Detected torrent file" card**: Replaced the entire `torrent-intake-card` section
+  (which showed heading, description paragraph, and checkbox) with a plain `scheduler-row` div
+  containing only the "Start torrent after download completes" checkbox — same styling as Scheduler.
+- **Removed "Download Torrent File Only" button**: Deleted from `form-actions`; the primary
+  "Download" button is now the only action when a torrent file is detected.
+- Version bumped to 0.1.16 across `package.json`, `tauri.conf.json`, and `Cargo.toml`.

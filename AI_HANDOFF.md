@@ -1280,3 +1280,20 @@ Keep shrinking the remaining legacy resolver/re-discovery logic so browser-obser
   - `TRINITY_UPDATE_BASE_URL=https://updates.akuji.org`
   - `TAURI_SIGNING_PRIVATE_KEY` (contents of `C:\Users\deeck\.trinity-release\updater\trinity-updater.key`)
   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
+
+## 2026-05-17 - Extension: real filename via onDeterminingFilename
+
+- **Root cause of "download" filename**: `findDownloadTransactionForItem` filtered out transactions
+  where `type !== "main_frame"`. Google Drive initiates downloads via JS, so the CDN request
+  (which carries the `Content-Disposition` header) has type `"xmlhttprequest"` or `"other"` — it
+  was silently skipped, leaving the fallback to Chrome's provisional save path (`download`).
+- **Fix**: Added `chrome.downloads.onDeterminingFilename` listener in `background.js`.
+  Chrome fires this event after `onCreated`, once it has processed the server's response headers
+  and determined the real local filename. The listener must always call `suggest()` (otherwise
+  Chrome hangs the download). It stores the resolved basename in `determinedFilenames` map.
+- **`waitForDeterminedFilename(downloadId)`**: New helper that either resolves immediately (if
+  `onDeterminingFilename` already fired) or waits up to 2.5 s for it, then returns `null` so the
+  existing `deriveObservedFileNameFromHeaders` / `deriveDownloadItemFileName` fallbacks still work.
+- **`handleCreatedDownload`**: Now runs `resolveDownloadPageUrl` and `waitForDeterminedFilename`
+  concurrently via `Promise.all`, then uses the determined filename as the primary source for both
+  `suggested_file_name` and `observed_file_name` sent to Trinity.

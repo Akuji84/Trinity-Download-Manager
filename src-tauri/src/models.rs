@@ -136,6 +136,26 @@ pub struct TorrentIntakeMetadata {
     pub files: Vec<TorrentIntakeFile>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct TorrentRuntimeStatus {
+    pub id: String,
+    pub source: String,
+    pub display_name: String,
+    pub info_hash: String,
+    pub output_folder: String,
+    pub state: String,
+    pub total_bytes: u64,
+    pub downloaded_bytes: u64,
+    pub uploaded_bytes: u64,
+    pub download_speed_bps: u64,
+    pub upload_speed_bps: u64,
+    pub eta_seconds: Option<u64>,
+    pub file_count: usize,
+    pub finished: bool,
+    pub is_paused: bool,
+    pub error_message: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtensionDownloadRequest {
     pub url: String,

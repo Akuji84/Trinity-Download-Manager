@@ -211,6 +211,25 @@ type TorrentIntakeMetadata = {
   files: TorrentIntakeFile[];
 };
 
+type TorrentRuntimeStatus = {
+  id: string;
+  source: string;
+  display_name: string;
+  info_hash: string;
+  output_folder: string;
+  state: string;
+  total_bytes: number;
+  downloaded_bytes: number;
+  uploaded_bytes: number;
+  download_speed_bps: number;
+  upload_speed_bps: number;
+  eta_seconds: number | null;
+  file_count: number;
+  finished: boolean;
+  is_paused: boolean;
+  error_message: string | null;
+};
+
 type PendingTorrentAutoStartRegistration = PendingTorrentAutoStart & {
   jobId: string;
 };
@@ -537,6 +556,9 @@ function App() {
   const [isTorrentMetadataLoading, setIsTorrentMetadataLoading] = useState(false);
   const [torrentMetadata, setTorrentMetadata] = useState<TorrentIntakeMetadata | null>(null);
   const [torrentMetadataError, setTorrentMetadataError] = useState("");
+  const [isTorrentRuntimeStarting, setIsTorrentRuntimeStarting] = useState(false);
+  const [activeTorrentRuntime, setActiveTorrentRuntime] = useState<TorrentRuntimeStatus | null>(null);
+  const [torrentRuntimeError, setTorrentRuntimeError] = useState("");
   const [settings, setSettings] = useState<AppSettings>({
     theme: "Dark",
     compact_downloads: false,
@@ -705,6 +727,9 @@ function App() {
     setPendingTorrentIntake(payload);
     setTorrentMetadata(null);
     setTorrentMetadataError("");
+    setActiveTorrentRuntime(null);
+    setTorrentRuntimeError("");
+    setIsTorrentRuntimeStarting(false);
     setIsTorrentMetadataLoading(false);
     setIsTorrentIntakeAnimatingOut(false);
     setIsTorrentIntakeOpen(true);
@@ -726,6 +751,9 @@ function App() {
       setPendingTorrentIntake(null);
       setTorrentMetadata(null);
       setTorrentMetadataError("");
+      setActiveTorrentRuntime(null);
+      setTorrentRuntimeError("");
+      setIsTorrentRuntimeStarting(false);
       setIsTorrentMetadataLoading(false);
     }, 220);
   }
@@ -1523,6 +1551,92 @@ function App() {
       cancelled = true;
     };
   }, [isTorrentIntakeOpen, pendingTorrentIntake]);
+
+  useEffect(() => {
+    if (!isTorrentIntakeOpen || !activeTorrentRuntime?.id || activeTorrentRuntime.finished) {
+      return;
+    }
+
+    let cancelled = false;
+    const interval = window.setInterval(() => {
+      void invoke<TorrentRuntimeStatus>("get_torrent_runtime_status", {
+        runtimeId: activeTorrentRuntime.id,
+      })
+        .then((status) => {
+          if (!cancelled) {
+            setActiveTorrentRuntime(status);
+          }
+        })
+        .catch((caughtError) => {
+          if (!cancelled) {
+            setTorrentRuntimeError(
+              typeof caughtError === "string" ? caughtError : "Could not refresh torrent status.",
+            );
+          }
+        });
+    }, 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [isTorrentIntakeOpen, activeTorrentRuntime?.id, activeTorrentRuntime?.finished]);
+
+  async function startTorrentRuntime() {
+    if (!pendingTorrentIntake) {
+      return;
+    }
+
+    setIsTorrentRuntimeStarting(true);
+    setTorrentRuntimeError("");
+    try {
+      const status = await invoke<TorrentRuntimeStatus>("start_torrent_runtime", {
+        source: pendingTorrentIntake.torrentFilePath ?? pendingTorrentIntake.sourceValue,
+        outputFolder: pendingTorrentIntake.outputFolder || null,
+      });
+      setActiveTorrentRuntime(status);
+    } catch (caughtError) {
+      setTorrentRuntimeError(
+        typeof caughtError === "string" ? caughtError : "Could not start torrent runtime.",
+      );
+    } finally {
+      setIsTorrentRuntimeStarting(false);
+    }
+  }
+
+  async function pauseTorrentRuntime() {
+    if (!activeTorrentRuntime?.id) {
+      return;
+    }
+    setTorrentRuntimeError("");
+    try {
+      const status = await invoke<TorrentRuntimeStatus>("pause_torrent_runtime", {
+        runtimeId: activeTorrentRuntime.id,
+      });
+      setActiveTorrentRuntime(status);
+    } catch (caughtError) {
+      setTorrentRuntimeError(
+        typeof caughtError === "string" ? caughtError : "Could not pause torrent.",
+      );
+    }
+  }
+
+  async function resumeTorrentRuntime() {
+    if (!activeTorrentRuntime?.id) {
+      return;
+    }
+    setTorrentRuntimeError("");
+    try {
+      const status = await invoke<TorrentRuntimeStatus>("resume_torrent_runtime", {
+        runtimeId: activeTorrentRuntime.id,
+      });
+      setActiveTorrentRuntime(status);
+    } catch (caughtError) {
+      setTorrentRuntimeError(
+        typeof caughtError === "string" ? caughtError : "Could not resume torrent.",
+      );
+    }
+  }
 
   useEffect(() => {
     const liveJobIds = new Set(jobs.map((job) => job.id));
@@ -4848,6 +4962,74 @@ function App() {
                 </div>
               ) : null}
 
+              {activeTorrentRuntime ? (
+                <div className="torrent-intake-panel">
+                  <strong>Torrent runtime</strong>
+                  <div className="torrent-intake-grid">
+                    <div className="torrent-intake-item">
+                      <span>State</span>
+                      <strong>{activeTorrentRuntime.state}</strong>
+                    </div>
+                    <div className="torrent-intake-item">
+                      <span>Progress</span>
+                      <strong>
+                        {activeTorrentRuntime.total_bytes > 0
+                          ? `${Math.max(
+                              0,
+                              Math.min(
+                                100,
+                                (activeTorrentRuntime.downloaded_bytes /
+                                  activeTorrentRuntime.total_bytes) *
+                                  100,
+                              ),
+                            ).toFixed(1)}%`
+                          : "0.0%"}
+                      </strong>
+                    </div>
+                    <div className="torrent-intake-item">
+                      <span>Downloaded</span>
+                      <strong>
+                        {formatBytes(activeTorrentRuntime.downloaded_bytes)}
+                        {activeTorrentRuntime.total_bytes > 0
+                          ? ` / ${formatBytes(activeTorrentRuntime.total_bytes)}`
+                          : ""}
+                      </strong>
+                    </div>
+                    <div className="torrent-intake-item">
+                      <span>ETA</span>
+                      <strong>
+                        {activeTorrentRuntime.eta_seconds != null
+                          ? formatEta(activeTorrentRuntime.eta_seconds)
+                          : "—"}
+                      </strong>
+                    </div>
+                    <div className="torrent-intake-item">
+                      <span>Down</span>
+                      <strong>{formatBytes(activeTorrentRuntime.download_speed_bps)}/s</strong>
+                    </div>
+                    <div className="torrent-intake-item">
+                      <span>Up</span>
+                      <strong>{formatBytes(activeTorrentRuntime.upload_speed_bps)}/s</strong>
+                    </div>
+                  </div>
+                  {activeTorrentRuntime.error_message ? (
+                    <p>{activeTorrentRuntime.error_message}</p>
+                  ) : (
+                    <p>
+                      Trinity is running this torrent through the torrent backend now. Main-list
+                      integration is the next step.
+                    </p>
+                  )}
+                </div>
+              ) : null}
+
+              {torrentRuntimeError ? (
+                <div className="torrent-intake-panel error">
+                  <strong>Could not run torrent</strong>
+                  <p>{torrentRuntimeError}</p>
+                </div>
+              ) : null}
+
               <div className="torrent-intake-grid">
                 <div className="torrent-intake-item">
                   <span>Type</span>
@@ -4938,8 +5120,41 @@ function App() {
                     Copy Magnet Link
                   </button>
                 )}
-                <button className="primary-action" type="button" onClick={() => closeTorrentIntake()}>
-                  Close
+                {activeTorrentRuntime ? (
+                  activeTorrentRuntime.is_paused ? (
+                    <button
+                      className="primary-action"
+                      type="button"
+                      onClick={() => {
+                        void resumeTorrentRuntime();
+                      }}
+                    >
+                      Resume Torrent
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void pauseTorrentRuntime();
+                      }}
+                    >
+                      Pause Torrent
+                    </button>
+                  )
+                ) : (
+                  <button
+                    className="primary-action"
+                    disabled={isTorrentMetadataLoading || isTorrentRuntimeStarting || !!torrentMetadataError}
+                    type="button"
+                    onClick={() => {
+                      void startTorrentRuntime();
+                    }}
+                  >
+                    {isTorrentRuntimeStarting ? "Starting..." : "Start Torrent"}
+                  </button>
+                )}
+                <button type="button" onClick={() => closeTorrentIntake()}>
+                  {activeTorrentRuntime ? "Hide" : "Close"}
                 </button>
               </div>
             </div>

@@ -5709,6 +5709,7 @@ dependencies = [
 name = "trinity-download-manager"
 version = "0.1.10"
 dependencies = [
+ "anyhow",
  "base64 0.22.1",
  "chrono",
  "filetime",

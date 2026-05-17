@@ -2,6 +2,7 @@ mod download_engine;
 mod models;
 mod storage;
 mod task_manager;
+mod torrent_manager;
 
 use std::{
     collections::HashMap,
@@ -22,7 +23,7 @@ use models::{
     AppSettings, AppStatus, AppUpdateInfo, AppUpdaterStatus, BrowserIntegrationSettings,
     CreateDownloadJobRequest, DownloadJob, DownloadProgressEvent, DownloadState,
     DownloadUrlMetadata, ExtensionDownloadRequest, ReorderDownloadJobRequest, TorrentIntakeFile,
-    TorrentIntakeMetadata, UpdateAppSettingsRequest, UpdateDownloadPriorityRequest,
+    TorrentIntakeMetadata, TorrentRuntimeStatus, UpdateAppSettingsRequest, UpdateDownloadPriorityRequest,
     UpdateDownloadSpeedLimitRequest,
 };
 use notify::{event::ModifyKind, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -45,25 +46,29 @@ use windows::{
     Win32::{
         Foundation::{HANDLE, HWND},
         Graphics::Gdi::{
-            BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS,
-            DeleteDC, DeleteObject, GetDC, HBRUSH, HGDIOBJ, ReleaseDC, SelectObject,
+            CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, ReleaseDC,
+            SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBRUSH, HGDIOBJ,
         },
         Storage::FileSystem::{
             FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_FLAGS_AND_ATTRIBUTES,
         },
+        System::Power::{SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED},
         UI::{
             Shell::{
                 SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_SMALLICON, SHGFI_USEFILEATTRIBUTES,
             },
-            WindowsAndMessaging::{DestroyIcon, DrawIconEx, GetSystemMetrics, DI_NORMAL, HICON, SM_CXSMICON, SM_CYSMICON},
+            WindowsAndMessaging::{
+                DestroyIcon, DrawIconEx, GetSystemMetrics, DI_NORMAL, HICON, SM_CXSMICON,
+                SM_CYSMICON,
+            },
         },
-        System::Power::{SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED},
     },
 };
 
 struct AppState {
     storage: Mutex<Storage>,
     active_downloads: Mutex<HashMap<String, Arc<download_engine::DownloadControl>>>,
+    torrent_manager: torrent_manager::TorrentManager,
     extension_request_contexts: Mutex<HashMap<String, ExtensionDownloadRequest>>,
     job_request_contexts: Mutex<HashMap<String, ExtensionDownloadRequest>>,
     file_watcher: Mutex<RecommendedWatcher>,
@@ -287,15 +292,15 @@ fn update_sleep_prevention(app: &AppHandle) -> Result<(), String> {
         .collect::<Vec<_>>();
     let has_non_resumable_running_jobs = running_jobs.iter().any(|job| !job.is_resumable);
     let has_running_jobs = !running_jobs.is_empty();
-    let has_pending_scheduled_jobs = jobs.iter().any(|job| {
-        matches!(job.state, DownloadState::Queued) && job.scheduler_enabled
-    });
+    let has_pending_scheduled_jobs = jobs
+        .iter()
+        .any(|job| matches!(job.state, DownloadState::Queued) && job.scheduler_enabled);
 
     let should_prevent_sleep_for_active = settings.avoid_sleep_with_active_downloads
         && has_running_jobs
         && !(settings.allow_sleep_if_resumable && !has_non_resumable_running_jobs);
-    let should_prevent_sleep_for_scheduled = settings.avoid_sleep_with_scheduled_downloads
-        && has_pending_scheduled_jobs;
+    let should_prevent_sleep_for_scheduled =
+        settings.avoid_sleep_with_scheduled_downloads && has_pending_scheduled_jobs;
 
     apply_sleep_prevention_state(
         &state,
@@ -385,7 +390,9 @@ fn unique_output_path(output_path: PathBuf) -> PathBuf {
         return output_path;
     }
 
-    let parent = output_path.parent().unwrap_or_else(|| std::path::Path::new(""));
+    let parent = output_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new(""));
     let stem = output_path
         .file_stem()
         .and_then(std::ffi::OsStr::to_str)
@@ -425,11 +432,21 @@ fn apply_extension_request_headers(
         return request;
     };
 
-    if let Some(referrer) = context.referrer.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(referrer) = context
+        .referrer
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         request = request.header(REFERER, referrer);
     }
 
-    if let Some(user_agent) = context.user_agent.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(user_agent) = context
+        .user_agent
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         request = request.header(USER_AGENT, user_agent);
     }
 
@@ -530,8 +547,16 @@ fn request_uses_form_data(context: Option<&ExtensionDownloadRequest>) -> bool {
 fn request_uses_multipart(context: Option<&ExtensionDownloadRequest>) -> bool {
     context
         .and_then(|value| value.request_headers.as_ref())
-        .and_then(|headers| headers.get("content-type").or_else(|| headers.get("Content-Type")))
-        .map(|value| value.to_ascii_lowercase().starts_with("multipart/form-data"))
+        .and_then(|headers| {
+            headers
+                .get("content-type")
+                .or_else(|| headers.get("Content-Type"))
+        })
+        .map(|value| {
+            value
+                .to_ascii_lowercase()
+                .starts_with("multipart/form-data")
+        })
         .unwrap_or(false)
 }
 
@@ -690,7 +715,9 @@ fn update_app_settings(
         retry_attempts: request.retry_attempts.clamp(0, 10),
         retry_delay_seconds: request.retry_delay_seconds.clamp(0, 3600),
         default_connection_count: request.default_connection_count.clamp(1, 16),
-        default_download_speed_limit_kbps: request.default_download_speed_limit_kbps.min(1024 * 1024),
+        default_download_speed_limit_kbps: request
+            .default_download_speed_limit_kbps
+            .min(1024 * 1024),
         bandwidth_schedule_enabled: request.bandwidth_schedule_enabled,
         bandwidth_schedule_start: normalize_time_setting(&request.bandwidth_schedule_start)?,
         bandwidth_schedule_end: normalize_time_setting(&request.bandwidth_schedule_end)?,
@@ -741,7 +768,9 @@ fn update_app_settings(
         check_for_updates_automatically: request.check_for_updates_automatically,
         install_updates_automatically: request.install_updates_automatically,
     };
-    state.close_to_tray.store(request.close_to_tray, Ordering::Relaxed);
+    state
+        .close_to_tray
+        .store(request.close_to_tray, Ordering::Relaxed);
     state
         .show_tray_activity
         .store(request.show_tray_activity, Ordering::Relaxed);
@@ -785,7 +814,10 @@ fn get_system_file_icon(path_hint: String, is_directory: bool) -> Result<Option<
 }
 
 #[tauri::command]
-async fn inspect_download_url(state: State<'_, AppState>, url: String) -> Result<DownloadUrlMetadata, String> {
+async fn inspect_download_url(
+    state: State<'_, AppState>,
+    url: String,
+) -> Result<DownloadUrlMetadata, String> {
     let parsed_url = Url::parse(url.trim()).map_err(|_| "Enter a valid URL.".to_string())?;
     match parsed_url.scheme() {
         "http" | "https" => {}
@@ -819,11 +851,13 @@ async fn inspect_download_url(state: State<'_, AppState>, url: String) -> Result
                 .await
             {
                 Ok(response) if response.status().is_success() => response,
-                _ => build_extension_request(&client, &parsed_url, extension_context.as_ref(), false)
-                    .header(RANGE, "bytes=0-0")
-                    .send()
-                    .await
-                    .map_err(|error| error.to_string())?,
+                _ => {
+                    build_extension_request(&client, &parsed_url, extension_context.as_ref(), false)
+                        .header(RANGE, "bytes=0-0")
+                        .send()
+                        .await
+                        .map_err(|error| error.to_string())?
+                }
             }
         }
     } else {
@@ -844,7 +878,10 @@ async fn inspect_download_url(state: State<'_, AppState>, url: String) -> Result
             .and_then(|value| value.to_str().ok())
             .unwrap_or("");
         if content_type.starts_with("text/html") {
-            return Err("URL returned a web page, not a downloadable file. Use the direct file URL.".to_string());
+            return Err(
+                "URL returned a web page, not a downloadable file. Use the direct file URL."
+                    .to_string(),
+            );
         }
     }
 
@@ -971,6 +1008,65 @@ async fn resolve_torrent_intake(
 }
 
 #[tauri::command]
+async fn start_torrent_runtime(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    source: String,
+    output_folder: Option<String>,
+) -> Result<TorrentRuntimeStatus, String> {
+    let resolved_output_folder = output_folder
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or(default_download_folder(&app)?);
+    std::fs::create_dir_all(&resolved_output_folder).map_err(|error| error.to_string())?;
+    state
+        .torrent_manager
+        .start(&app, &source, resolved_output_folder)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn get_torrent_runtime_status(
+    state: State<'_, AppState>,
+    runtime_id: String,
+) -> Result<TorrentRuntimeStatus, String> {
+    state
+        .torrent_manager
+        .status(runtime_id.trim())
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn pause_torrent_runtime(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    runtime_id: String,
+) -> Result<TorrentRuntimeStatus, String> {
+    state
+        .torrent_manager
+        .pause(&app, runtime_id.trim())
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn resume_torrent_runtime(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    runtime_id: String,
+) -> Result<TorrentRuntimeStatus, String> {
+    state
+        .torrent_manager
+        .resume(&app, runtime_id.trim())
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn create_download_job(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -987,7 +1083,9 @@ fn create_download_job(
         .storage
         .lock()
         .map_err(|_| "Storage lock is unavailable.".to_string())?;
-    let app_settings = storage.get_app_settings().map_err(|error| error.to_string())?;
+    let app_settings = storage
+        .get_app_settings()
+        .map_err(|error| error.to_string())?;
     let extension_context = extension_context_for_url(&state, parsed_url.as_str())?;
     let file_name = request
         .suggested_file_name
@@ -1019,7 +1117,7 @@ fn create_download_job(
         "ask" => {
             if requested_output_path.exists() {
                 return Err(
-                    "A file with this name already exists in the target folder.".to_string(),
+                    "A file with this name already exists in the target folder.".to_string()
                 );
             }
             requested_output_path
@@ -1028,7 +1126,9 @@ fn create_download_job(
     };
     let (scheduler_enabled, schedule_days, schedule_from, schedule_to) =
         normalize_schedule_request(&request)?;
-    let queue_position = storage.next_queue_position().map_err(|error| error.to_string())?;
+    let queue_position = storage
+        .next_queue_position()
+        .map_err(|error| error.to_string())?;
     let connection_count = parsed_url
         .host_str()
         .map(|hostname| {
@@ -1226,7 +1326,10 @@ fn update_download_speed_limit(
 }
 
 #[tauri::command]
-fn list_download_jobs(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<DownloadJob>, String> {
+fn list_download_jobs(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<DownloadJob>, String> {
     let storage = state
         .storage
         .lock()
@@ -1234,7 +1337,11 @@ fn list_download_jobs(app: AppHandle, state: State<'_, AppState>) -> Result<Vec<
     let jobs = load_jobs_with_cleanup(&storage).map_err(|error| error.to_string())?;
     drop(storage);
     sync_completed_file_watchers(&state, &jobs)?;
-    update_tray_tooltip(&app, &jobs, state.show_tray_activity.load(Ordering::Relaxed));
+    update_tray_tooltip(
+        &app,
+        &jobs,
+        state.show_tray_activity.load(Ordering::Relaxed),
+    );
     Ok(jobs)
 }
 
@@ -1262,7 +1369,9 @@ fn delete_download_job(
         )?;
     }
 
-    let deleted = storage.delete_download_job(&id).map_err(|error| error.to_string())?;
+    let deleted = storage
+        .delete_download_job(&id)
+        .map_err(|error| error.to_string())?;
     drop(storage);
     if deleted {
         update_sleep_prevention(&app)?;
@@ -1271,13 +1380,19 @@ fn delete_download_job(
 }
 
 #[tauri::command]
-fn remove_download_job(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<bool, String> {
+fn remove_download_job(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<bool, String> {
     let storage = state
         .storage
         .lock()
         .map_err(|_| "Storage lock is unavailable.".to_string())?;
 
-    let deleted = storage.delete_download_job(&id).map_err(|error| error.to_string())?;
+    let deleted = storage
+        .delete_download_job(&id)
+        .map_err(|error| error.to_string())?;
     drop(storage);
     if deleted {
         update_sleep_prevention(&app)?;
@@ -1490,9 +1605,8 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
     tauri::async_runtime::spawn(async move {
         let job_id = job.id.clone();
         let started_at = std::time::Instant::now();
-        let manifest_root = segment_manifest_root(&app).unwrap_or_else(|_| {
-            std::env::temp_dir().join("trinity-segment-manifests")
-        });
+        let manifest_root = segment_manifest_root(&app)
+            .unwrap_or_else(|_| std::env::temp_dir().join("trinity-segment-manifests"));
         let app_for_progress = app.clone();
         let app_for_output = app.clone();
         let app_for_speed_limit = app.clone();
@@ -1505,7 +1619,11 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
                 .storage
                 .lock()
                 .map_err(|_| "Storage lock is unavailable.".to_string())
-                .and_then(|storage| storage.get_app_settings().map_err(|error| error.to_string()));
+                .and_then(|storage| {
+                    storage
+                        .get_app_settings()
+                        .map_err(|error| error.to_string())
+                });
             match storage {
                 Ok(settings) => download_engine::DownloadBehavior {
                     skip_web_pages: settings.skip_web_pages,
@@ -1574,13 +1692,18 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
                     .storage
                     .lock()
                     .map_err(|_| "Storage lock is unavailable.".to_string())?;
-                let app_settings = storage.get_app_settings().map_err(|error| error.to_string())?;
+                let app_settings = storage
+                    .get_app_settings()
+                    .map_err(|error| error.to_string())?;
                 let latest_job = storage
                     .get_download_job(&job_id_for_speed_limit)
                     .map_err(|error| error.to_string())?
                     .ok_or_else(|| "Download job no longer exists.".to_string())?;
 
-                Ok(effective_download_speed_limit_kbps(&app_settings, &latest_job))
+                Ok(effective_download_speed_limit_kbps(
+                    &app_settings,
+                    &latest_job,
+                ))
             },
         )
         .await;
@@ -1681,9 +1804,7 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
                         let app_for_retry = app.clone();
                         let retry_delay_seconds = app_settings.retry_delay_seconds;
                         tauri::async_runtime::spawn(async move {
-                            tokio::time::sleep(std::time::Duration::from_secs(
-                                retry_delay_seconds,
-                            ))
+                            tokio::time::sleep(std::time::Duration::from_secs(retry_delay_seconds))
                                 .await;
                             let _ = pump_queue(app_for_retry);
                         });
@@ -1716,7 +1837,10 @@ fn spawn_download(app: AppHandle, job: DownloadJob) -> Result<(), String> {
             }
         };
 
-        if let (Some(settings), Some(job)) = (completion_hook_settings.as_ref(), completion_hook_job.as_ref()) {
+        if let (Some(settings), Some(job)) = (
+            completion_hook_settings.as_ref(),
+            completion_hook_job.as_ref(),
+        ) {
             execute_completion_hook(settings, job);
         }
 
@@ -1745,7 +1869,10 @@ fn default_download_folder(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 #[cfg(target_os = "windows")]
-fn system_file_icon_data_url(path_hint: &str, is_directory: bool) -> Result<Option<String>, String> {
+fn system_file_icon_data_url(
+    path_hint: &str,
+    is_directory: bool,
+) -> Result<Option<String>, String> {
     let hint_path = PathBuf::from(path_hint);
     let path_exists = hint_path.exists();
     let normalized_hint = if path_exists {
@@ -1990,8 +2117,7 @@ fn effective_download_speed_limit_kbps(settings: &AppSettings, job: &DownloadJob
         && is_time_window_active(
             &settings.bandwidth_schedule_start,
             &settings.bandwidth_schedule_end,
-        )
-    {
+        ) {
         Some(settings.bandwidth_schedule_limit_kbps)
     } else {
         None
@@ -2161,8 +2287,7 @@ fn sync_completed_file_watchers(state: &AppState, jobs: &[DownloadJob]) -> Resul
             .map_err(|error| error.to_string())?
     };
     let mut next_directories = if remove_deleted_files {
-        jobs
-            .iter()
+        jobs.iter()
             .filter(|job| matches!(job.state, DownloadState::Completed))
             .filter_map(|job| {
                 let output_path = job.output_path.trim();
@@ -2202,7 +2327,9 @@ fn sync_completed_file_watchers(state: &AppState, jobs: &[DownloadJob]) -> Resul
         .collect::<Vec<_>>();
 
     for directory in directories_to_remove {
-        watcher.unwatch(&directory).map_err(|error| error.to_string())?;
+        watcher
+            .unwatch(&directory)
+            .map_err(|error| error.to_string())?;
     }
 
     for directory in &directories_to_add {
@@ -2293,11 +2420,16 @@ fn start_extension_bridge(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-fn handle_extension_bridge_connection(app: &AppHandle, mut stream: TcpStream) -> Result<(), String> {
+fn handle_extension_bridge_connection(
+    app: &AppHandle,
+    mut stream: TcpStream,
+) -> Result<(), String> {
     let (method, path, body) = read_http_request(&mut stream)?;
 
     match (method.as_str(), path.as_str()) {
-        ("OPTIONS", _) => write_json_response(&mut stream, "204 No Content", &serde_json::json!({})),
+        ("OPTIONS", _) => {
+            write_json_response(&mut stream, "204 No Content", &serde_json::json!({}))
+        }
         ("GET", "/app/ping") => write_json_response(
             &mut stream,
             "200 OK",
@@ -2322,11 +2454,7 @@ fn handle_extension_bridge_connection(app: &AppHandle, mut stream: TcpStream) ->
                 BrowserIntegrationSettings::from(&settings)
             };
 
-            write_json_response(
-                &mut stream,
-                "200 OK",
-                &serde_json::json!(settings),
-            )
+            write_json_response(&mut stream, "200 OK", &serde_json::json!(settings))
         }
         ("POST", "/app/open-options") => {
             focus_main_window(app);
@@ -2346,8 +2474,8 @@ fn handle_extension_bridge_connection(app: &AppHandle, mut stream: TcpStream) ->
             let request: ExtensionDownloadRequest = serde_json::from_slice(&body)
                 .map_err(|error| format!("Invalid Trinity extension payload: {error}"))?;
             let resolved_url = resolved_extension_url(&request).to_string();
-            let parsed_url = Url::parse(&resolved_url)
-                .map_err(|_| "Invalid download URL.".to_string())?;
+            let parsed_url =
+                Url::parse(&resolved_url).map_err(|_| "Invalid download URL.".to_string())?;
             match parsed_url.scheme() {
                 "http" | "https" => {}
                 _ => return Err("Only HTTP and HTTPS URLs are supported.".to_string()),
@@ -2511,20 +2639,22 @@ pub fn run() {
                 ))
             })?;
             let app_handle = app.handle().clone();
-            let file_watcher = notify::recommended_watcher(move |event_result: notify::Result<notify::Event>| {
-                if let Ok(event) = event_result {
-                    let _ = handle_file_watch_event(&app_handle, &event.kind);
-                }
-            })
-            .map_err(|error| {
-                Box::<dyn std::error::Error>::from(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    error.to_string(),
-                ))
-            })?;
+            let file_watcher =
+                notify::recommended_watcher(move |event_result: notify::Result<notify::Event>| {
+                    if let Ok(event) = event_result {
+                        let _ = handle_file_watch_event(&app_handle, &event.kind);
+                    }
+                })
+                .map_err(|error| {
+                    Box::<dyn std::error::Error>::from(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        error.to_string(),
+                    ))
+                })?;
             app.manage(AppState {
                 storage: Mutex::new(storage),
                 active_downloads: Mutex::new(HashMap::new()),
+                torrent_manager: torrent_manager::TorrentManager::default(),
                 extension_request_contexts: Mutex::new(HashMap::new()),
                 job_request_contexts: Mutex::new(HashMap::new()),
                 file_watcher: Mutex::new(file_watcher),
@@ -2562,12 +2692,14 @@ pub fn run() {
                     message,
                 ))
             })?;
-            sync_launch_at_startup_setting(initial_settings.launch_at_startup).map_err(|message| {
-                Box::<dyn std::error::Error>::from(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    message,
-                ))
-            })?;
+            sync_launch_at_startup_setting(initial_settings.launch_at_startup).map_err(
+                |message| {
+                    Box::<dyn std::error::Error>::from(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        message,
+                    ))
+                },
+            )?;
             update_sleep_prevention(app.handle()).map_err(|message| {
                 Box::<dyn std::error::Error>::from(std::io::Error::new(
                     std::io::ErrorKind::Other,
@@ -2576,28 +2708,35 @@ pub fn run() {
             })?;
 
             // System tray
-            let open_item = tauri::menu::MenuItem::with_id(app, "open", "Open Trinity", true, None::<&str>)?;
+            let open_item =
+                tauri::menu::MenuItem::with_id(app, "open", "Open Trinity", true, None::<&str>)?;
             let separator = tauri::menu::PredefinedMenuItem::separator(app)?;
-            let close_item = tauri::menu::MenuItem::with_id(app, "close", "Close Trinity", true, None::<&str>)?;
-            let tray_menu = tauri::menu::Menu::with_items(app, &[&open_item, &separator, &close_item])?;
+            let close_item =
+                tauri::menu::MenuItem::with_id(app, "close", "Close Trinity", true, None::<&str>)?;
+            let tray_menu =
+                tauri::menu::Menu::with_items(app, &[&open_item, &separator, &close_item])?;
             let mut tray_builder = tauri::tray::TrayIconBuilder::with_id("main-tray")
                 .menu(&tray_menu)
-                .tooltip(tray_tooltip_for_jobs(&jobs, initial_settings.show_tray_activity))
-                .on_tray_icon_event(|tray, event| {
-                    match event {
-                        tauri::tray::TrayIconEvent::Click { button, button_state, .. }
-                            if button == tauri::tray::MouseButton::Left
-                                && button_state == tauri::tray::MouseButtonState::Up =>
-                        {
-                            focus_main_window(&tray.app_handle());
-                        }
-                        tauri::tray::TrayIconEvent::DoubleClick { button, .. }
-                            if button == tauri::tray::MouseButton::Left =>
-                        {
-                            focus_main_window(&tray.app_handle());
-                        }
-                        _ => {}
+                .tooltip(tray_tooltip_for_jobs(
+                    &jobs,
+                    initial_settings.show_tray_activity,
+                ))
+                .on_tray_icon_event(|tray, event| match event {
+                    tauri::tray::TrayIconEvent::Click {
+                        button,
+                        button_state,
+                        ..
+                    } if button == tauri::tray::MouseButton::Left
+                        && button_state == tauri::tray::MouseButtonState::Up =>
+                    {
+                        focus_main_window(&tray.app_handle());
                     }
+                    tauri::tray::TrayIconEvent::DoubleClick { button, .. }
+                        if button == tauri::tray::MouseButton::Left =>
+                    {
+                        focus_main_window(&tray.app_handle());
+                    }
+                    _ => {}
                 })
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => {
@@ -2633,6 +2772,10 @@ pub fn run() {
             get_system_file_icon,
             inspect_download_url,
             resolve_torrent_intake,
+            start_torrent_runtime,
+            get_torrent_runtime_status,
+            pause_torrent_runtime,
+            resume_torrent_runtime,
             create_download_job,
             list_download_jobs,
             delete_download_job,

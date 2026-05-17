@@ -1021,11 +1021,15 @@ async fn start_torrent_runtime(
         .map(PathBuf::from)
         .unwrap_or(default_download_folder(&app)?);
     std::fs::create_dir_all(&resolved_output_folder).map_err(|error| error.to_string())?;
-    state
+    let status = state
         .torrent_manager
         .start(&app, &source, resolved_output_folder)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    reconcile_torrent_jobs(&app, &state).await?;
+    app.emit("downloads-changed", ())
+        .map_err(|error| error.to_string())?;
+    Ok(status)
 }
 
 #[tauri::command]
@@ -1045,11 +1049,21 @@ async fn list_torrent_runtimes(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Vec<TorrentRuntimeStatus>, String> {
-    state
+    let statuses = state
         .torrent_manager
         .list(&app)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    {
+        let storage = state
+            .storage
+            .lock()
+            .map_err(|_| "Storage lock is unavailable.".to_string())?;
+        storage
+            .sync_torrent_jobs(&statuses)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(statuses)
 }
 
 #[tauri::command]
@@ -1058,15 +1072,20 @@ async fn pause_torrent_runtime(
     state: State<'_, AppState>,
     runtime_id: String,
 ) -> Result<TorrentRuntimeStatus, String> {
-    state
+    let status = state
         .torrent_manager
         .pause(&app, runtime_id.trim())
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    reconcile_torrent_jobs(&app, &state).await?;
+    app.emit("downloads-changed", ())
+        .map_err(|error| error.to_string())?;
+    Ok(status)
 }
 
 #[tauri::command]
 async fn remove_torrent_runtime(
+    app: AppHandle,
     state: State<'_, AppState>,
     runtime_id: String,
     delete_files: bool,
@@ -1075,7 +1094,11 @@ async fn remove_torrent_runtime(
         .torrent_manager
         .remove(runtime_id.trim(), delete_files)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    reconcile_torrent_jobs(&app, &state).await?;
+    app.emit("downloads-changed", ())
+        .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -1084,11 +1107,15 @@ async fn resume_torrent_runtime(
     state: State<'_, AppState>,
     runtime_id: String,
 ) -> Result<TorrentRuntimeStatus, String> {
-    state
+    let status = state
         .torrent_manager
         .resume(&app, runtime_id.trim())
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    reconcile_torrent_jobs(&app, &state).await?;
+    app.emit("downloads-changed", ())
+        .map_err(|error| error.to_string())?;
+    Ok(status)
 }
 
 #[tauri::command]
@@ -1169,11 +1196,13 @@ fn create_download_job(
 
     let job = DownloadJob {
         id: Uuid::new_v4().to_string(),
+        source_kind: "http".to_string(),
         url: parsed_url.to_string(),
         file_name,
         output_folder: output_folder.to_string_lossy().to_string(),
         output_path: output_path.to_string_lossy().to_string(),
         state: DownloadState::Queued,
+        state_label: None,
         queue_position,
         priority: 1,
         connection_count,
@@ -1189,6 +1218,7 @@ fn create_download_job(
                     .and_then(|context| context.observed_content_length)
             }),
         speed_bps: 0,
+        uploaded_bytes: 0,
         is_resumable: extension_context
             .as_ref()
             .and_then(|context| context.browser_observed)
@@ -1209,6 +1239,11 @@ fn create_download_job(
         error_message: None,
         created_at: String::new(),
         updated_at: String::new(),
+        torrent_info_hash: None,
+        torrent_file_count: None,
+        torrent_source: None,
+        torrent_finished: false,
+        torrent_paused: false,
     };
 
     storage
@@ -1351,10 +1386,11 @@ fn update_download_speed_limit(
 }
 
 #[tauri::command]
-fn list_download_jobs(
+async fn list_download_jobs(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Vec<DownloadJob>, String> {
+    reconcile_torrent_jobs(&app, &state).await?;
     let storage = state
         .storage
         .lock()
@@ -2298,6 +2334,21 @@ fn load_jobs_with_cleanup(storage: &Storage) -> rusqlite::Result<Vec<DownloadJob
 
     jobs = storage.list_download_jobs()?;
     Ok(jobs)
+}
+
+async fn reconcile_torrent_jobs(app: &AppHandle, state: &AppState) -> Result<(), String> {
+    let runtimes = state
+        .torrent_manager
+        .list(app)
+        .await
+        .map_err(|error| error.to_string())?;
+    let storage = state
+        .storage
+        .lock()
+        .map_err(|_| "Storage lock is unavailable.".to_string())?;
+    storage
+        .sync_torrent_jobs(&runtimes)
+        .map_err(|error| error.to_string())
 }
 
 fn sync_completed_file_watchers(state: &AppState, jobs: &[DownloadJob]) -> Result<(), String> {

@@ -91,7 +91,7 @@ impl TorrentManager {
     }
 
     pub async fn status(&self, runtime_id: &str) -> anyhow::Result<TorrentRuntimeStatus> {
-        self.sync_runtimes().await?;
+        self.sync_runtimes(None).await?;
         let runtimes = self.runtimes.lock().await;
         let runtime = runtimes
             .get(runtime_id)
@@ -105,8 +105,10 @@ impl TorrentManager {
             .download_dir()
             .or_else(|_| app.path().app_data_dir().map(|path| path.join("downloads")))
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let _ = self.ensure_session(app, default_output_folder).await?;
-        self.sync_runtimes().await?;
+        let _ = self
+            .ensure_session(app, default_output_folder.clone())
+            .await?;
+        self.sync_runtimes(Some(&default_output_folder)).await?;
         let runtimes = self.runtimes.lock().await;
         let mut items = runtimes.values().map(status_from_runtime).collect::<Vec<_>>();
         items.sort_by(|left, right| left.display_name.cmp(&right.display_name));
@@ -202,7 +204,7 @@ impl TorrentManager {
         Ok(session)
     }
 
-    async fn sync_runtimes(&self) -> anyhow::Result<()> {
+    async fn sync_runtimes(&self, fallback_output_folder: Option<&PathBuf>) -> anyhow::Result<()> {
         let session = self
             .session
             .lock()
@@ -227,7 +229,11 @@ impl TorrentManager {
                     output_folder: known_output_folders
                         .get(&handle.info_hash().as_string())
                         .cloned()
-                        .unwrap_or_default(),
+                        .unwrap_or_else(|| {
+                            fallback_output_folder
+                                .map(|path| path.to_string_lossy().to_string())
+                                .unwrap_or_default()
+                        }),
                     handle: handle.clone(),
                 })
                 .collect::<Vec<_>>()

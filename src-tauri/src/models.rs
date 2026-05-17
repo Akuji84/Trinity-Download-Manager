@@ -61,11 +61,13 @@ impl TryFrom<&str> for DownloadState {
 #[derive(Debug, Clone, Serialize)]
 pub struct DownloadJob {
     pub id: String,
+    pub source_kind: String,
     pub url: String,
     pub file_name: String,
     pub output_folder: String,
     pub output_path: String,
     pub state: DownloadState,
+    pub state_label: Option<String>,
     pub queue_position: i64,
     pub priority: i32,
     pub connection_count: u32,
@@ -73,6 +75,7 @@ pub struct DownloadJob {
     pub downloaded_bytes: u64,
     pub total_bytes: Option<u64>,
     pub speed_bps: u64,
+    pub uploaded_bytes: u64,
     pub is_resumable: bool,
     pub scheduler_enabled: bool,
     pub schedule_days: Vec<String>,
@@ -83,6 +86,11 @@ pub struct DownloadJob {
     pub error_message: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    pub torrent_info_hash: Option<String>,
+    pub torrent_file_count: Option<u32>,
+    pub torrent_source: Option<String>,
+    pub torrent_finished: bool,
+    pub torrent_paused: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

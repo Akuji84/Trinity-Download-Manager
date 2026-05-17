@@ -238,48 +238,10 @@ type TorrentRuntimeStatus = {
   error_message: string | null;
 };
 
-function normalizeHttpJob(job: Omit<DownloadJob, "source_kind"> & Partial<Pick<DownloadJob, "source_kind">>): DownloadJob {
+function normalizeDownloadJob(job: DownloadJob): DownloadJob {
   return {
     ...job,
-    source_kind: "http",
-  };
-}
-
-function toTorrentListJob(runtime: TorrentRuntimeStatus): DownloadJob {
-  const state = mapTorrentRuntimeState(runtime);
-  const now = new Date().toISOString();
-  return {
-    id: runtime.id,
-    source_kind: "torrent",
-    url: runtime.source,
-    file_name: runtime.display_name,
-    output_folder: runtime.output_folder,
-    output_path: runtime.output_folder,
-    state,
-    state_label: runtime.state,
-    queue_position: 0,
-    priority: 1,
-    connection_count: 0,
-    speed_limit_kbps: 0,
-    downloaded_bytes: runtime.downloaded_bytes,
-    total_bytes: runtime.total_bytes || null,
-    speed_bps: runtime.download_speed_bps,
-    uploaded_bytes: runtime.uploaded_bytes,
-    is_resumable: true,
-    scheduler_enabled: false,
-    schedule_days: [],
-    schedule_from: null,
-    schedule_to: null,
-    retry_count: 0,
-    next_retry_at: null,
-    error_message: runtime.error_message,
-    created_at: now,
-    updated_at: now,
-    torrent_info_hash: runtime.info_hash,
-    torrent_file_count: runtime.file_count,
-    torrent_source: runtime.source,
-    torrent_finished: runtime.finished,
-    torrent_paused: runtime.is_paused,
+    source_kind: job.source_kind === "torrent" ? "torrent" : "http",
   };
 }
 
@@ -1848,19 +1810,12 @@ function App() {
   }, [jobs, systemIcons]);
 
   async function refreshJobs() {
-    const [savedJobs, torrentRuntimes] = await Promise.all([
-      invoke<Omit<DownloadJob, "source_kind">[]>("list_download_jobs"),
-      invoke<TorrentRuntimeStatus[]>("list_torrent_runtimes"),
-    ]);
-    const normalizedSavedJobs = savedJobs.map((savedJob) => normalizeHttpJob(savedJob));
-    const mergedJobs = [
-      ...normalizedSavedJobs,
-      ...torrentRuntimes.map((runtime) => toTorrentListJob(runtime)),
-    ].sort(compareJobsForDisplay);
+    const savedJobs = await invoke<DownloadJob[]>("list_download_jobs");
+    const mergedJobs = savedJobs.map((savedJob) => normalizeDownloadJob(savedJob)).sort(compareJobsForDisplay);
     setJobs((currentJobs) =>
       mergedJobs.map((savedJob) => {
         const currentJob = currentJobs.find((job) => job.id === savedJob.id);
-        if (savedJob.source_kind !== "http" || savedJob.state !== "Running") {
+        if (savedJob.state !== "Running") {
           speedTelemetryRef.current.delete(savedJob.id);
           return {
             ...savedJob,
@@ -1927,7 +1882,7 @@ function App() {
         isTorrentFileCandidate &&
         startTorrentAfterDownload &&
         submitIntent !== "torrent-file-only";
-      const createdJob = await invoke<Omit<DownloadJob, "source_kind">>("create_download_job", {
+      const createdJob = await invoke<DownloadJob>("create_download_job", {
         request: {
           url,
           suggested_file_name: pendingSuggestedFileName || null,
@@ -1938,7 +1893,7 @@ function App() {
           schedule_to: isSchedulerEnabled ? scheduleTo : null,
         },
       });
-      const job = normalizeHttpJob(createdJob);
+      const job = normalizeDownloadJob(createdJob);
       if (shouldAutoStartTorrentAfterDownload) {
         if (isStandaloneAddWindow) {
           await emit(TORRENT_AUTOSTART_EVENT, {
@@ -5484,19 +5439,6 @@ function formatPanelDateTime(value: string) {
     hour: "numeric",
     minute: "2-digit",
   });
-}
-
-function mapTorrentRuntimeState(runtime: TorrentRuntimeStatus): DownloadState {
-  switch (runtime.state) {
-    case "Paused":
-      return "Paused";
-    case "Completed":
-      return "Completed";
-    case "Failed":
-      return "Failed";
-    default:
-      return "Running";
-  }
 }
 
 function compareJobsForDisplay(left: DownloadJob, right: DownloadJob) {

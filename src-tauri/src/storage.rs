@@ -1,9 +1,9 @@
 use std::path::Path;
 
 use chrono::{Datelike, Local, Timelike};
-use rusqlite::{params, Connection, Result};
+use rusqlite::{params, Connection, Result, Row};
 
-use crate::models::{AppSettings, DownloadJob, DownloadState};
+use crate::models::{AppSettings, DownloadJob, DownloadState, TorrentRuntimeStatus};
 
 pub struct Storage {
     connection: Connection,
@@ -22,11 +22,13 @@ impl Storage {
             "
             CREATE TABLE IF NOT EXISTS downloads (
                 id TEXT PRIMARY KEY,
+                source_kind TEXT NOT NULL DEFAULT 'http',
                 url TEXT NOT NULL,
                 file_name TEXT NOT NULL,
                 output_folder TEXT NOT NULL,
                 output_path TEXT NOT NULL,
                 state TEXT NOT NULL,
+                state_label TEXT,
                 queue_position INTEGER NOT NULL DEFAULT 0,
                 priority INTEGER NOT NULL DEFAULT 1,
                 connection_count INTEGER NOT NULL DEFAULT 4,
@@ -34,6 +36,7 @@ impl Storage {
                 downloaded_bytes INTEGER NOT NULL DEFAULT 0,
                 total_bytes INTEGER,
                 speed_bps INTEGER NOT NULL DEFAULT 0,
+                uploaded_bytes INTEGER NOT NULL DEFAULT 0,
                 is_resumable INTEGER NOT NULL DEFAULT 0,
                 scheduler_enabled INTEGER NOT NULL DEFAULT 0,
                 schedule_days TEXT NOT NULL DEFAULT '[]',
@@ -42,6 +45,11 @@ impl Storage {
                 retry_count INTEGER NOT NULL DEFAULT 0,
                 next_retry_at TEXT,
                 error_message TEXT,
+                torrent_info_hash TEXT,
+                torrent_file_count INTEGER,
+                torrent_source TEXT,
+                torrent_finished INTEGER NOT NULL DEFAULT 0,
+                torrent_paused INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
@@ -63,6 +71,16 @@ impl Storage {
             ",
         )?;
 
+        self.add_column_if_missing(
+            "downloads",
+            "source_kind",
+            "ALTER TABLE downloads ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'http';",
+        )?;
+        self.add_column_if_missing(
+            "downloads",
+            "state_label",
+            "ALTER TABLE downloads ADD COLUMN state_label TEXT;",
+        )?;
         self.add_column_if_missing(
             "downloads",
             "queue_position",
@@ -92,6 +110,11 @@ impl Storage {
             "downloads",
             "error_message",
             "ALTER TABLE downloads ADD COLUMN error_message TEXT;",
+        )?;
+        self.add_column_if_missing(
+            "downloads",
+            "uploaded_bytes",
+            "ALTER TABLE downloads ADD COLUMN uploaded_bytes INTEGER NOT NULL DEFAULT 0;",
         )?;
         self.add_column_if_missing(
             "downloads",
@@ -127,6 +150,31 @@ impl Storage {
             "downloads",
             "next_retry_at",
             "ALTER TABLE downloads ADD COLUMN next_retry_at TEXT;",
+        )?;
+        self.add_column_if_missing(
+            "downloads",
+            "torrent_info_hash",
+            "ALTER TABLE downloads ADD COLUMN torrent_info_hash TEXT;",
+        )?;
+        self.add_column_if_missing(
+            "downloads",
+            "torrent_file_count",
+            "ALTER TABLE downloads ADD COLUMN torrent_file_count INTEGER;",
+        )?;
+        self.add_column_if_missing(
+            "downloads",
+            "torrent_source",
+            "ALTER TABLE downloads ADD COLUMN torrent_source TEXT;",
+        )?;
+        self.add_column_if_missing(
+            "downloads",
+            "torrent_finished",
+            "ALTER TABLE downloads ADD COLUMN torrent_finished INTEGER NOT NULL DEFAULT 0;",
+        )?;
+        self.add_column_if_missing(
+            "downloads",
+            "torrent_paused",
+            "ALTER TABLE downloads ADD COLUMN torrent_paused INTEGER NOT NULL DEFAULT 0;",
         )?;
         self.connection.execute(
             "
@@ -562,11 +610,13 @@ impl Storage {
             "
             INSERT INTO downloads (
                 id,
+                source_kind,
                 url,
                 file_name,
                 output_folder,
                 output_path,
                 state,
+                state_label,
                 queue_position,
                 priority,
                 connection_count,
@@ -574,6 +624,7 @@ impl Storage {
                 downloaded_bytes,
                 total_bytes,
                 speed_bps,
+                uploaded_bytes,
                 is_resumable,
                 scheduler_enabled,
                 schedule_days,
@@ -581,17 +632,24 @@ impl Storage {
                 schedule_to,
                 retry_count,
                 next_retry_at,
-                error_message
+                error_message,
+                torrent_info_hash,
+                torrent_file_count,
+                torrent_source,
+                torrent_finished,
+                torrent_paused
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21);
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28);
             ",
             params![
                 job.id,
+                job.source_kind,
                 job.url,
                 job.file_name,
                 job.output_folder,
                 job.output_path,
                 job.state.as_str(),
+                job.state_label,
                 job.queue_position,
                 job.priority,
                 job.connection_count,
@@ -599,6 +657,7 @@ impl Storage {
                 job.downloaded_bytes,
                 job.total_bytes,
                 job.speed_bps,
+                job.uploaded_bytes,
                 job.is_resumable,
                 job.scheduler_enabled,
                 schedule_days_to_text(&job.schedule_days),
@@ -607,8 +666,142 @@ impl Storage {
                 job.retry_count,
                 job.next_retry_at,
                 job.error_message,
+                job.torrent_info_hash,
+                job.torrent_file_count,
+                job.torrent_source,
+                job.torrent_finished,
+                job.torrent_paused,
             ],
         )?;
+
+        Ok(())
+    }
+
+    pub fn sync_torrent_jobs(&self, runtimes: &[TorrentRuntimeStatus]) -> Result<()> {
+        let mut retained_ids = Vec::with_capacity(runtimes.len());
+
+        for runtime in runtimes {
+            retained_ids.push(runtime.id.clone());
+            let existing = self.get_download_job(&runtime.id)?;
+            let queue_position = existing
+                .as_ref()
+                .map(|job| job.queue_position)
+                .unwrap_or(self.next_queue_position()?);
+            let priority = existing.as_ref().map(|job| job.priority).unwrap_or(1);
+            let speed_limit_kbps = existing
+                .as_ref()
+                .map(|job| job.speed_limit_kbps)
+                .unwrap_or(0);
+            let output_path = existing
+                .as_ref()
+                .map(|job| job.output_path.clone())
+                .unwrap_or_else(|| runtime.output_folder.clone());
+
+            let state = match runtime.state.as_str() {
+                "Paused" => DownloadState::Paused,
+                "Completed" => DownloadState::Completed,
+                "Failed" => DownloadState::Failed,
+                _ => DownloadState::Running,
+            };
+
+            self.connection.execute(
+                "
+                INSERT INTO downloads (
+                    id,
+                    source_kind,
+                    url,
+                    file_name,
+                    output_folder,
+                    output_path,
+                    state,
+                    state_label,
+                    queue_position,
+                    priority,
+                    connection_count,
+                    speed_limit_kbps,
+                    downloaded_bytes,
+                    total_bytes,
+                    speed_bps,
+                    uploaded_bytes,
+                    is_resumable,
+                    scheduler_enabled,
+                    schedule_days,
+                    schedule_from,
+                    schedule_to,
+                    retry_count,
+                    next_retry_at,
+                    error_message,
+                    torrent_info_hash,
+                    torrent_file_count,
+                    torrent_source,
+                    torrent_finished,
+                    torrent_paused,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    ?1, 'torrent', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, ?12, ?13, ?14,
+                    1, 0, '[]', NULL, NULL, 0, NULL, ?15, ?16, ?17, ?18, ?19, ?20,
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                )
+                ON CONFLICT(id) DO UPDATE SET
+                    source_kind = 'torrent',
+                    url = excluded.url,
+                    file_name = excluded.file_name,
+                    output_folder = excluded.output_folder,
+                    output_path = excluded.output_path,
+                    state = excluded.state,
+                    state_label = excluded.state_label,
+                    speed_limit_kbps = excluded.speed_limit_kbps,
+                    downloaded_bytes = excluded.downloaded_bytes,
+                    total_bytes = excluded.total_bytes,
+                    speed_bps = excluded.speed_bps,
+                    uploaded_bytes = excluded.uploaded_bytes,
+                    is_resumable = 1,
+                    error_message = excluded.error_message,
+                    torrent_info_hash = excluded.torrent_info_hash,
+                    torrent_file_count = excluded.torrent_file_count,
+                    torrent_source = excluded.torrent_source,
+                    torrent_finished = excluded.torrent_finished,
+                    torrent_paused = excluded.torrent_paused,
+                    updated_at = CURRENT_TIMESTAMP;
+                ",
+                params![
+                    runtime.id,
+                    runtime.source,
+                    runtime.display_name,
+                    runtime.output_folder,
+                    output_path,
+                    state.as_str(),
+                    runtime.state,
+                    queue_position,
+                    priority,
+                    speed_limit_kbps,
+                    runtime.downloaded_bytes.min(i64::MAX as u64) as i64,
+                    Some(runtime.total_bytes.min(i64::MAX as u64) as i64),
+                    runtime.download_speed_bps.min(i64::MAX as u64) as i64,
+                    runtime.uploaded_bytes.min(i64::MAX as u64) as i64,
+                    runtime.error_message,
+                    runtime.info_hash,
+                    runtime.file_count as i64,
+                    runtime.source,
+                    runtime.finished,
+                    runtime.is_paused,
+                ],
+            )?;
+        }
+
+        let mut statement = self
+            .connection
+            .prepare("SELECT id FROM downloads WHERE source_kind = 'torrent';")?;
+        let existing_ids = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>>>()?;
+        for id in existing_ids {
+            if !retained_ids.iter().any(|retained| retained == &id) {
+                self.delete_download_job(&id)?;
+            }
+        }
 
         Ok(())
     }
@@ -618,11 +811,13 @@ impl Storage {
             "
             SELECT
                 id,
+                source_kind,
                 url,
                 file_name,
                 output_folder,
                 output_path,
                 state,
+                state_label,
                 queue_position,
                 priority,
                 connection_count,
@@ -630,6 +825,7 @@ impl Storage {
                 downloaded_bytes,
                 total_bytes,
                 speed_bps,
+                uploaded_bytes,
                 is_resumable,
                 scheduler_enabled,
                 schedule_days,
@@ -638,6 +834,11 @@ impl Storage {
                 retry_count,
                 next_retry_at,
                 error_message,
+                torrent_info_hash,
+                torrent_file_count,
+                torrent_source,
+                torrent_finished,
+                torrent_paused,
                 created_at,
                 updated_at
             FROM downloads
@@ -663,45 +864,7 @@ impl Storage {
         )?;
 
         let jobs = statement
-            .query_map([], |row| {
-                let state_text: String = row.get(5)?;
-                let state = DownloadState::try_from(state_text.as_str()).map_err(|message| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        5,
-                        rusqlite::types::Type::Text,
-                        Box::new(std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            message,
-                        )),
-                    )
-                })?;
-
-                Ok(DownloadJob {
-                    id: row.get(0)?,
-                    url: row.get(1)?,
-                    file_name: row.get(2)?,
-                    output_folder: row.get(3)?,
-                    output_path: row.get(4)?,
-                    state,
-                    queue_position: row.get(6)?,
-                    priority: row.get(7)?,
-                    connection_count: row.get::<_, i64>(8)? as u32,
-                    speed_limit_kbps: row.get::<_, i64>(9)? as u64,
-                    downloaded_bytes: row.get::<_, i64>(10)? as u64,
-                    total_bytes: row.get::<_, Option<i64>>(11)?.map(|value| value as u64),
-                    speed_bps: row.get::<_, i64>(12)? as u64,
-                    is_resumable: row.get::<_, i64>(13)? != 0,
-                    scheduler_enabled: row.get::<_, i64>(14)? != 0,
-                    schedule_days: schedule_days_from_text(row.get::<_, String>(15)?.as_str()),
-                    schedule_from: row.get(16)?,
-                    schedule_to: row.get(17)?,
-                    retry_count: row.get::<_, i64>(18)? as u32,
-                    next_retry_at: row.get(19)?,
-                    error_message: row.get(20)?,
-                    created_at: row.get(21)?,
-                    updated_at: row.get(22)?,
-                })
-            })?
+            .query_map([], map_download_job_row)?
             .collect::<Result<Vec<_>>>()?;
 
         Ok(jobs)
@@ -712,11 +875,13 @@ impl Storage {
             "
             SELECT
                 id,
+                source_kind,
                 url,
                 file_name,
                 output_folder,
                 output_path,
                 state,
+                state_label,
                 queue_position,
                 priority,
                 connection_count,
@@ -724,6 +889,7 @@ impl Storage {
                 downloaded_bytes,
                 total_bytes,
                 speed_bps,
+                uploaded_bytes,
                 is_resumable,
                 scheduler_enabled,
                 schedule_days,
@@ -732,6 +898,11 @@ impl Storage {
                 retry_count,
                 next_retry_at,
                 error_message,
+                torrent_info_hash,
+                torrent_file_count,
+                torrent_source,
+                torrent_finished,
+                torrent_paused,
                 created_at,
                 updated_at
             FROM downloads
@@ -744,43 +915,7 @@ impl Storage {
             return Ok(None);
         };
 
-        let state_text: String = row.get(5)?;
-        let state = DownloadState::try_from(state_text.as_str()).map_err(|message| {
-            rusqlite::Error::FromSqlConversionFailure(
-                5,
-                rusqlite::types::Type::Text,
-                Box::new(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    message,
-                )),
-            )
-        })?;
-
-        Ok(Some(DownloadJob {
-            id: row.get(0)?,
-            url: row.get(1)?,
-            file_name: row.get(2)?,
-            output_folder: row.get(3)?,
-            output_path: row.get(4)?,
-            state,
-            queue_position: row.get(6)?,
-            priority: row.get(7)?,
-            connection_count: row.get::<_, i64>(8)? as u32,
-            speed_limit_kbps: row.get::<_, i64>(9)? as u64,
-            downloaded_bytes: row.get::<_, i64>(10)? as u64,
-            total_bytes: row.get::<_, Option<i64>>(11)?.map(|value| value as u64),
-            speed_bps: row.get::<_, i64>(12)? as u64,
-            is_resumable: row.get::<_, i64>(13)? != 0,
-            scheduler_enabled: row.get::<_, i64>(14)? != 0,
-            schedule_days: schedule_days_from_text(row.get::<_, String>(15)?.as_str()),
-            schedule_from: row.get(16)?,
-            schedule_to: row.get(17)?,
-            retry_count: row.get::<_, i64>(18)? as u32,
-            next_retry_at: row.get(19)?,
-            error_message: row.get(20)?,
-            created_at: row.get(21)?,
-            updated_at: row.get(22)?,
-        }))
+        Ok(Some(map_download_job_row(row)?))
     }
 
     pub fn list_queued_download_jobs(&self, limit: usize) -> Result<Vec<DownloadJob>> {
@@ -788,11 +923,13 @@ impl Storage {
             "
             SELECT
                 id,
+                source_kind,
                 url,
                 file_name,
                 output_folder,
                 output_path,
                 state,
+                state_label,
                 queue_position,
                 priority,
                 connection_count,
@@ -800,6 +937,7 @@ impl Storage {
                 downloaded_bytes,
                 total_bytes,
                 speed_bps,
+                uploaded_bytes,
                 is_resumable,
                 scheduler_enabled,
                 schedule_days,
@@ -808,43 +946,23 @@ impl Storage {
                 retry_count,
                 next_retry_at,
                 error_message,
+                torrent_info_hash,
+                torrent_file_count,
+                torrent_source,
+                torrent_finished,
+                torrent_paused,
                 created_at,
                 updated_at
             FROM downloads
             WHERE state = 'queued'
+              AND source_kind = 'http'
               AND (next_retry_at IS NULL OR datetime(next_retry_at) <= CURRENT_TIMESTAMP)
             ORDER BY priority DESC, queue_position ASC, datetime(created_at) ASC
             ",
         )?;
 
         let jobs = statement
-            .query_map([], |row| {
-                Ok(DownloadJob {
-                    id: row.get(0)?,
-                    url: row.get(1)?,
-                    file_name: row.get(2)?,
-                    output_folder: row.get(3)?,
-                    output_path: row.get(4)?,
-                    state: DownloadState::Queued,
-                    queue_position: row.get(6)?,
-                    priority: row.get(7)?,
-                    connection_count: row.get::<_, i64>(8)? as u32,
-                    speed_limit_kbps: row.get::<_, i64>(9)? as u64,
-                    downloaded_bytes: row.get::<_, i64>(10)? as u64,
-                    total_bytes: row.get::<_, Option<i64>>(11)?.map(|value| value as u64),
-                    speed_bps: row.get::<_, i64>(12)? as u64,
-                    is_resumable: row.get::<_, i64>(13)? != 0,
-                    scheduler_enabled: row.get::<_, i64>(14)? != 0,
-                    schedule_days: schedule_days_from_text(row.get::<_, String>(15)?.as_str()),
-                    schedule_from: row.get(16)?,
-                    schedule_to: row.get(17)?,
-                    retry_count: row.get::<_, i64>(18)? as u32,
-                    next_retry_at: row.get(19)?,
-                    error_message: row.get(20)?,
-                    created_at: row.get(21)?,
-                    updated_at: row.get(22)?,
-                })
-            })?
+            .query_map([], map_download_job_row)?
             .collect::<Result<Vec<_>>>()?
             .into_iter()
             .filter(is_schedule_ready)
@@ -864,6 +982,7 @@ impl Storage {
                 next_retry_at = NULL,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?1
+              AND source_kind = 'http'
               AND state IN ('queued', 'paused', 'failed', 'canceled');
             ",
             params![id],
@@ -964,6 +1083,7 @@ impl Storage {
                 queue_position = ?3,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?1
+              AND source_kind = 'http'
               AND state IN ('queued', 'paused', 'failed', 'canceled');
             ",
             params![id, normalized_priority, next_position],
@@ -1194,7 +1314,8 @@ impl Storage {
                 speed_bps = 0,
                 error_message = 'Download interrupted. Resume is available.',
                 updated_at = CURRENT_TIMESTAMP
-            WHERE state = 'running';
+            WHERE state = 'running'
+              AND source_kind = 'http';
             ",
             [],
         )?;
@@ -1813,6 +1934,7 @@ impl Storage {
             SELECT id, queue_position, priority
             FROM downloads
             WHERE state IN ('queued', 'paused', 'failed', 'canceled')
+              AND source_kind = 'http'
             ORDER BY priority DESC, queue_position ASC, datetime(created_at) ASC;
             ",
         )?;
@@ -1829,6 +1951,54 @@ impl Storage {
 
         Ok(ordered_jobs)
     }
+}
+
+fn map_download_job_row(row: &Row<'_>) -> Result<DownloadJob> {
+    let state_text: String = row.get(6)?;
+    let state = DownloadState::try_from(state_text.as_str()).map_err(|message| {
+        rusqlite::Error::FromSqlConversionFailure(
+            6,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                message,
+            )),
+        )
+    })?;
+
+    Ok(DownloadJob {
+        id: row.get(0)?,
+        source_kind: row.get(1)?,
+        url: row.get(2)?,
+        file_name: row.get(3)?,
+        output_folder: row.get(4)?,
+        output_path: row.get(5)?,
+        state,
+        state_label: row.get(7)?,
+        queue_position: row.get(8)?,
+        priority: row.get(9)?,
+        connection_count: row.get::<_, i64>(10)? as u32,
+        speed_limit_kbps: row.get::<_, i64>(11)? as u64,
+        downloaded_bytes: row.get::<_, i64>(12)? as u64,
+        total_bytes: row.get::<_, Option<i64>>(13)?.map(|value| value as u64),
+        speed_bps: row.get::<_, i64>(14)? as u64,
+        uploaded_bytes: row.get::<_, i64>(15)? as u64,
+        is_resumable: row.get::<_, i64>(16)? != 0,
+        scheduler_enabled: row.get::<_, i64>(17)? != 0,
+        schedule_days: schedule_days_from_text(row.get::<_, String>(18)?.as_str()),
+        schedule_from: row.get(19)?,
+        schedule_to: row.get(20)?,
+        retry_count: row.get::<_, i64>(21)? as u32,
+        next_retry_at: row.get(22)?,
+        error_message: row.get(23)?,
+        torrent_info_hash: row.get(24)?,
+        torrent_file_count: row.get::<_, Option<i64>>(25)?.map(|value| value as u32),
+        torrent_source: row.get(26)?,
+        torrent_finished: row.get::<_, i64>(27)? != 0,
+        torrent_paused: row.get::<_, i64>(28)? != 0,
+        created_at: row.get(29)?,
+        updated_at: row.get(30)?,
+    })
 }
 
 fn schedule_days_to_text(days: &[String]) -> String {

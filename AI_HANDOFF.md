@@ -1237,6 +1237,24 @@ Exit criteria:
   - deploy credentials outside repo
 - Deployment to the Ubuntu update host should use SSH key auth, not password auth. The password already shared in chat should be treated as exposed and rotated before real deployment.
 
+## 2026-05-17 - Fix SQL job creation bug and torrent detection timing
+
+- Fixed a '28 values for 29 columns' SQLite error in `storage.rs` `create_download_job`:
+  the VALUES clause had 28 placeholders but 29 columns — `torrent_paused` was missing `?29`.
+  This prevented any download job from being created via the dialog.
+- Chrome continuing to download alongside Trinity was a consequence of this SQL failure:
+  the extension only cancels Chrome's copy after Trinity returns a success response.
+- Torrent detection now waits for server-side URL inspection before routing to torrent intake:
+  - `torrentCandidateKind` now uses `urlMetadata` (result of `inspect_download_url`) instead of
+    `effectiveUrlMetadata` (which preferred browser-observed metadata and could have wrong content-type)
+  - Removed the early-exit that skipped inspection for browser-observed downloads with complete metadata,
+    so inspection always runs and provides a reliable content-type for torrent detection
+  - Size display in the dialog falls back to `browserObservedMetadata` if inspection fails,
+    so the size still shows when the server rejects the probe but Chrome already provided it
+- Practical effect: a Google Drive .torrent download now correctly inspects the server content-type
+  (`application/x-bittorrent`) after the dialog opens and routes to the torrent intake dialog
+  instead of the regular HTTP download dialog.
+
 ## Next Step
 
 Keep shrinking the remaining legacy resolver/re-discovery logic so browser-observed request and response data are the primary source of truth throughout the extension and app.

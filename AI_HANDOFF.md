@@ -1259,7 +1259,7 @@ Exit criteria:
 
 Keep shrinking the remaining legacy resolver/re-discovery logic so browser-observed request and response data are the primary source of truth throughout the extension and app.
 
-## 2026-05-17 - Torrent dialog UI cleanup (0.1.16)
+## 2026-05-17 - Torrent dialog UI cleanup + updater fix (0.1.16)
 
 - **Filename override**: Added a `useEffect` in `App.tsx` that updates `pendingSuggestedFileName` when
   `urlMetadata.file_name` ends in `.torrent` and the current suggested name does not. This ensures the
@@ -1271,3 +1271,12 @@ Keep shrinking the remaining legacy resolver/re-discovery logic so browser-obser
 - **Removed "Download Torrent File Only" button**: Deleted from `form-actions`; the primary
   "Download" button is now the only action when a torrent file is detected.
 - Version bumped to 0.1.16 across `package.json`, `tauri.conf.json`, and `Cargo.toml`.
+- **Updater "Not configured in this build" fix**: `updater_endpoint()` in `lib.rs` uses
+  `option_env!("TRINITY_UPDATE_BASE_URL")` — a compile-time macro. The endpoint in `tauri.conf.json`
+  is used by the Tauri plugin but does NOT affect the `configured` flag or the manual check/install
+  Rust commands. Fixed by setting `TRINITY_UPDATE_BASE_URL=https://updates.akuji.org` at build time.
+  Also fixed `tauri.conf.json` endpoint from the placeholder `https://updates.invalid/latest.json`
+  to `https://updates.akuji.org/latest.json`. Both env vars must be set for every future release build:
+  - `TRINITY_UPDATE_BASE_URL=https://updates.akuji.org`
+  - `TAURI_SIGNING_PRIVATE_KEY` (contents of `C:\Users\deeck\.trinity-release\updater\trinity-updater.key`)
+  - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`

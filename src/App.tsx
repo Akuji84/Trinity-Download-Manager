@@ -628,7 +628,6 @@ function App() {
   const [scheduleTo, setScheduleTo] = useState("10:00");
   const [urlMetadata, setUrlMetadata] = useState<DownloadUrlMetadata | null>(null);
   const [browserObservedMetadata, setBrowserObservedMetadata] = useState<DownloadUrlMetadata | null>(null);
-  const [isBrowserObservedDownload, setIsBrowserObservedDownload] = useState(false);
   const [isUrlMetadataLoading, setIsUrlMetadataLoading] = useState(false);
   const [urlMetadataError, setUrlMetadataError] = useState("");
   const [scheduleClock, setScheduleClock] = useState(() => Date.now());
@@ -762,7 +761,7 @@ function App() {
     extensionDisplayFileName.length > 0 && extensionDisplayFileName !== url;
   const torrentCandidateKind = detectTorrentCandidate(
     url,
-    effectiveUrlMetadata,
+    urlMetadata,
     pendingSuggestedFileName,
   );
   const isTorrentFileCandidate = torrentCandidateKind === "torrent-file";
@@ -805,7 +804,6 @@ function App() {
     setUrl(payload.url);
     setPendingSuggestedFileName(payload.suggestedFileName);
     setOutputFolder(payload.outputFolder);
-    setIsBrowserObservedDownload(payload.browserObserved);
     setBrowserObservedMetadata(payload.observedMetadata);
     setIsSchedulerEnabled(false);
     setScheduleDays(SCHEDULE_DAYS);
@@ -1957,13 +1955,6 @@ function App() {
       return;
     }
 
-    const hasObservedFileName = Boolean(browserObservedMetadata?.file_name?.trim());
-    const hasObservedSize = browserObservedMetadata?.total_bytes != null;
-    if (isBrowserObservedDownload && hasObservedFileName && hasObservedSize) {
-      setIsUrlMetadataLoading(false);
-      return;
-    }
-
     let isCurrentRequest = true;
     setIsUrlMetadataLoading(true);
 
@@ -2092,7 +2083,6 @@ function App() {
         setUrl("");
         setPendingSuggestedFileName("");
         setOutputFolder("");
-        setIsBrowserObservedDownload(false);
         setBrowserObservedMetadata(null);
         setUrlMetadata(null);
         setUrlMetadataError("");
@@ -2138,7 +2128,6 @@ function App() {
       setUrl("");
       setPendingSuggestedFileName("");
       setOutputFolder("");
-      setIsBrowserObservedDownload(false);
       setBrowserObservedMetadata(null);
       setIsSchedulerEnabled(false);
       setScheduleDays(SCHEDULE_DAYS);
@@ -2185,7 +2174,6 @@ function App() {
       setIsAddOpen(false);
       setIsAddAnimatingOut(false);
       setPendingSuggestedFileName("");
-      setIsBrowserObservedDownload(false);
       setBrowserObservedMetadata(null);
       setStartTorrentAfterDownload(true);
     }, 220);
@@ -3034,7 +3022,7 @@ function App() {
             Scheduler
           </label>
           <span title={urlMetadataError || undefined}>
-            Size: {sizeMetadataLabel(urlMetadata, isUrlMetadataLoading, urlMetadataError)}
+            Size: {sizeMetadataLabel(urlMetadata ?? browserObservedMetadata, isUrlMetadataLoading, urlMetadataError)}
           </span>
         </div>
 

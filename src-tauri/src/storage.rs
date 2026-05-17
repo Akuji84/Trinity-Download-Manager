@@ -639,7 +639,7 @@ impl Storage {
                 torrent_finished,
                 torrent_paused
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28);
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29);
             ",
             params![
                 job.id,
@@ -1230,11 +1230,16 @@ impl Storage {
         let existing_recommendation =
             self.recommended_connection_count_for_host(hostname, used_connection_count)?;
         let recommended_connection_count = if average_speed_bps >= 4 * 1024 * 1024 {
-            existing_recommendation.max(used_connection_count).saturating_add(1)
+            existing_recommendation
+                .max(used_connection_count)
+                .saturating_add(1)
         } else if average_speed_bps >= 1024 * 1024 {
             existing_recommendation.max(used_connection_count)
         } else if average_speed_bps < 256 * 1024 {
-            existing_recommendation.min(used_connection_count).saturating_sub(1).max(1)
+            existing_recommendation
+                .min(used_connection_count)
+                .saturating_sub(1)
+                .max(1)
         } else {
             existing_recommendation
         }
@@ -1679,9 +1684,15 @@ impl Storage {
             "max_concurrent_downloads",
             settings.max_concurrent_downloads.to_string(),
         )?;
-        self.upsert_setting("retry_enabled", if settings.retry_enabled { "1" } else { "0" })?;
+        self.upsert_setting(
+            "retry_enabled",
+            if settings.retry_enabled { "1" } else { "0" },
+        )?;
         self.upsert_setting("retry_attempts", settings.retry_attempts.to_string())?;
-        self.upsert_setting("retry_delay_seconds", settings.retry_delay_seconds.to_string())?;
+        self.upsert_setting(
+            "retry_delay_seconds",
+            settings.retry_delay_seconds.to_string(),
+        )?;
         self.upsert_setting(
             "default_connection_count",
             settings.default_connection_count.to_string(),
@@ -1692,9 +1703,16 @@ impl Storage {
         )?;
         self.upsert_setting(
             "bandwidth_schedule_enabled",
-            if settings.bandwidth_schedule_enabled { "1" } else { "0" },
+            if settings.bandwidth_schedule_enabled {
+                "1"
+            } else {
+                "0"
+            },
         )?;
-        self.upsert_setting("bandwidth_schedule_start", &settings.bandwidth_schedule_start)?;
+        self.upsert_setting(
+            "bandwidth_schedule_start",
+            &settings.bandwidth_schedule_start,
+        )?;
         self.upsert_setting("bandwidth_schedule_end", &settings.bandwidth_schedule_end)?;
         self.upsert_setting(
             "bandwidth_schedule_limit_kbps",
@@ -1714,27 +1732,47 @@ impl Storage {
         )?;
         self.upsert_setting(
             "startup_prompt_answered",
-            if settings.startup_prompt_answered { "1" } else { "0" },
+            if settings.startup_prompt_answered {
+                "1"
+            } else {
+                "0"
+            },
         )?;
         self.upsert_setting("default_folder_mode", &settings.default_folder_mode)?;
         self.upsert_setting("fixed_download_folder", &settings.fixed_download_folder)?;
         self.upsert_setting(
             "standalone_windows",
-            if settings.standalone_windows { "1" } else { "0" },
+            if settings.standalone_windows {
+                "1"
+            } else {
+                "0"
+            },
         )?;
         self.upsert_setting(
             "show_save_as_button",
-            if settings.show_save_as_button { "1" } else { "0" },
+            if settings.show_save_as_button {
+                "1"
+            } else {
+                "0"
+            },
         )?;
         self.upsert_setting("delete_button_action", &settings.delete_button_action)?;
         self.upsert_setting("file_exists_action", &settings.file_exists_action)?;
         self.upsert_setting(
             "remove_deleted_files",
-            if settings.remove_deleted_files { "1" } else { "0" },
+            if settings.remove_deleted_files {
+                "1"
+            } else {
+                "0"
+            },
         )?;
         self.upsert_setting(
             "remove_completed_files",
-            if settings.remove_completed_files { "1" } else { "0" },
+            if settings.remove_completed_files {
+                "1"
+            } else {
+                "0"
+            },
         )?;
         self.upsert_setting(
             "bottom_panel_follows_selection",
@@ -1746,15 +1784,27 @@ impl Storage {
         )?;
         self.upsert_setting(
             "show_tray_activity",
-            if settings.show_tray_activity { "1" } else { "0" },
+            if settings.show_tray_activity {
+                "1"
+            } else {
+                "0"
+            },
         )?;
         self.upsert_setting(
             "use_custom_sort_order",
-            if settings.use_custom_sort_order { "1" } else { "0" },
+            if settings.use_custom_sort_order {
+                "1"
+            } else {
+                "0"
+            },
         )?;
         self.upsert_setting(
             "show_built_in_tags",
-            if settings.show_built_in_tags { "1" } else { "0" },
+            if settings.show_built_in_tags {
+                "1"
+            } else {
+                "0"
+            },
         )?;
         self.upsert_setting(
             "skip_web_pages",
@@ -1762,15 +1812,27 @@ impl Storage {
         )?;
         self.upsert_setting(
             "use_server_file_time",
-            if settings.use_server_file_time { "1" } else { "0" },
+            if settings.use_server_file_time {
+                "1"
+            } else {
+                "0"
+            },
         )?;
         self.upsert_setting(
             "mark_downloaded_files",
-            if settings.mark_downloaded_files { "1" } else { "0" },
+            if settings.mark_downloaded_files {
+                "1"
+            } else {
+                "0"
+            },
         )?;
         self.upsert_setting(
             "browser_intercept_downloads",
-            if settings.browser_intercept_downloads { "1" } else { "0" },
+            if settings.browser_intercept_downloads {
+                "1"
+            } else {
+                "0"
+            },
         )?;
         self.upsert_setting(
             "browser_start_without_confirmation",
@@ -1782,7 +1844,10 @@ impl Storage {
         )?;
         self.upsert_setting("browser_skip_domains", &settings.browser_skip_domains)?;
         self.upsert_setting("browser_skip_extensions", &settings.browser_skip_extensions)?;
-        self.upsert_setting("browser_capture_extensions", &settings.browser_capture_extensions)?;
+        self.upsert_setting(
+            "browser_capture_extensions",
+            &settings.browser_capture_extensions,
+        )?;
         self.upsert_setting(
             "browser_minimum_size_mb",
             settings.browser_minimum_size_mb.to_string(),
@@ -1797,27 +1862,45 @@ impl Storage {
         )?;
         self.upsert_setting(
             "browser_ignore_insert_key",
-            if settings.browser_ignore_insert_key { "1" } else { "0" },
+            if settings.browser_ignore_insert_key {
+                "1"
+            } else {
+                "0"
+            },
         )?;
         self.upsert_setting("proxy_mode", &settings.proxy_mode)?;
         self.upsert_setting("proxy_host", &settings.proxy_host)?;
         self.upsert_setting("proxy_port", settings.proxy_port.to_string())?;
         self.upsert_setting("proxy_username", &settings.proxy_username)?;
         self.upsert_setting("proxy_password", &settings.proxy_password)?;
-        self.upsert_setting("notify_added", if settings.notify_added { "1" } else { "0" })?;
+        self.upsert_setting(
+            "notify_added",
+            if settings.notify_added { "1" } else { "0" },
+        )?;
         self.upsert_setting(
             "notify_completed",
             if settings.notify_completed { "1" } else { "0" },
         )?;
-        self.upsert_setting("notify_failed", if settings.notify_failed { "1" } else { "0" })?;
+        self.upsert_setting(
+            "notify_failed",
+            if settings.notify_failed { "1" } else { "0" },
+        )?;
         self.upsert_setting(
             "notify_inactive_only",
-            if settings.notify_inactive_only { "1" } else { "0" },
+            if settings.notify_inactive_only {
+                "1"
+            } else {
+                "0"
+            },
         )?;
         self.upsert_setting("play_sounds", if settings.play_sounds { "1" } else { "0" })?;
         self.upsert_setting(
             "completion_hook_enabled",
-            if settings.completion_hook_enabled { "1" } else { "0" },
+            if settings.completion_hook_enabled {
+                "1"
+            } else {
+                "0"
+            },
         )?;
         self.upsert_setting("completion_hook_path", &settings.completion_hook_path)?;
         self.upsert_setting(
@@ -1842,7 +1925,11 @@ impl Storage {
         )?;
         self.upsert_setting(
             "allow_sleep_if_resumable",
-            if settings.allow_sleep_if_resumable { "1" } else { "0" },
+            if settings.allow_sleep_if_resumable {
+                "1"
+            } else {
+                "0"
+            },
         )?;
         self.upsert_setting(
             "check_for_updates_automatically",
@@ -1891,7 +1978,8 @@ impl Storage {
     fn move_download_job(&self, id: &str, direction: i64) -> Result<bool> {
         let ordered_jobs = self.list_ordered_queue_jobs()?;
 
-        let Some(current_index) = ordered_jobs.iter().position(|(job_id, _, _)| job_id == id) else {
+        let Some(current_index) = ordered_jobs.iter().position(|(job_id, _, _)| job_id == id)
+        else {
             return Ok(false);
         };
 

@@ -34,7 +34,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE5OTZBQzVFMkE1OERBMTcKUldRWDJsZ3FYcXlXR2NKZ2ZJcW9RWWpQSTVheTdUa2p2aFVGdmpTK1E3eGhlaCtlYnhyODMzaHMK",
       "endpoints": [
-        "https://updates.invalid/latest.json"
+        "https://updates.akuji.org/latest.json"
       ]
     }
   },

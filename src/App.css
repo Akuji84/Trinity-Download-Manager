@@ -803,7 +803,8 @@ button {
 .theme-midnight .preferences-page,
 .theme-midnight .new-download-modal,
 .theme-midnight .startup-prompt-modal,
-.theme-midnight .update-found-modal {
+.theme-midnight .update-found-modal,
+.theme-midnight .torrent-intake-modal {
   background: #0f1824;
 }
 
@@ -870,7 +871,9 @@ button {
 }
 
 .theme-midnight .update-found-summary-item,
-.theme-midnight .update-found-panel {
+.theme-midnight .update-found-panel,
+.theme-midnight .torrent-intake-item,
+.theme-midnight .torrent-intake-card {
   background: #09131d;
 }
 
@@ -1449,6 +1452,12 @@ button {
   background: linear-gradient(180deg, #252a2e 0%, #202428 100%);
 }
 
+.torrent-intake-modal {
+  width: min(760px, calc(100vw - 36px));
+  border-color: #161b20;
+  background: linear-gradient(180deg, #252a2e 0%, #202428 100%);
+}
+
 .modal-header {
   display: flex;
   height: 38px;
@@ -1497,6 +1506,19 @@ button {
 .new-download-form {
   gap: 7px;
   padding: 9px 6px 8px 10px;
+}
+
+.torrent-intake-card {
+  display: grid;
+  gap: 10px;
+  margin-top: 3px;
+  padding: 10px 12px;
+  border: 1px solid #43484d;
+  background: #1f2428;
+}
+
+.torrent-autostart-toggle {
+  margin-top: 2px;
 }
 
 .startup-prompt-body {
@@ -1584,6 +1606,73 @@ button {
 }
 
 .update-found-actions {
+  margin-top: 2px;
+}
+
+.torrent-intake-body {
+  display: grid;
+  gap: 14px;
+  padding: 18px 18px 16px;
+  color: #dbe4ec;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.torrent-intake-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.torrent-intake-copy strong,
+.torrent-intake-copy p {
+  margin: 0;
+}
+
+.torrent-intake-copy strong {
+  color: #f4f8fb;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.torrent-intake-copy p {
+  color: #dbe4ec;
+}
+
+.torrent-intake-note {
+  color: #9fb2c2;
+}
+
+.torrent-intake-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.torrent-intake-item {
+  display: grid;
+  gap: 3px;
+  padding: 11px 12px;
+  border: 1px solid #41464b;
+  background: #1c2125;
+}
+
+.torrent-intake-item.wide {
+  grid-column: 1 / -1;
+}
+
+.torrent-intake-item span {
+  color: #95a7b8;
+  font-size: 12px;
+}
+
+.torrent-intake-item strong {
+  color: #f4f8fb;
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.torrent-intake-actions {
   margin-top: 2px;
 }
 

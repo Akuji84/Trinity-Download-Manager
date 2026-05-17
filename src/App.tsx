@@ -145,6 +145,7 @@ type DownloadProgressEvent = {
 type DownloadUrlMetadata = {
   file_name: string;
   total_bytes: number | null;
+  content_type?: string | null;
 };
 
 type StandaloneAddPayload = {
@@ -180,6 +181,27 @@ type ExtensionDownloadRequest = {
   output_folder?: string | null;
 };
 
+type TorrentCandidateKind = "torrent-file" | "magnet";
+
+type PendingTorrentAutoStart = {
+  outputPath: string;
+  outputFolder: string;
+  fileName: string;
+};
+
+type TorrentIntakePayload = {
+  candidateKind: TorrentCandidateKind;
+  displayName: string;
+  sourceValue: string;
+  outputFolder: string;
+  torrentFilePath: string | null;
+  fromCompletedDownload: boolean;
+};
+
+type PendingTorrentAutoStartRegistration = PendingTorrentAutoStart & {
+  jobId: string;
+};
+
 type DownloadTabId =
   | "all"
   | "active"
@@ -208,6 +230,8 @@ const MIN_SPEED_SAMPLES_FOR_ETA = 3;
 const STANDALONE_ADD_WINDOW_LABEL = "new-download";
 const STANDALONE_ADD_EVENT = "trinity://standalone-add-payload";
 const STANDALONE_ADD_STORAGE_KEY = "trinity.standalone-add-payload";
+const TORRENT_INTAKE_EVENT = "trinity://torrent-intake";
+const TORRENT_AUTOSTART_EVENT = "trinity://torrent-autostart";
 const PREFERENCES_SECTIONS = [
   "general",
   "browserIntegration",
@@ -491,6 +515,12 @@ function App() {
   const [scheduleClock, setScheduleClock] = useState(() => Date.now());
   const [selectedJobIds, setSelectedJobIds] = useState<string[]>([]);
   const [detailsPanelJobId, setDetailsPanelJobId] = useState<string | null>(null);
+  const [startTorrentAfterDownload, setStartTorrentAfterDownload] = useState(true);
+  const [pendingTorrentIntake, setPendingTorrentIntake] = useState<TorrentIntakePayload | null>(
+    null,
+  );
+  const [isTorrentIntakeOpen, setIsTorrentIntakeOpen] = useState(false);
+  const [isTorrentIntakeAnimatingOut, setIsTorrentIntakeAnimatingOut] = useState(false);
   const [settings, setSettings] = useState<AppSettings>({
     theme: "Dark",
     compact_downloads: false,
@@ -581,12 +611,15 @@ function App() {
   const [dropTargetJobId, setDropTargetJobId] = useState<string | null>(null);
   const preferencesContentRef = useRef<HTMLElement | null>(null);
   const pendingIconKeysRef = useRef<Set<string>>(new Set());
+  const addFormRef = useRef<HTMLFormElement | null>(null);
   const settingsRef = useRef(settings);
   const autoUpdateCheckStartedRef = useRef(false);
   const isCheckingForUpdateRef = useRef(false);
   const isInstallingUpdateRef = useRef(false);
   const notifiedAvailableUpdateVersionRef = useRef<string | null>(null);
   const notifiedReadyUpdateVersionRef = useRef<string | null>(null);
+  const torrentSubmitIntentRef = useRef<"default" | "torrent-file-only">("default");
+  const pendingTorrentAutoStartRef = useRef<Map<string, PendingTorrentAutoStart>>(new Map());
   const effectiveUrlMetadata = browserObservedMetadata ?? urlMetadata;
   const extensionDisplayFileName =
     pendingSuggestedFileName.trim() ||
@@ -595,6 +628,13 @@ function App() {
     "";
   const isExtensionPrefilledDownload =
     extensionDisplayFileName.length > 0 && extensionDisplayFileName !== url;
+  const torrentCandidateKind = detectTorrentCandidate(
+    url,
+    effectiveUrlMetadata,
+    pendingSuggestedFileName,
+  );
+  const isTorrentFileCandidate = torrentCandidateKind === "torrent-file";
+  const isMagnetCandidate = torrentCandidateKind === "magnet";
 
   function preferredOutputFolderFromSettings(currentSettings: AppSettings) {
     if (
@@ -641,7 +681,31 @@ function App() {
     setScheduleTo("10:00");
     setUrlMetadata(null);
     setUrlMetadataError("");
+    setStartTorrentAfterDownload(true);
     setIsAddOpen(true);
+  }
+
+  function openTorrentIntake(payload: TorrentIntakePayload) {
+    setPendingTorrentIntake(payload);
+    setIsTorrentIntakeAnimatingOut(false);
+    setIsTorrentIntakeOpen(true);
+  }
+
+  function registerPendingTorrentAutoStart(job: DownloadJob) {
+    pendingTorrentAutoStartRef.current.set(job.id, {
+      outputPath: job.output_path,
+      outputFolder: job.output_folder,
+      fileName: job.file_name,
+    });
+  }
+
+  function closeTorrentIntake() {
+    setIsTorrentIntakeAnimatingOut(true);
+    setTimeout(() => {
+      setIsTorrentIntakeOpen(false);
+      setIsTorrentIntakeAnimatingOut(false);
+      setPendingTorrentIntake(null);
+    }, 220);
   }
 
   async function openStandaloneAddWindow(payload: StandaloneAddPayload) {
@@ -1023,8 +1087,14 @@ function App() {
           ? {
               file_name: observedFileName || deriveFileNameFromUrl(resolvedUrl),
               total_bytes: payload.observed_content_length ?? null,
+              content_type: payload.observed_content_type ?? payload.mime_type ?? null,
             }
           : null;
+      const torrentCandidate = detectTorrentCandidate(
+        resolvedUrl,
+        observedMetadata,
+        observedFileName ?? "",
+      );
       if (settingsRef.current.browser_start_without_confirmation) {
         void invoke<DownloadJob>("create_download_job", {
           request: {
@@ -1038,6 +1108,9 @@ function App() {
           },
         })
           .then((job) => {
+            if (torrentCandidate === "torrent-file") {
+              registerPendingTorrentAutoStart(job);
+            }
             setNewestJobId(job.id);
             return refreshJobs();
           })
@@ -1071,6 +1144,37 @@ function App() {
 
     return () => {
       unlisten?.();
+    };
+  }, [isStandaloneAddWindow]);
+
+  useEffect(() => {
+    if (isStandaloneAddWindow) {
+      return;
+    }
+
+    let disposeIntakeListener: (() => void) | null = null;
+    let disposeAutoStartListener: (() => void) | null = null;
+
+    void listen<TorrentIntakePayload>(TORRENT_INTAKE_EVENT, (event) => {
+      openTorrentIntake(event.payload);
+    })
+      .then((dispose) => {
+        disposeIntakeListener = dispose;
+      })
+      .catch(console.error);
+
+    void listen<PendingTorrentAutoStartRegistration>(TORRENT_AUTOSTART_EVENT, (event) => {
+      const { jobId, ...pendingAutoStart } = event.payload;
+      pendingTorrentAutoStartRef.current.set(jobId, pendingAutoStart);
+    })
+      .then((dispose) => {
+        disposeAutoStartListener = dispose;
+      })
+      .catch(console.error);
+
+    return () => {
+      disposeIntakeListener?.();
+      disposeAutoStartListener?.();
     };
   }, [isStandaloneAddWindow]);
 
@@ -1274,6 +1378,22 @@ function App() {
       }
     }
     prevJobStatesRef.current = new Map(jobs.map((j) => [j.id, j.state]));
+    for (const completedJobId of newCompleting) {
+      const pendingTorrentAutoStart = pendingTorrentAutoStartRef.current.get(completedJobId);
+      if (!pendingTorrentAutoStart) {
+        continue;
+      }
+
+      pendingTorrentAutoStartRef.current.delete(completedJobId);
+      openTorrentIntake({
+        candidateKind: "torrent-file",
+        displayName: stripTorrentExtension(pendingTorrentAutoStart.fileName),
+        sourceValue: pendingTorrentAutoStart.outputPath,
+        outputFolder: pendingTorrentAutoStart.outputFolder,
+        torrentFilePath: pendingTorrentAutoStart.outputPath,
+        fromCompletedDownload: true,
+      });
+    }
     if (newCompleting.length === 0) return;
     setCompletingJobIds((prev) => {
       const next = new Set(prev);
@@ -1333,6 +1453,15 @@ function App() {
     }
     prevActiveCountRef.current = count;
   }, [jobs, jobsInitialized]);
+
+  useEffect(() => {
+    const knownJobIds = new Set(jobs.map((job) => job.id));
+    for (const jobId of pendingTorrentAutoStartRef.current.keys()) {
+      if (!knownJobIds.has(jobId)) {
+        pendingTorrentAutoStartRef.current.delete(jobId);
+      }
+    }
+  }, [jobs]);
 
   useEffect(() => {
     const liveJobIds = new Set(jobs.map((job) => job.id));
@@ -1504,6 +1633,44 @@ function App() {
     setIsSubmitting(true);
 
     try {
+      const submitIntent = torrentSubmitIntentRef.current;
+      torrentSubmitIntentRef.current = "default";
+
+      if (isMagnetCandidate) {
+        const intakePayload: TorrentIntakePayload = {
+          candidateKind: "magnet",
+          displayName: deriveTorrentDisplayName(url, pendingSuggestedFileName) || "Magnet torrent",
+          sourceValue: url.trim(),
+          outputFolder: outputFolder || preferredOutputFolderFromSettings(settingsRef.current),
+          torrentFilePath: null,
+          fromCompletedDownload: false,
+        };
+        if (isStandaloneAddWindow) {
+          await emit(TORRENT_INTAKE_EVENT, intakePayload);
+          await WebviewWindow.getCurrent().close();
+          return;
+        }
+        openTorrentIntake(intakePayload);
+        setUrl("");
+        setPendingSuggestedFileName("");
+        setOutputFolder("");
+        setIsBrowserObservedDownload(false);
+        setBrowserObservedMetadata(null);
+        setUrlMetadata(null);
+        setUrlMetadataError("");
+        setStartTorrentAfterDownload(true);
+        setIsAddAnimatingOut(true);
+        setTimeout(() => {
+          setIsAddOpen(false);
+          setIsAddAnimatingOut(false);
+        }, 220);
+        return;
+      }
+
+      const shouldAutoStartTorrentAfterDownload =
+        isTorrentFileCandidate &&
+        startTorrentAfterDownload &&
+        submitIntent !== "torrent-file-only";
       const job = await invoke<DownloadJob>("create_download_job", {
         request: {
           url,
@@ -1515,6 +1682,18 @@ function App() {
           schedule_to: isSchedulerEnabled ? scheduleTo : null,
         },
       });
+      if (shouldAutoStartTorrentAfterDownload) {
+        if (isStandaloneAddWindow) {
+          await emit(TORRENT_AUTOSTART_EVENT, {
+            jobId: job.id,
+            outputPath: job.output_path,
+            outputFolder: job.output_folder,
+            fileName: job.file_name,
+          } satisfies PendingTorrentAutoStartRegistration);
+        } else {
+          registerPendingTorrentAutoStart(job);
+        }
+      }
       setJobs((currentJobs) => [job, ...currentJobs]);
       setNewestJobId(job.id);
       setUrl("");
@@ -1528,6 +1707,7 @@ function App() {
       setScheduleTo("10:00");
       setUrlMetadata(null);
       setUrlMetadataError("");
+      setStartTorrentAfterDownload(true);
       if (isStandaloneAddWindow) {
         await emit("downloads-changed");
         await WebviewWindow.getCurrent().close();
@@ -1568,6 +1748,7 @@ function App() {
       setPendingSuggestedFileName("");
       setIsBrowserObservedDownload(false);
       setBrowserObservedMetadata(null);
+      setStartTorrentAfterDownload(true);
     }, 220);
   }
 
@@ -2057,6 +2238,27 @@ function App() {
     setOutputFolder(folder);
   }
 
+  async function openTorrentFilePicker() {
+    const selected = await open({
+      directory: false,
+      multiple: false,
+      filters: [{ name: "Torrent files", extensions: ["torrent"] }],
+    });
+
+    if (typeof selected !== "string") {
+      return;
+    }
+
+    openTorrentIntake({
+      candidateKind: "torrent-file",
+      displayName: stripTorrentExtension(fileNameFromPath(selected)),
+      sourceValue: selected,
+      outputFolder: preferredOutputFolderFromSettings(settingsRef.current),
+      torrentFilePath: selected,
+      fromCompletedDownload: false,
+    });
+  }
+
   async function choosePreferenceFolder(
     key: "fixedDownloadFolder" | "distributedWatchFolder",
   ) {
@@ -2245,7 +2447,7 @@ function App() {
           <X size={17} strokeWidth={2} />
         </button>
       </div>
-      <form className="add-form new-download-form" onSubmit={createJob}>
+      <form className="add-form new-download-form" onSubmit={createJob} ref={addFormRef}>
         {settings.show_save_as_button ? (
           <label className="field-block">
             <span>Save to</span>
@@ -2292,13 +2494,45 @@ function App() {
                 setUrl(event.currentTarget.value);
                 setPendingSuggestedFileName("");
               }}
-              placeholder="https://example.com/file.zip"
+              placeholder="https://example.com/file.zip or magnet:?..."
               required
-              type="url"
+              type={isMagnetCandidate ? "text" : "url"}
               value={url}
             />
           )}
         </label>
+
+        {isTorrentFileCandidate ? (
+          <section className="torrent-intake-card" aria-label="Torrent handoff">
+            <div className="torrent-intake-copy">
+              <strong>Detected torrent file</strong>
+              <p>
+                Trinity will download the <code>.torrent</code> file normally and can hand it off
+                to the torrent intake flow as soon as the file finishes.
+              </p>
+            </div>
+            <label className="checkbox-label torrent-autostart-toggle">
+              <input
+                checked={startTorrentAfterDownload}
+                onChange={(event) => setStartTorrentAfterDownload(event.currentTarget.checked)}
+                type="checkbox"
+              />
+              Start torrent after download completes
+            </label>
+          </section>
+        ) : null}
+
+        {isMagnetCandidate ? (
+          <section className="torrent-intake-card" aria-label="Magnet link handoff">
+            <div className="torrent-intake-copy">
+              <strong>Detected magnet link</strong>
+              <p>
+                Magnet links skip the file download step. Trinity will hand this straight into the
+                torrent intake flow.
+              </p>
+            </div>
+          </section>
+        ) : null}
 
         <div className="scheduler-row">
           <label className="checkbox-label">
@@ -2363,8 +2597,30 @@ function App() {
           <button type="button" onClick={() => closeAddDialog()}>
             Cancel
           </button>
-          <button className="primary-action" disabled={isSubmitting}>
-            {isSubmitting ? "Adding..." : "Download"}
+          {isTorrentFileCandidate ? (
+            <button
+              disabled={isSubmitting}
+              onClick={() => {
+                torrentSubmitIntentRef.current = "torrent-file-only";
+                addFormRef.current?.requestSubmit();
+              }}
+              type="button"
+            >
+              {isSubmitting ? "Adding..." : "Download Torrent File Only"}
+            </button>
+          ) : null}
+          <button
+            className="primary-action"
+            disabled={isSubmitting}
+            onClick={() => {
+              torrentSubmitIntentRef.current = "default";
+            }}
+          >
+            {isSubmitting
+              ? "Adding..."
+              : isMagnetCandidate
+                ? "Prepare Torrent"
+                : "Download"}
           </button>
         </div>
       </form>
@@ -2488,11 +2744,11 @@ function App() {
           </span>
           Options
         </button>
-        <button className="tool-button" disabled>
+        <button className="tool-button" onClick={() => void openTorrentFilePicker()}>
           <span>
             <FolderInput size={29} strokeWidth={1.8} />
           </span>
-          Open
+          Add Torrent
         </button>
         <div className="command-spacer" />
         <button className="icon-button" onClick={() => refreshJobs()}>
@@ -4477,6 +4733,104 @@ function App() {
         </div>
       ) : null}
 
+      {isTorrentIntakeOpen && pendingTorrentIntake ? (
+        <div
+          className={`modal-backdrop${isTorrentIntakeAnimatingOut ? " closing" : ""}`}
+          role="presentation"
+        >
+          <section
+            aria-labelledby="torrent-intake-title"
+            className={`modal torrent-intake-modal${isTorrentIntakeAnimatingOut ? " closing" : ""}`}
+            role="dialog"
+          >
+            <div className="modal-header">
+              <h3 id="torrent-intake-title">
+                {pendingTorrentIntake.candidateKind === "magnet"
+                  ? "Magnet intake ready"
+                  : "Torrent intake ready"}
+              </h3>
+              <button aria-label="Close" onClick={() => closeTorrentIntake()}>
+                <X size={17} strokeWidth={2} />
+              </button>
+            </div>
+            <div className="torrent-intake-body">
+              <div className="torrent-intake-copy">
+                <strong>{pendingTorrentIntake.displayName}</strong>
+                <p>
+                  {pendingTorrentIntake.fromCompletedDownload
+                    ? "The torrent file finished downloading and Trinity handed it off into the torrent intake flow."
+                    : pendingTorrentIntake.candidateKind === "magnet"
+                      ? "Trinity detected a magnet link and routed it into the torrent intake flow."
+                      : "Trinity detected a torrent file and opened the torrent intake flow directly."}
+                </p>
+                <p className="torrent-intake-note">
+                  Torrent source detection and handoff are ready. The actual peer transfer engine is
+                  the next implementation step, so this intake screen is the current endpoint.
+                </p>
+              </div>
+
+              <div className="torrent-intake-grid">
+                <div className="torrent-intake-item">
+                  <span>Type</span>
+                  <strong>
+                    {pendingTorrentIntake.candidateKind === "magnet"
+                      ? "Magnet link"
+                      : "Torrent file"}
+                  </strong>
+                </div>
+                <div className="torrent-intake-item">
+                  <span>Save to</span>
+                  <strong title={pendingTorrentIntake.outputFolder || undefined}>
+                    {pendingTorrentIntake.outputFolder || "Use Trinity default folder"}
+                  </strong>
+                </div>
+                <div className="torrent-intake-item wide">
+                  <span>Source</span>
+                  <strong title={pendingTorrentIntake.sourceValue}>
+                    {pendingTorrentIntake.sourceValue}
+                  </strong>
+                </div>
+                {pendingTorrentIntake.torrentFilePath ? (
+                  <div className="torrent-intake-item wide">
+                    <span>Torrent file</span>
+                    <strong title={pendingTorrentIntake.torrentFilePath}>
+                      {pendingTorrentIntake.torrentFilePath}
+                    </strong>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="form-actions torrent-intake-actions">
+                {pendingTorrentIntake.torrentFilePath ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void invoke("reveal_in_folder", { path: pendingTorrentIntake.torrentFilePath }).catch(
+                        () => {},
+                      );
+                    }}
+                  >
+                    Show Torrent File
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(pendingTorrentIntake.sourceValue);
+                    }}
+                  >
+                    Copy Magnet Link
+                  </button>
+                )}
+                <button className="primary-action" type="button" onClick={() => closeTorrentIntake()}>
+                  Close
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
       {isStartupPromptOpen ? (
         <div
           className={`modal-backdrop${isStartupPromptAnimatingOut ? " closing" : ""}`}
@@ -4890,6 +5244,44 @@ function isHttpUrl(value: string) {
   }
 }
 
+function isMagnetLink(value: string) {
+  return value.trim().toLowerCase().startsWith("magnet:?");
+}
+
+function isTorrentContentType(value: string | null | undefined) {
+  const normalizedValue = value?.trim().toLowerCase() ?? "";
+  return (
+    normalizedValue.startsWith("application/x-bittorrent") ||
+    normalizedValue.startsWith("application/bittorrent") ||
+    normalizedValue.includes("bittorrent")
+  );
+}
+
+function isTorrentFileName(value: string) {
+  return value.trim().toLowerCase().endsWith(".torrent");
+}
+
+function detectTorrentCandidate(
+  url: string,
+  metadata: DownloadUrlMetadata | null,
+  suggestedFileName: string,
+): TorrentCandidateKind | null {
+  if (isMagnetLink(url)) {
+    return "magnet";
+  }
+
+  if (
+    isTorrentFileName(suggestedFileName) ||
+    isTorrentFileName(metadata?.file_name ?? "") ||
+    isTorrentFileName(deriveFileNameFromUrl(url)) ||
+    isTorrentContentType(metadata?.content_type)
+  ) {
+    return "torrent-file";
+  }
+
+  return null;
+}
+
 function sizeMetadataLabel(
   metadata: DownloadUrlMetadata | null,
   isLoading: boolean,
@@ -5140,6 +5532,43 @@ function formatUpdateDate(value: string) {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function fileNameFromPath(value: string) {
+  const normalizedValue = value.replace(/\\/g, "/");
+  const segments = normalizedValue.split("/").filter(Boolean);
+  return segments[segments.length - 1] || value;
+}
+
+function stripTorrentExtension(value: string) {
+  return value.toLowerCase().endsWith(".torrent") ? value.slice(0, -8) : value;
+}
+
+function deriveTorrentDisplayName(url: string, fallback: string) {
+  if (fallback.trim()) {
+    return stripTorrentExtension(fallback.trim());
+  }
+
+  if (isMagnetLink(url)) {
+    try {
+      const parsedUrl = new URL(url);
+      const displayName = parsedUrl.searchParams.get("dn")?.trim();
+      if (displayName) {
+        return displayName;
+      }
+    } catch {
+      return "";
+    }
+
+    return "";
+  }
+
+  const fileName = deriveFileNameFromUrl(url).trim();
+  if (!fileName) {
+    return "";
+  }
+
+  return stripTorrentExtension(fileName);
 }
 
 export default App;

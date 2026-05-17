@@ -848,6 +848,11 @@ async fn inspect_download_url(state: State<'_, AppState>, url: String) -> Result
         .or_else(|| file_name_from_url(response.url()))
         .map(|name| sanitize_file_name(&name))
         .unwrap_or_else(|| derive_file_name(response.url()));
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_string());
     let total_bytes = response
         .headers()
         .get(CONTENT_RANGE)
@@ -864,6 +869,7 @@ async fn inspect_download_url(state: State<'_, AppState>, url: String) -> Result
     Ok(DownloadUrlMetadata {
         file_name,
         total_bytes,
+        content_type,
     })
 }
 

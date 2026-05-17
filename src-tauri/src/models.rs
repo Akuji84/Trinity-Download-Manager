@@ -118,6 +118,7 @@ pub struct CreateDownloadJobRequest {
 pub struct DownloadUrlMetadata {
     pub file_name: String,
     pub total_bytes: Option<u64>,
+    pub content_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

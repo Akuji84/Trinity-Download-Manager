@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::Arc,
 };
@@ -17,6 +17,7 @@ use crate::models::TorrentRuntimeStatus;
 
 struct TorrentRuntime {
     runtime_id: String,
+    torrent_id: usize,
     source: String,
     output_folder: String,
     handle: Arc<ManagedTorrent>,
@@ -78,6 +79,7 @@ impl TorrentManager {
         let runtime_id = handle.info_hash().as_string();
         let runtime = TorrentRuntime {
             runtime_id: runtime_id.clone(),
+            torrent_id: handle.id(),
             source: source.to_string(),
             output_folder: output_folder.to_string_lossy().to_string(),
             handle,
@@ -89,6 +91,7 @@ impl TorrentManager {
     }
 
     pub async fn status(&self, runtime_id: &str) -> anyhow::Result<TorrentRuntimeStatus> {
+        self.sync_runtimes().await?;
         let runtimes = self.runtimes.lock().await;
         let runtime = runtimes
             .get(runtime_id)
@@ -96,7 +99,21 @@ impl TorrentManager {
         Ok(status_from_runtime(runtime))
     }
 
-    pub async fn pause(&self, app: &AppHandle, runtime_id: &str) -> anyhow::Result<TorrentRuntimeStatus> {
+    pub async fn list(&self, app: &AppHandle) -> anyhow::Result<Vec<TorrentRuntimeStatus>> {
+        let default_output_folder = app
+            .path()
+            .download_dir()
+            .or_else(|_| app.path().app_data_dir().map(|path| path.join("downloads")))
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let _ = self.ensure_session(app, default_output_folder).await?;
+        self.sync_runtimes().await?;
+        let runtimes = self.runtimes.lock().await;
+        let mut items = runtimes.values().map(status_from_runtime).collect::<Vec<_>>();
+        items.sort_by(|left, right| left.display_name.cmp(&right.display_name));
+        Ok(items)
+    }
+
+    pub async fn pause(&self, _app: &AppHandle, runtime_id: &str) -> anyhow::Result<TorrentRuntimeStatus> {
         let session = self
             .session
             .lock()
@@ -108,13 +125,12 @@ impl TorrentManager {
             .get(runtime_id)
             .with_context(|| format!("torrent runtime {runtime_id} was not found"))?;
         session.pause(&runtime.handle).await?;
-        let _ = app;
         Ok(status_from_runtime(runtime))
     }
 
     pub async fn resume(
         &self,
-        app: &AppHandle,
+        _app: &AppHandle,
         runtime_id: &str,
     ) -> anyhow::Result<TorrentRuntimeStatus> {
         let session = self
@@ -128,8 +144,29 @@ impl TorrentManager {
             .get(runtime_id)
             .with_context(|| format!("torrent runtime {runtime_id} was not found"))?;
         session.unpause(&runtime.handle).await?;
-        let _ = app;
         Ok(status_from_runtime(runtime))
+    }
+
+    pub async fn remove(&self, runtime_id: &str, delete_files: bool) -> anyhow::Result<()> {
+        let session = self
+            .session
+            .lock()
+            .await
+            .clone()
+            .context("torrent session is not active")?;
+        let torrent_id = self
+            .runtimes
+            .lock()
+            .await
+            .get(runtime_id)
+            .with_context(|| format!("torrent runtime {runtime_id} was not found"))?
+            .torrent_id;
+        session
+            .delete(torrent_id.into(), delete_files)
+            .await
+            .context("error removing torrent runtime")?;
+        self.runtimes.lock().await.remove(runtime_id);
+        Ok(())
     }
 
     async fn ensure_session(
@@ -163,6 +200,51 @@ impl TorrentManager {
 
         *guard = Some(session.clone());
         Ok(session)
+    }
+
+    async fn sync_runtimes(&self) -> anyhow::Result<()> {
+        let session = self
+            .session
+            .lock()
+            .await
+            .clone()
+            .context("torrent session is not active")?;
+
+        let known_output_folders = {
+            let runtimes = self.runtimes.lock().await;
+            runtimes
+                .iter()
+                .map(|(runtime_id, runtime)| (runtime_id.clone(), runtime.output_folder.clone()))
+                .collect::<HashMap<_, _>>()
+        };
+
+        let discovered = session.with_torrents(|torrents| {
+            torrents
+                .map(|(_, handle)| TorrentRuntime {
+                    runtime_id: handle.info_hash().as_string(),
+                    torrent_id: handle.id(),
+                    source: handle.info_hash().as_string(),
+                    output_folder: known_output_folders
+                        .get(&handle.info_hash().as_string())
+                        .cloned()
+                        .unwrap_or_default(),
+                    handle: handle.clone(),
+                })
+                .collect::<Vec<_>>()
+        });
+        let discovered_ids = discovered
+            .iter()
+            .map(|runtime| runtime.runtime_id.clone())
+            .collect::<HashSet<_>>();
+
+        let mut runtimes = self.runtimes.lock().await;
+        for runtime in discovered {
+            runtimes
+                .entry(runtime.runtime_id.clone())
+                .or_insert(runtime);
+        }
+        runtimes.retain(|runtime_id, _| discovered_ids.contains(runtime_id));
+        Ok(())
     }
 }
 

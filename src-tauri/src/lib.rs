@@ -1041,6 +1041,18 @@ async fn get_torrent_runtime_status(
 }
 
 #[tauri::command]
+async fn list_torrent_runtimes(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<TorrentRuntimeStatus>, String> {
+    state
+        .torrent_manager
+        .list(&app)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn pause_torrent_runtime(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -1049,6 +1061,19 @@ async fn pause_torrent_runtime(
     state
         .torrent_manager
         .pause(&app, runtime_id.trim())
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn remove_torrent_runtime(
+    state: State<'_, AppState>,
+    runtime_id: String,
+    delete_files: bool,
+) -> Result<(), String> {
+    state
+        .torrent_manager
+        .remove(runtime_id.trim(), delete_files)
         .await
         .map_err(|error| error.to_string())
 }
@@ -2774,7 +2799,9 @@ pub fn run() {
             resolve_torrent_intake,
             start_torrent_runtime,
             get_torrent_runtime_status,
+            list_torrent_runtimes,
             pause_torrent_runtime,
+            remove_torrent_runtime,
             resume_torrent_runtime,
             create_download_job,
             list_download_jobs,

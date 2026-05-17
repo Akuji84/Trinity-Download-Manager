@@ -39,11 +39,13 @@ type DownloadState =
 
 type DownloadJob = {
   id: string;
+  source_kind: "http" | "torrent";
   url: string;
   file_name: string;
   output_folder: string;
   output_path: string;
   state: DownloadState;
+  state_label?: string;
   queue_position: number;
   priority: number;
   connection_count: number;
@@ -51,6 +53,7 @@ type DownloadJob = {
   downloaded_bytes: number;
   total_bytes: number | null;
   speed_bps: number;
+  uploaded_bytes?: number;
   is_resumable: boolean;
   scheduler_enabled: boolean;
   schedule_days: string[];
@@ -61,6 +64,11 @@ type DownloadJob = {
   error_message: string | null;
   created_at: string;
   updated_at: string;
+  torrent_info_hash?: string;
+  torrent_file_count?: number;
+  torrent_source?: string;
+  torrent_finished?: boolean;
+  torrent_paused?: boolean;
 };
 
 type AppSettings = {
@@ -229,6 +237,51 @@ type TorrentRuntimeStatus = {
   is_paused: boolean;
   error_message: string | null;
 };
+
+function normalizeHttpJob(job: Omit<DownloadJob, "source_kind"> & Partial<Pick<DownloadJob, "source_kind">>): DownloadJob {
+  return {
+    ...job,
+    source_kind: "http",
+  };
+}
+
+function toTorrentListJob(runtime: TorrentRuntimeStatus): DownloadJob {
+  const state = mapTorrentRuntimeState(runtime);
+  const now = new Date().toISOString();
+  return {
+    id: runtime.id,
+    source_kind: "torrent",
+    url: runtime.source,
+    file_name: runtime.display_name,
+    output_folder: runtime.output_folder,
+    output_path: runtime.output_folder,
+    state,
+    state_label: runtime.state,
+    queue_position: 0,
+    priority: 1,
+    connection_count: 0,
+    speed_limit_kbps: 0,
+    downloaded_bytes: runtime.downloaded_bytes,
+    total_bytes: runtime.total_bytes || null,
+    speed_bps: runtime.download_speed_bps,
+    uploaded_bytes: runtime.uploaded_bytes,
+    is_resumable: true,
+    scheduler_enabled: false,
+    schedule_days: [],
+    schedule_from: null,
+    schedule_to: null,
+    retry_count: 0,
+    next_retry_at: null,
+    error_message: runtime.error_message,
+    created_at: now,
+    updated_at: now,
+    torrent_info_hash: runtime.info_hash,
+    torrent_file_count: runtime.file_count,
+    torrent_source: runtime.source,
+    torrent_finished: runtime.finished,
+    torrent_paused: runtime.is_paused,
+  };
+}
 
 type PendingTorrentAutoStartRegistration = PendingTorrentAutoStart & {
   jobId: string;
@@ -1083,6 +1136,25 @@ function App() {
     }, [isStandaloneAddWindow]);
 
   useEffect(() => {
+    if (isStandaloneAddWindow) {
+      return;
+    }
+
+    const hasTorrentRows = jobs.some((job) => job.source_kind === "torrent");
+    if (!hasTorrentRows) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      refreshJobs().catch(console.error);
+    }, 1500);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [isStandaloneAddWindow, jobs]);
+
+  useEffect(() => {
     let totalDownloaded = 0;
     let unlisten: (() => void) | null = null;
 
@@ -1595,6 +1667,7 @@ function App() {
         outputFolder: pendingTorrentIntake.outputFolder || null,
       });
       setActiveTorrentRuntime(status);
+      await refreshJobs();
     } catch (caughtError) {
       setTorrentRuntimeError(
         typeof caughtError === "string" ? caughtError : "Could not start torrent runtime.",
@@ -1614,6 +1687,7 @@ function App() {
         runtimeId: activeTorrentRuntime.id,
       });
       setActiveTorrentRuntime(status);
+      await refreshJobs();
     } catch (caughtError) {
       setTorrentRuntimeError(
         typeof caughtError === "string" ? caughtError : "Could not pause torrent.",
@@ -1631,6 +1705,7 @@ function App() {
         runtimeId: activeTorrentRuntime.id,
       });
       setActiveTorrentRuntime(status);
+      await refreshJobs();
     } catch (caughtError) {
       setTorrentRuntimeError(
         typeof caughtError === "string" ? caughtError : "Could not resume torrent.",
@@ -1773,11 +1848,19 @@ function App() {
   }, [jobs, systemIcons]);
 
   async function refreshJobs() {
-    const savedJobs = await invoke<DownloadJob[]>("list_download_jobs");
+    const [savedJobs, torrentRuntimes] = await Promise.all([
+      invoke<Omit<DownloadJob, "source_kind">[]>("list_download_jobs"),
+      invoke<TorrentRuntimeStatus[]>("list_torrent_runtimes"),
+    ]);
+    const normalizedSavedJobs = savedJobs.map((savedJob) => normalizeHttpJob(savedJob));
+    const mergedJobs = [
+      ...normalizedSavedJobs,
+      ...torrentRuntimes.map((runtime) => toTorrentListJob(runtime)),
+    ].sort(compareJobsForDisplay);
     setJobs((currentJobs) =>
-      savedJobs.map((savedJob) => {
+      mergedJobs.map((savedJob) => {
         const currentJob = currentJobs.find((job) => job.id === savedJob.id);
-        if (savedJob.state !== "Running") {
+        if (savedJob.source_kind !== "http" || savedJob.state !== "Running") {
           speedTelemetryRef.current.delete(savedJob.id);
           return {
             ...savedJob,
@@ -1797,9 +1880,7 @@ function App() {
       }),
     );
     setJobsInitialized(true);
-    setSelectedJobIds((currentIds) =>
-      currentIds.filter((id) => savedJobs.some((job) => job.id === id)),
-    );
+    setSelectedJobIds((currentIds) => currentIds.filter((id) => mergedJobs.some((job) => job.id === id)));
   }
 
   async function createJob(event: FormEvent<HTMLFormElement>) {
@@ -1846,7 +1927,7 @@ function App() {
         isTorrentFileCandidate &&
         startTorrentAfterDownload &&
         submitIntent !== "torrent-file-only";
-      const job = await invoke<DownloadJob>("create_download_job", {
+      const createdJob = await invoke<Omit<DownloadJob, "source_kind">>("create_download_job", {
         request: {
           url,
           suggested_file_name: pendingSuggestedFileName || null,
@@ -1857,6 +1938,7 @@ function App() {
           schedule_to: isSchedulerEnabled ? scheduleTo : null,
         },
       });
+      const job = normalizeHttpJob(createdJob);
       if (shouldAutoStartTorrentAfterDownload) {
         if (isStandaloneAddWindow) {
           await emit(TORRENT_AUTOSTART_EVENT, {
@@ -2056,7 +2138,12 @@ function App() {
   async function deleteJob(id: string) {
     setDeletingJobIds((prev) => new Set([...prev, id]));
     await new Promise((resolve) => setTimeout(resolve, 280));
-    await invoke<boolean>("delete_download_job", { id });
+    const job = jobs.find((candidate) => candidate.id === id);
+    if (job?.source_kind === "torrent") {
+      await invoke<void>("remove_torrent_runtime", { runtimeId: id, deleteFiles: true });
+    } else {
+      await invoke<boolean>("delete_download_job", { id });
+    }
     setJobs((currentJobs) => currentJobs.filter((job) => job.id !== id));
     setSelectedJobIds((currentIds) => currentIds.filter((jobId) => jobId !== id));
     setDeletingJobIds((prev) => {
@@ -2069,7 +2156,12 @@ function App() {
   async function removeJobFromList(id: string) {
     setDeletingJobIds((prev) => new Set([...prev, id]));
     await new Promise((resolve) => setTimeout(resolve, 280));
-    await invoke<boolean>("remove_download_job", { id });
+    const job = jobs.find((candidate) => candidate.id === id);
+    if (job?.source_kind === "torrent") {
+      await invoke<void>("remove_torrent_runtime", { runtimeId: id, deleteFiles: false });
+    } else {
+      await invoke<boolean>("remove_download_job", { id });
+    }
     setJobs((currentJobs) => currentJobs.filter((job) => job.id !== id));
     setSelectedJobIds((currentIds) => currentIds.filter((jobId) => jobId !== id));
     setDeletingJobIds((prev) => {
@@ -2101,41 +2193,80 @@ function App() {
   }
 
   async function startJob(id: string) {
-    await invoke<void>("start_download_job", { id });
+    const job = jobs.find((candidate) => candidate.id === id);
+    if (job?.source_kind === "torrent") {
+      await invoke<TorrentRuntimeStatus>("resume_torrent_runtime", { runtimeId: id });
+    } else {
+      await invoke<void>("start_download_job", { id });
+    }
     await refreshJobs();
   }
 
   async function cancelJob(id: string) {
-    await invoke<void>("cancel_download_job", { id });
+    const job = jobs.find((candidate) => candidate.id === id);
+    if (job?.source_kind === "torrent") {
+      await invoke<void>("remove_torrent_runtime", { runtimeId: id, deleteFiles: false });
+    } else {
+      await invoke<void>("cancel_download_job", { id });
+    }
     await refreshJobs();
   }
 
   async function pauseJob(id: string) {
-    await invoke<void>("pause_download_job", { id });
+    const job = jobs.find((candidate) => candidate.id === id);
+    if (job?.source_kind === "torrent") {
+      await invoke<TorrentRuntimeStatus>("pause_torrent_runtime", { runtimeId: id });
+    } else {
+      await invoke<void>("pause_download_job", { id });
+    }
     await refreshJobs();
   }
 
   async function startSelectedJobs() {
     const jobsToStart = selectedJobs.filter(canStart);
-    await Promise.all(jobsToStart.map((job) => invoke<void>("start_download_job", { id: job.id })));
+    await Promise.all(
+      jobsToStart.map((job) =>
+        job.source_kind === "torrent"
+          ? invoke<TorrentRuntimeStatus>("resume_torrent_runtime", { runtimeId: job.id })
+          : invoke<void>("start_download_job", { id: job.id }),
+      ),
+    );
     await refreshJobs();
   }
 
   async function pauseSelectedJobs() {
     const runningJobs = selectedJobs.filter((job) => job.state === "Running");
-    await Promise.all(runningJobs.map((job) => invoke<void>("pause_download_job", { id: job.id })));
+    await Promise.all(
+      runningJobs.map((job) =>
+        job.source_kind === "torrent"
+          ? invoke<TorrentRuntimeStatus>("pause_torrent_runtime", { runtimeId: job.id })
+          : invoke<void>("pause_download_job", { id: job.id }),
+      ),
+    );
     await refreshJobs();
   }
 
   async function pauseAllRunningJobs() {
     await invoke<void>("stop_queue");
+    const runningTorrentJobs = jobs.filter(
+      (job) => job.source_kind === "torrent" && job.state === "Running",
+    );
+    await Promise.all(
+      runningTorrentJobs.map((job) =>
+        invoke<TorrentRuntimeStatus>("pause_torrent_runtime", { runtimeId: job.id }),
+      ),
+    );
     await refreshJobs();
   }
 
   async function deleteSelectedJobs() {
     const deletableJobs = selectedJobs.filter((job) => job.state !== "Running");
     await Promise.all(
-      deletableJobs.map((job) => invoke<boolean>("delete_download_job", { id: job.id })),
+      deletableJobs.map((job) =>
+        job.source_kind === "torrent"
+          ? invoke<void>("remove_torrent_runtime", { runtimeId: job.id, deleteFiles: true })
+          : invoke<boolean>("delete_download_job", { id: job.id }),
+      ),
     );
     setJobs((currentJobs) =>
       currentJobs.filter((job) => !deletableJobs.some((deleted) => deleted.id === job.id)),
@@ -4600,7 +4731,7 @@ function App() {
                     visibleJobs.map((job) => {
                       const isSelected = selectedJobIds.includes(job.id);
                       const waitingForSchedule = isWaitingForSchedule(job, scheduleNow);
-                      const scheduleSummary = job.scheduler_enabled
+                      const scheduleSummary = job.source_kind === "http" && job.scheduler_enabled
                         ? formatScheduleSummary(job)
                         : "";
                       const nextScheduledStart = waitingForSchedule
@@ -4656,7 +4787,7 @@ function App() {
                                   <small title={job.url}>{job.url}</small>
                                 </div>
                               </div>
-                              {settings.show_built_in_tags && job.scheduler_enabled ? (
+                              {settings.show_built_in_tags && job.source_kind === "http" && job.scheduler_enabled ? (
                                 <small className="schedule-detail" title={scheduleSummary}>
                                   {scheduleSummary}
                                 </small>
@@ -4681,7 +4812,7 @@ function App() {
                               {job.error_message && job.state !== "Paused" ? (
                                 <em title={job.error_message}>{job.error_message}</em>
                               ) : null}
-                              {job.next_retry_at ? (
+                              {job.next_retry_at && job.source_kind === "http" ? (
                                 <em>Next retry: {formatRetryTime(job.next_retry_at)}</em>
                               ) : null}
                             </div>
@@ -4692,7 +4823,7 @@ function App() {
                                   : `state-${job.state.toLowerCase()}`
                               }`}
                             >
-                              {waitingForSchedule ? "Scheduled" : job.state}
+                              {waitingForSchedule ? "Scheduled" : job.state_label ?? job.state}
                             </span>
                             <span>{formatSize(job)}</span>
                             <span>{formatBytes(job.speed_bps)}/s</span>
@@ -4735,7 +4866,7 @@ function App() {
                                 disabled={!job.output_path}
                                 onClick={(event) => {
                                   event.stopPropagation();
-                                  invoke("reveal_in_folder", { path: job.output_path }).catch(() => {});
+                                  invoke("reveal_in_folder", { path: job.output_path || job.output_folder }).catch(() => {});
                                 }}
                                 title="Show in folder"
                               >
@@ -4801,7 +4932,7 @@ function App() {
                       >
                         {isWaitingForSchedule(detailsPanelJob, scheduleNow)
                           ? "Scheduled"
-                          : detailsPanelJob.state}
+                          : detailsPanelJob.state_label ?? detailsPanelJob.state}
                       </span>
                     </div>
 
@@ -4839,20 +4970,38 @@ function App() {
                         </strong>
                       </div>
                       <div className="details-item">
-                        <span>Connections</span>
-                        <strong>{detailsPanelJob.connection_count}</strong>
+                        <span>{detailsPanelJob.source_kind === "torrent" ? "Files" : "Connections"}</span>
+                        <strong>
+                          {detailsPanelJob.source_kind === "torrent"
+                            ? detailsPanelJob.torrent_file_count ?? 0
+                            : detailsPanelJob.connection_count}
+                        </strong>
                       </div>
                       <div className="details-item">
-                        <span>Resumable</span>
-                        <strong>{detailsPanelJob.is_resumable ? "Yes" : "No"}</strong>
+                        <span>{detailsPanelJob.source_kind === "torrent" ? "Info hash" : "Resumable"}</span>
+                        <strong title={detailsPanelJob.torrent_info_hash}>
+                          {detailsPanelJob.source_kind === "torrent"
+                            ? detailsPanelJob.torrent_info_hash ?? "—"
+                            : detailsPanelJob.is_resumable
+                              ? "Yes"
+                              : "No"}
+                        </strong>
                       </div>
                       <div className="details-item">
-                        <span>Priority</span>
-                        <strong>{formatPriorityLabel(detailsPanelJob.priority)}</strong>
+                        <span>{detailsPanelJob.source_kind === "torrent" ? "Uploaded" : "Priority"}</span>
+                        <strong>
+                          {detailsPanelJob.source_kind === "torrent"
+                            ? formatBytes(detailsPanelJob.uploaded_bytes ?? 0)
+                            : formatPriorityLabel(detailsPanelJob.priority)}
+                        </strong>
                       </div>
                       <div className="details-item">
-                        <span>Queue slot</span>
-                        <strong>#{detailsPanelJob.queue_position}</strong>
+                        <span>{detailsPanelJob.source_kind === "torrent" ? "Torrent source" : "Queue slot"}</span>
+                        <strong title={detailsPanelJob.torrent_source}>
+                          {detailsPanelJob.source_kind === "torrent"
+                            ? detailsPanelJob.torrent_source ?? detailsPanelJob.url
+                            : `#${detailsPanelJob.queue_position}`}
+                        </strong>
                       </div>
                       <div className="details-item">
                         <span>Created</span>
@@ -4863,17 +5012,21 @@ function App() {
                         <strong>{formatPanelDateTime(detailsPanelJob.updated_at)}</strong>
                       </div>
                       <div className="details-item wide">
-                        <span>Scheduler</span>
+                        <span>{detailsPanelJob.source_kind === "torrent" ? "Torrent status" : "Scheduler"}</span>
                         <strong>
-                          {detailsPanelJob.scheduler_enabled
+                          {detailsPanelJob.source_kind === "torrent"
+                            ? detailsPanelJob.state_label ?? detailsPanelJob.state
+                            : detailsPanelJob.scheduler_enabled
                             ? formatScheduleSummary(detailsPanelJob)
                             : "Not scheduled"}
                         </strong>
                       </div>
                       <div className="details-item wide">
-                        <span>Retry state</span>
+                        <span>{detailsPanelJob.source_kind === "torrent" ? "Runtime details" : "Retry state"}</span>
                         <strong>
-                          {detailsPanelJob.next_retry_at
+                          {detailsPanelJob.source_kind === "torrent"
+                            ? detailsPanelJob.error_message || "Managed by the torrent runtime."
+                            : detailsPanelJob.next_retry_at
                             ? `Next retry ${formatRetryTime(detailsPanelJob.next_retry_at)}`
                             : detailsPanelJob.error_message
                               ? detailsPanelJob.error_message
@@ -5333,7 +5486,63 @@ function formatPanelDateTime(value: string) {
   });
 }
 
+function mapTorrentRuntimeState(runtime: TorrentRuntimeStatus): DownloadState {
+  switch (runtime.state) {
+    case "Paused":
+      return "Paused";
+    case "Completed":
+      return "Completed";
+    case "Failed":
+      return "Failed";
+    default:
+      return "Running";
+  }
+}
+
+function compareJobsForDisplay(left: DownloadJob, right: DownloadJob) {
+  const stateRank = (job: DownloadJob) => {
+    switch (job.state) {
+      case "Running":
+        return 0;
+      case "Queued":
+        return 1;
+      case "Paused":
+        return 2;
+      case "Failed":
+        return 3;
+      case "Canceled":
+        return 4;
+      default:
+        return 5;
+    }
+  };
+
+  const leftRank = stateRank(left);
+  const rightRank = stateRank(right);
+  if (leftRank !== rightRank) {
+    return leftRank - rightRank;
+  }
+
+  if (left.source_kind !== right.source_kind) {
+    return left.source_kind === "torrent" ? -1 : 1;
+  }
+
+  if (left.state === "Queued" || left.state === "Paused" || left.state === "Failed" || left.state === "Canceled") {
+    if (left.priority !== right.priority) {
+      return right.priority - left.priority;
+    }
+    if (left.queue_position !== right.queue_position) {
+      return left.queue_position - right.queue_position;
+    }
+  }
+
+  return left.file_name.localeCompare(right.file_name);
+}
+
 function canStart(job: DownloadJob) {
+  if (job.source_kind === "torrent") {
+    return job.state === "Paused" || job.state === "Failed";
+  }
   return (
     job.state === "Queued" ||
     job.state === "Failed" ||
@@ -5343,6 +5552,9 @@ function canStart(job: DownloadJob) {
 }
 
 function isQueueManageable(job: DownloadJob) {
+  if (job.source_kind === "torrent") {
+    return false;
+  }
   return (
     job.state === "Queued" ||
     job.state === "Paused" ||
@@ -5380,6 +5592,9 @@ function matchesMainTab(job: DownloadJob, tab: DownloadTabId) {
 }
 
 function matchesPriorityFilter(job: DownloadJob, priorityFilter: PriorityFilterId) {
+  if (job.source_kind === "torrent" && priorityFilter !== "all") {
+    return false;
+  }
   switch (priorityFilter) {
     case "high":
       return job.priority === 2;
@@ -5396,6 +5611,9 @@ function matchesQueueScope(
   job: DownloadJob,
   queueScope: "all" | "queueOnly" | "scheduled",
 ) {
+  if (job.source_kind === "torrent") {
+    return queueScope === "all";
+  }
   switch (queueScope) {
     case "queueOnly":
       return isQueueManageable(job);
@@ -5472,10 +5690,16 @@ function getJobIconRequest(job: DownloadJob) {
 }
 
 function isWaitingForSchedule(job: DownloadJob, currentDate: Date) {
+  if (job.source_kind === "torrent") {
+    return false;
+  }
   return job.state === "Queued" && job.scheduler_enabled && !isScheduleWindowActive(job, currentDate);
 }
 
 function isScheduleWindowActive(job: DownloadJob, currentDate: Date) {
+  if (job.source_kind === "torrent") {
+    return true;
+  }
   if (!job.scheduler_enabled) {
     return true;
   }

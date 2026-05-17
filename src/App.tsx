@@ -1984,6 +1984,16 @@ function App() {
   }, [isAddOpen, url]);
 
   useEffect(() => {
+    if (
+      urlMetadata?.file_name &&
+      urlMetadata.file_name.toLowerCase().endsWith(".torrent") &&
+      !pendingSuggestedFileName.toLowerCase().endsWith(".torrent")
+    ) {
+      setPendingSuggestedFileName(urlMetadata.file_name);
+    }
+  }, [urlMetadata?.file_name]);
+
+  useEffect(() => {
     const intervalId = window.setInterval(() => {
       setScheduleClock(Date.now());
     }, 30000);
@@ -2979,15 +2989,8 @@ function App() {
         </label>
 
         {isTorrentFileCandidate ? (
-          <section className="torrent-intake-card" aria-label="Torrent handoff">
-            <div className="torrent-intake-copy">
-              <strong>Detected torrent file</strong>
-              <p>
-                Trinity will download the <code>.torrent</code> file normally and can hand it off
-                to the torrent intake flow as soon as the file finishes.
-              </p>
-            </div>
-            <label className="checkbox-label torrent-autostart-toggle">
+          <div className="scheduler-row">
+            <label className="checkbox-label">
               <input
                 checked={startTorrentAfterDownload}
                 onChange={(event) => setStartTorrentAfterDownload(event.currentTarget.checked)}
@@ -2995,7 +2998,7 @@ function App() {
               />
               Start torrent after download completes
             </label>
-          </section>
+          </div>
         ) : null}
 
         {isMagnetCandidate ? (
@@ -3073,18 +3076,6 @@ function App() {
           <button type="button" onClick={() => closeAddDialog()}>
             Cancel
           </button>
-          {isTorrentFileCandidate ? (
-            <button
-              disabled={isSubmitting}
-              onClick={() => {
-                torrentSubmitIntentRef.current = "torrent-file-only";
-                addFormRef.current?.requestSubmit();
-              }}
-              type="button"
-            >
-              {isSubmitting ? "Adding..." : "Download Torrent File Only"}
-            </button>
-          ) : null}
           <button
             className="primary-action"
             disabled={isSubmitting}

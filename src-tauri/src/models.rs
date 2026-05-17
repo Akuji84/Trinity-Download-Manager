@@ -121,6 +121,21 @@ pub struct DownloadUrlMetadata {
     pub content_type: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct TorrentIntakeFile {
+    pub name: String,
+    pub length: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TorrentIntakeMetadata {
+    pub display_name: String,
+    pub info_hash: String,
+    pub output_folder: String,
+    pub total_bytes: u64,
+    pub files: Vec<TorrentIntakeFile>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtensionDownloadRequest {
     pub url: String,

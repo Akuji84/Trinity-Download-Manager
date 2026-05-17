@@ -16,15 +16,20 @@ use std::{
 };
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-use notify::{event::ModifyKind, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use chrono::Timelike;
+use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, Session};
 use models::{
     AppSettings, AppStatus, AppUpdateInfo, AppUpdaterStatus, BrowserIntegrationSettings,
     CreateDownloadJobRequest, DownloadJob, DownloadProgressEvent, DownloadState,
-    DownloadUrlMetadata, ExtensionDownloadRequest, ReorderDownloadJobRequest,
-    UpdateAppSettingsRequest, UpdateDownloadPriorityRequest, UpdateDownloadSpeedLimitRequest,
+    DownloadUrlMetadata, ExtensionDownloadRequest, ReorderDownloadJobRequest, TorrentIntakeFile,
+    TorrentIntakeMetadata, UpdateAppSettingsRequest, UpdateDownloadPriorityRequest,
+    UpdateDownloadSpeedLimitRequest,
 };
+use notify::{event::ModifyKind, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use reqwest::{
-    header::{CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_RANGE, COOKIE, RANGE, REFERER, USER_AGENT},
+    header::{
+        CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_RANGE, COOKIE, RANGE, REFERER, USER_AGENT,
+    },
     Client, Method, StatusCode,
 };
 use storage::Storage;
@@ -32,7 +37,6 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_updater::UpdaterExt;
 use url::Url;
 use uuid::Uuid;
-use chrono::Timelike;
 #[cfg(target_os = "windows")]
 use winreg::{enums::HKEY_CURRENT_USER, RegKey};
 #[cfg(target_os = "windows")]
@@ -871,6 +875,99 @@ async fn inspect_download_url(state: State<'_, AppState>, url: String) -> Result
         total_bytes,
         content_type,
     })
+}
+
+#[tauri::command]
+async fn resolve_torrent_intake(
+    app: AppHandle,
+    source: String,
+    output_folder: Option<String>,
+) -> Result<TorrentIntakeMetadata, String> {
+    let source = source.trim();
+    if source.is_empty() {
+        return Err("Torrent source is empty.".to_string());
+    }
+
+    let resolved_output_folder = output_folder
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or(default_download_folder(&app)?);
+    std::fs::create_dir_all(&resolved_output_folder).map_err(|error| error.to_string())?;
+
+    let session = Session::new(resolved_output_folder.clone())
+        .await
+        .map_err(|error| error.to_string())?;
+    let add = if source.to_ascii_lowercase().starts_with("magnet:?") {
+        AddTorrent::from_url(source.to_string())
+    } else if matches!(Url::parse(source), Ok(url) if matches!(url.scheme(), "http" | "https")) {
+        AddTorrent::from_url(source.to_string())
+    } else {
+        AddTorrent::from_local_filename(source).map_err(|error| error.to_string())?
+    };
+
+    let response = session
+        .add_torrent(
+            add,
+            Some(AddTorrentOptions {
+                list_only: true,
+                output_folder: Some(resolved_output_folder.to_string_lossy().to_string()),
+                ..Default::default()
+            }),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let result = match response {
+        AddTorrentResponse::ListOnly(response) => {
+            let files = response
+                .info
+                .iter_file_details()
+                .map_err(|error| error.to_string())?
+                .map(|details| {
+                    let name = details
+                        .filename
+                        .to_string()
+                        .unwrap_or_else(|_| "<INVALID NAME>".to_string());
+                    Ok(TorrentIntakeFile {
+                        name,
+                        length: details.len,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            let total_bytes = files.iter().map(|file| file.length).sum::<u64>();
+            let display_name = response
+                .info
+                .name
+                .as_ref()
+                .map(|value| String::from_utf8_lossy(value.as_ref()).to_string())
+                .unwrap_or_else(|| {
+                    if source.to_ascii_lowercase().starts_with("magnet:?") {
+                        "Magnet torrent".to_string()
+                    } else {
+                        PathBuf::from(source)
+                            .file_stem()
+                            .and_then(|value| value.to_str())
+                            .unwrap_or("Torrent")
+                            .to_string()
+                    }
+                });
+            TorrentIntakeMetadata {
+                display_name,
+                info_hash: response.info_hash.as_string(),
+                output_folder: response.output_folder.to_string_lossy().to_string(),
+                total_bytes,
+                files,
+            }
+        }
+        AddTorrentResponse::Added(_, _) | AddTorrentResponse::AlreadyManaged(_, _) => {
+            return Err("Torrent intake unexpectedly started a live torrent session.".to_string())
+        }
+    };
+
+    session.stop().await;
+    Ok(result)
 }
 
 #[tauri::command]
@@ -2535,6 +2632,7 @@ pub fn run() {
             get_default_download_folder,
             get_system_file_icon,
             inspect_download_url,
+            resolve_torrent_intake,
             create_download_job,
             list_download_jobs,
             delete_download_job,

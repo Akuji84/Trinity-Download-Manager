@@ -1642,6 +1642,33 @@ button {
   color: #9fb2c2;
 }
 
+.torrent-intake-panel {
+  display: grid;
+  gap: 6px;
+  padding: 12px 13px;
+  border: 1px solid #41464b;
+  background: #1c2125;
+}
+
+.torrent-intake-panel.error {
+  border-color: #7a4d4d;
+}
+
+.torrent-intake-panel strong,
+.torrent-intake-panel p {
+  margin: 0;
+}
+
+.torrent-intake-panel strong {
+  color: #f4f8fb;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.torrent-intake-panel p {
+  color: #dbe4ec;
+}
+
 .torrent-intake-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1674,6 +1701,36 @@ button {
 
 .torrent-intake-actions {
   margin-top: 2px;
+}
+
+.torrent-file-list {
+  display: grid;
+  gap: 6px;
+}
+
+.torrent-file-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #dbe4ec;
+  font-size: 12px;
+}
+
+.torrent-file-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.torrent-file-row strong {
+  color: #f4f8fb;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.torrent-file-row.more {
+  color: #9fb2c2;
 }
 
 .add-form label {

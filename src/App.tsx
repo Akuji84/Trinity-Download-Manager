@@ -198,6 +198,19 @@ type TorrentIntakePayload = {
   fromCompletedDownload: boolean;
 };
 
+type TorrentIntakeFile = {
+  name: string;
+  length: number;
+};
+
+type TorrentIntakeMetadata = {
+  display_name: string;
+  info_hash: string;
+  output_folder: string;
+  total_bytes: number;
+  files: TorrentIntakeFile[];
+};
+
 type PendingTorrentAutoStartRegistration = PendingTorrentAutoStart & {
   jobId: string;
 };
@@ -521,6 +534,9 @@ function App() {
   );
   const [isTorrentIntakeOpen, setIsTorrentIntakeOpen] = useState(false);
   const [isTorrentIntakeAnimatingOut, setIsTorrentIntakeAnimatingOut] = useState(false);
+  const [isTorrentMetadataLoading, setIsTorrentMetadataLoading] = useState(false);
+  const [torrentMetadata, setTorrentMetadata] = useState<TorrentIntakeMetadata | null>(null);
+  const [torrentMetadataError, setTorrentMetadataError] = useState("");
   const [settings, setSettings] = useState<AppSettings>({
     theme: "Dark",
     compact_downloads: false,
@@ -687,6 +703,9 @@ function App() {
 
   function openTorrentIntake(payload: TorrentIntakePayload) {
     setPendingTorrentIntake(payload);
+    setTorrentMetadata(null);
+    setTorrentMetadataError("");
+    setIsTorrentMetadataLoading(false);
     setIsTorrentIntakeAnimatingOut(false);
     setIsTorrentIntakeOpen(true);
   }
@@ -705,6 +724,9 @@ function App() {
       setIsTorrentIntakeOpen(false);
       setIsTorrentIntakeAnimatingOut(false);
       setPendingTorrentIntake(null);
+      setTorrentMetadata(null);
+      setTorrentMetadataError("");
+      setIsTorrentMetadataLoading(false);
     }, 220);
   }
 
@@ -1462,6 +1484,45 @@ function App() {
       }
     }
   }, [jobs]);
+
+  useEffect(() => {
+    if (!isTorrentIntakeOpen || !pendingTorrentIntake) {
+      return;
+    }
+
+    let cancelled = false;
+    setIsTorrentMetadataLoading(true);
+    setTorrentMetadata(null);
+    setTorrentMetadataError("");
+
+    void invoke<TorrentIntakeMetadata>("resolve_torrent_intake", {
+      source: pendingTorrentIntake.torrentFilePath ?? pendingTorrentIntake.sourceValue,
+      outputFolder: pendingTorrentIntake.outputFolder || null,
+    })
+      .then((resolvedMetadata) => {
+        if (cancelled) {
+          return;
+        }
+        setTorrentMetadata(resolvedMetadata);
+      })
+      .catch((caughtError) => {
+        if (cancelled) {
+          return;
+        }
+        setTorrentMetadataError(
+          typeof caughtError === "string" ? caughtError : "Could not resolve torrent metadata.",
+        );
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsTorrentMetadataLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isTorrentIntakeOpen, pendingTorrentIntake]);
 
   useEffect(() => {
     const liveJobIds = new Set(jobs.map((job) => job.id));
@@ -4755,7 +4816,7 @@ function App() {
             </div>
             <div className="torrent-intake-body">
               <div className="torrent-intake-copy">
-                <strong>{pendingTorrentIntake.displayName}</strong>
+                <strong>{torrentMetadata?.display_name || pendingTorrentIntake.displayName}</strong>
                 <p>
                   {pendingTorrentIntake.fromCompletedDownload
                     ? "The torrent file finished downloading and Trinity handed it off into the torrent intake flow."
@@ -4764,10 +4825,28 @@ function App() {
                       : "Trinity detected a torrent file and opened the torrent intake flow directly."}
                 </p>
                 <p className="torrent-intake-note">
-                  Torrent source detection and handoff are ready. The actual peer transfer engine is
-                  the next implementation step, so this intake screen is the current endpoint.
+                  Trinity now resolves real torrent metadata here. The full torrent transfer engine
+                  is still the next implementation step.
                 </p>
               </div>
+
+              {isTorrentMetadataLoading ? (
+                <div className="torrent-intake-panel">
+                  <strong>Resolving metadata...</strong>
+                  <p>
+                    {pendingTorrentIntake.candidateKind === "magnet"
+                      ? "Magnet links may take a little longer while Trinity discovers torrent metadata through the torrent backend."
+                      : "Reading torrent metadata."}
+                  </p>
+                </div>
+              ) : null}
+
+              {torrentMetadataError ? (
+                <div className="torrent-intake-panel error">
+                  <strong>Could not resolve torrent metadata</strong>
+                  <p>{torrentMetadataError}</p>
+                </div>
+              ) : null}
 
               <div className="torrent-intake-grid">
                 <div className="torrent-intake-item">
@@ -4780,10 +4859,28 @@ function App() {
                 </div>
                 <div className="torrent-intake-item">
                   <span>Save to</span>
-                  <strong title={pendingTorrentIntake.outputFolder || undefined}>
-                    {pendingTorrentIntake.outputFolder || "Use Trinity default folder"}
+                  <strong title={torrentMetadata?.output_folder || pendingTorrentIntake.outputFolder || undefined}>
+                    {torrentMetadata?.output_folder ||
+                      pendingTorrentIntake.outputFolder ||
+                      "Use Trinity default folder"}
                   </strong>
                 </div>
+                {torrentMetadata ? (
+                  <>
+                    <div className="torrent-intake-item">
+                      <span>Total size</span>
+                      <strong>{formatBytes(torrentMetadata.total_bytes)}</strong>
+                    </div>
+                    <div className="torrent-intake-item">
+                      <span>Files</span>
+                      <strong>{torrentMetadata.files.length}</strong>
+                    </div>
+                    <div className="torrent-intake-item wide">
+                      <span>Info hash</span>
+                      <strong title={torrentMetadata.info_hash}>{torrentMetadata.info_hash}</strong>
+                    </div>
+                  </>
+                ) : null}
                 <div className="torrent-intake-item wide">
                   <span>Source</span>
                   <strong title={pendingTorrentIntake.sourceValue}>
@@ -4799,6 +4896,25 @@ function App() {
                   </div>
                 ) : null}
               </div>
+
+              {torrentMetadata?.files.length ? (
+                <div className="torrent-intake-panel">
+                  <strong>Files</strong>
+                  <div className="torrent-file-list">
+                    {torrentMetadata.files.slice(0, 8).map((file) => (
+                      <div className="torrent-file-row" key={`${file.name}-${file.length}`}>
+                        <span title={file.name}>{file.name}</span>
+                        <strong>{formatBytes(file.length)}</strong>
+                      </div>
+                    ))}
+                    {torrentMetadata.files.length > 8 ? (
+                      <div className="torrent-file-row more">
+                        <span>…and {torrentMetadata.files.length - 8} more</span>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
 
               <div className="form-actions torrent-intake-actions">
                 {pendingTorrentIntake.torrentFilePath ? (

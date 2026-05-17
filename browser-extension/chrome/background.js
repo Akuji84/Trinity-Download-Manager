@@ -11,8 +11,13 @@ const CONTEXT_MENU_IDS = {
 const interceptedDownloadIds = new Set();
 const REQUEST_METADATA_WINDOW_MS = 15000;
 const DOWNLOAD_TRANSACTION_WINDOW_MS = 30000;
+const FILENAME_DETERMINATION_TIMEOUT_MS = 2500;
 const recentRequestMetadata = new Map();
 const recentDownloadTransactions = new Map();
+// Stores Chrome-determined filenames from onDeterminingFilename, keyed by download ID.
+// onDeterminingFilename fires after onCreated and gives us the real filename from
+// Content-Disposition before any bytes are written to disk.
+const determinedFilenames = new Map(); // downloadId -> { basename, resolve }|{ basename }
 
 function shouldSkipBridgeUrl(url) {
   return typeof url === "string" && url.startsWith(BRIDGE_BASE_URL);
@@ -68,6 +73,45 @@ chrome.webRequest.onResponseStarted.addListener(
   { urls: ["<all_urls>"] },
   ["responseHeaders", "extraHeaders"],
 );
+
+// onDeterminingFilename fires after onCreated, once Chrome has received the server's
+// response headers and resolved the real save path (Content-Disposition filename).
+// We must always call suggest() — if we don't, Chrome hangs the download indefinitely.
+chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
+  suggest({ filename: downloadItem.filename, conflictAction: "uniquify" });
+
+  const basename = downloadItem.filename
+    ? downloadItem.filename.replace(/\\/g, "/").split("/").filter(Boolean).at(-1) || null
+    : null;
+
+  const entry = determinedFilenames.get(downloadItem.id);
+  if (entry && typeof entry.resolve === "function") {
+    // handleCreatedDownload is waiting — resolve its promise
+    clearTimeout(entry.timeoutId);
+    determinedFilenames.delete(downloadItem.id);
+    entry.resolve(basename);
+  } else {
+    // Store eagerly; handleCreatedDownload will pick it up when it gets here
+    determinedFilenames.set(downloadItem.id, { basename });
+    setTimeout(() => determinedFilenames.delete(downloadItem.id), DOWNLOAD_TRANSACTION_WINDOW_MS);
+  }
+});
+
+function waitForDeterminedFilename(downloadId) {
+  const existing = determinedFilenames.get(downloadId);
+  if (existing && typeof existing.resolve !== "function") {
+    determinedFilenames.delete(downloadId);
+    return Promise.resolve(existing.basename);
+  }
+
+  return new Promise((resolve) => {
+    const timeoutId = setTimeout(() => {
+      determinedFilenames.delete(downloadId);
+      resolve(null);
+    }, FILENAME_DETERMINATION_TIMEOUT_MS);
+    determinedFilenames.set(downloadId, { resolve, timeoutId });
+  });
+}
 
 async function refreshCachedBridgeStatus() {
   cachedBridgeAlive = await pingBridge();
@@ -874,8 +918,14 @@ async function handleCreatedDownload(downloadItem) {
     console.warn("Could not cancel the browser download before Trinity handoff", error);
   }
 
-  // Resolve the page URL for Trinity metadata (fine to await after cancel)
-  const pageUrl = await resolveDownloadPageUrl(downloadItem);
+  // Resolve the page URL and the Chrome-determined filename concurrently.
+  // waitForDeterminedFilename waits for onDeterminingFilename (which fires after onCreated
+  // once Chrome has processed the server's Content-Disposition header) or times out and
+  // returns null so we fall back to the existing header/URL derivation.
+  const [pageUrl, determinedFileName] = await Promise.all([
+    resolveDownloadPageUrl(downloadItem),
+    waitForDeterminedFilename(downloadItem.id),
+  ]);
 
   // Re-check exclusion with the resolved page URL in case referrer wasn't set
   const resolvedHost = extractHost(pageUrl || "");
@@ -883,6 +933,11 @@ async function handleCreatedDownload(downloadItem) {
     interceptedDownloadIds.delete(downloadItem.id);
     return;
   }
+
+  const observedFileName =
+    determinedFileName ||
+    deriveObservedFileNameFromHeaders(transaction?.responseHeaders) ||
+    deriveDownloadItemFileName(downloadItem);
 
   const sentToTrinity = await sendToTrinity({
     url: downloadItem.url,
@@ -893,13 +948,11 @@ async function handleCreatedDownload(downloadItem) {
     request_form_data: transaction?.requestBody?.formData ?? null,
     request_headers: transaction?.requestHeaders || null,
     page_url: pageUrl,
-    suggested_file_name: deriveDownloadItemFileName(downloadItem),
+    suggested_file_name: observedFileName || deriveDownloadItemFileName(downloadItem),
     mime_type: transaction?.responseHeaders?.["content-type"] || downloadItem.mime || null,
     response_status: transaction?.statusCode ?? null,
     response_headers: transaction?.responseHeaders || null,
-    observed_file_name:
-      deriveObservedFileNameFromHeaders(transaction?.responseHeaders) ||
-      deriveDownloadItemFileName(downloadItem),
+    observed_file_name: observedFileName,
     observed_content_type: transaction?.responseHeaders?.["content-type"] || downloadItem.mime || null,
     observed_content_length: transaction?.responseHeaders?.["content-length"]
       ? Number(transaction.responseHeaders["content-length"]) || null

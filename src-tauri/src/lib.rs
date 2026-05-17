@@ -23,7 +23,7 @@ use models::{
     AppSettings, AppStatus, AppUpdateInfo, AppUpdaterStatus, BrowserIntegrationSettings,
     CreateDownloadJobRequest, DownloadJob, DownloadProgressEvent, DownloadState,
     DownloadUrlMetadata, ExtensionDownloadRequest, ReorderDownloadJobRequest, TorrentIntakeFile,
-    TorrentIntakeMetadata, TorrentRuntimeStatus, UpdateAppSettingsRequest, UpdateDownloadPriorityRequest,
+    TorrentFileSelection, TorrentIntakeMetadata, TorrentRuntimeStatus, UpdateAppSettingsRequest, UpdateDownloadPriorityRequest,
     UpdateDownloadSpeedLimitRequest,
 };
 use notify::{event::ModifyKind, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -958,18 +958,25 @@ async fn resolve_torrent_intake(
 
     let result = match response {
         AddTorrentResponse::ListOnly(response) => {
+            let selected_files = response.only_files.clone();
             let files = response
                 .info
                 .iter_file_details()
                 .map_err(|error| error.to_string())?
-                .map(|details| {
+                .enumerate()
+                .map(|(index, details)| {
                     let name = details
                         .filename
                         .to_string()
                         .unwrap_or_else(|_| "<INVALID NAME>".to_string());
                     Ok(TorrentIntakeFile {
+                        index,
                         name,
                         length: details.len,
+                        selected: selected_files
+                            .as_ref()
+                            .map(|selected_files| selected_files.contains(&index))
+                            .unwrap_or(true),
                     })
                 })
                 .collect::<Result<Vec<_>, String>>()?;
@@ -1013,6 +1020,7 @@ async fn start_torrent_runtime(
     state: State<'_, AppState>,
     source: String,
     output_folder: Option<String>,
+    only_files: Option<Vec<usize>>,
 ) -> Result<TorrentRuntimeStatus, String> {
     let resolved_output_folder = output_folder
         .as_deref()
@@ -1023,13 +1031,43 @@ async fn start_torrent_runtime(
     std::fs::create_dir_all(&resolved_output_folder).map_err(|error| error.to_string())?;
     let status = state
         .torrent_manager
-        .start(&app, &source, resolved_output_folder)
+        .start(&app, &source, resolved_output_folder, only_files)
         .await
         .map_err(|error| error.to_string())?;
     reconcile_torrent_jobs(&app, &state).await?;
     app.emit("downloads-changed", ())
         .map_err(|error| error.to_string())?;
     Ok(status)
+}
+
+#[tauri::command]
+async fn get_torrent_file_selection(
+    state: State<'_, AppState>,
+    runtime_id: String,
+) -> Result<TorrentFileSelection, String> {
+    state
+        .torrent_manager
+        .file_selection(runtime_id.trim())
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn update_torrent_file_selection(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    runtime_id: String,
+    only_files: Vec<usize>,
+) -> Result<TorrentFileSelection, String> {
+    let selection = state
+        .torrent_manager
+        .update_file_selection(runtime_id.trim(), &only_files)
+        .await
+        .map_err(|error| error.to_string())?;
+    reconcile_torrent_jobs(&app, &state).await?;
+    app.emit("downloads-changed", ())
+        .map_err(|error| error.to_string())?;
+    Ok(selection)
 }
 
 #[tauri::command]
@@ -2849,11 +2887,13 @@ pub fn run() {
             inspect_download_url,
             resolve_torrent_intake,
             start_torrent_runtime,
+            get_torrent_file_selection,
             get_torrent_runtime_status,
             list_torrent_runtimes,
             pause_torrent_runtime,
             remove_torrent_runtime,
             resume_torrent_runtime,
+            update_torrent_file_selection,
             create_download_job,
             list_download_jobs,
             delete_download_job,

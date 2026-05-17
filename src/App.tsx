@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { emit, emitTo, listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -207,8 +207,10 @@ type TorrentIntakePayload = {
 };
 
 type TorrentIntakeFile = {
+  index: number;
   name: string;
   length: number;
+  selected: boolean;
 };
 
 type TorrentIntakeMetadata = {
@@ -216,6 +218,14 @@ type TorrentIntakeMetadata = {
   info_hash: string;
   output_folder: string;
   total_bytes: number;
+  files: TorrentIntakeFile[];
+};
+
+type TorrentFileSelection = {
+  runtime_id: string;
+  display_name: string;
+  file_count: number;
+  selected_count: number;
   files: TorrentIntakeFile[];
 };
 
@@ -237,6 +247,68 @@ type TorrentRuntimeStatus = {
   is_paused: boolean;
   error_message: string | null;
 };
+
+type TorrentFileTreeNode =
+  | {
+      kind: "folder";
+      name: string;
+      path: string;
+      children: TorrentFileTreeNode[];
+    }
+  | {
+      kind: "file";
+      file: TorrentIntakeFile;
+    };
+
+function splitTorrentPath(path: string) {
+  return path
+    .split(/[\\/]+/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+}
+
+function buildTorrentFileTree(files: TorrentIntakeFile[]): TorrentFileTreeNode[] {
+  const root: TorrentFileTreeNode[] = [];
+  const folderIndex = new Map<string, TorrentFileTreeNode & { kind: "folder" }>();
+  const sortedFiles = [...files].sort((left, right) => left.name.localeCompare(right.name));
+
+  for (const file of sortedFiles) {
+    const segments = splitTorrentPath(file.name);
+    if (segments.length <= 1) {
+      root.push({ kind: "file", file });
+      continue;
+    }
+
+    let currentChildren = root;
+    let currentPath = "";
+    for (const segment of segments.slice(0, -1)) {
+      currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+      let folder = folderIndex.get(currentPath);
+      if (!folder) {
+        folder = {
+          kind: "folder",
+          name: segment,
+          path: currentPath,
+          children: [],
+        };
+        folderIndex.set(currentPath, folder);
+        currentChildren.push(folder);
+      }
+      currentChildren = folder.children;
+    }
+
+    currentChildren.push({ kind: "file", file });
+  }
+
+  return root;
+}
+
+function collectTorrentNodeIndexes(node: TorrentFileTreeNode): number[] {
+  if (node.kind === "file") {
+    return [node.file.index];
+  }
+  return node.children.flatMap(collectTorrentNodeIndexes);
+}
 
 function normalizeDownloadJob(job: DownloadJob): DownloadJob {
   return {
@@ -570,9 +642,16 @@ function App() {
   const [isTorrentIntakeAnimatingOut, setIsTorrentIntakeAnimatingOut] = useState(false);
   const [isTorrentMetadataLoading, setIsTorrentMetadataLoading] = useState(false);
   const [torrentMetadata, setTorrentMetadata] = useState<TorrentIntakeMetadata | null>(null);
+  const [selectedTorrentFileIndexes, setSelectedTorrentFileIndexes] = useState<number[]>([]);
   const [torrentMetadataError, setTorrentMetadataError] = useState("");
   const [isTorrentRuntimeStarting, setIsTorrentRuntimeStarting] = useState(false);
   const [activeTorrentRuntime, setActiveTorrentRuntime] = useState<TorrentRuntimeStatus | null>(null);
+  const [detailsTorrentFileSelection, setDetailsTorrentFileSelection] =
+    useState<TorrentFileSelection | null>(null);
+  const [isDetailsTorrentFileSelectionLoading, setIsDetailsTorrentFileSelectionLoading] =
+    useState(false);
+  const [isDetailsTorrentFileSelectionSaving, setIsDetailsTorrentFileSelectionSaving] =
+    useState(false);
   const [torrentRuntimeError, setTorrentRuntimeError] = useState("");
   const [settings, setSettings] = useState<AppSettings>({
     theme: "Dark",
@@ -741,6 +820,7 @@ function App() {
   function openTorrentIntake(payload: TorrentIntakePayload) {
     setPendingTorrentIntake(payload);
     setTorrentMetadata(null);
+    setSelectedTorrentFileIndexes([]);
     setTorrentMetadataError("");
     setActiveTorrentRuntime(null);
     setTorrentRuntimeError("");
@@ -765,6 +845,7 @@ function App() {
       setIsTorrentIntakeAnimatingOut(false);
       setPendingTorrentIntake(null);
       setTorrentMetadata(null);
+      setSelectedTorrentFileIndexes([]);
       setTorrentMetadataError("");
       setActiveTorrentRuntime(null);
       setTorrentRuntimeError("");
@@ -1587,6 +1668,16 @@ function App() {
   }, [isTorrentIntakeOpen, pendingTorrentIntake]);
 
   useEffect(() => {
+    if (!torrentMetadata) {
+      setSelectedTorrentFileIndexes([]);
+      return;
+    }
+    setSelectedTorrentFileIndexes(
+      torrentMetadata.files.filter((file) => file.selected).map((file) => file.index),
+    );
+  }, [torrentMetadata]);
+
+  useEffect(() => {
     if (!isTorrentIntakeOpen || !activeTorrentRuntime?.id || activeTorrentRuntime.finished) {
       return;
     }
@@ -1616,6 +1707,40 @@ function App() {
     };
   }, [isTorrentIntakeOpen, activeTorrentRuntime?.id, activeTorrentRuntime?.finished]);
 
+  useEffect(() => {
+    const selectedTorrentJob = jobs.find((job) => job.id === detailsPanelJobId) ?? null;
+    if (selectedTorrentJob?.source_kind !== "torrent") {
+      setDetailsTorrentFileSelection(null);
+      setIsDetailsTorrentFileSelectionLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsDetailsTorrentFileSelectionLoading(true);
+    void invoke<TorrentFileSelection>("get_torrent_file_selection", {
+      runtimeId: selectedTorrentJob.id,
+    })
+      .then((selection) => {
+        if (!cancelled) {
+          setDetailsTorrentFileSelection(selection);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDetailsTorrentFileSelection(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsDetailsTorrentFileSelectionLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [detailsPanelJobId, jobs]);
+
   async function startTorrentRuntime() {
     if (!pendingTorrentIntake) {
       return;
@@ -1624,9 +1749,14 @@ function App() {
     setIsTorrentRuntimeStarting(true);
     setTorrentRuntimeError("");
     try {
+      const onlyFiles =
+        torrentMetadata && selectedTorrentFileIndexes.length < torrentMetadata.files.length
+          ? [...selectedTorrentFileIndexes].sort((left, right) => left - right)
+          : null;
       const status = await invoke<TorrentRuntimeStatus>("start_torrent_runtime", {
         source: pendingTorrentIntake.torrentFilePath ?? pendingTorrentIntake.sourceValue,
         outputFolder: pendingTorrentIntake.outputFolder || null,
+        onlyFiles,
       });
       setActiveTorrentRuntime(status);
       await refreshJobs();
@@ -1673,6 +1803,103 @@ function App() {
         typeof caughtError === "string" ? caughtError : "Could not resume torrent.",
       );
     }
+  }
+
+  function toggleTorrentIntakeFile(index: number) {
+    setSelectedTorrentFileIndexes((current) => {
+      const next = new Set(current);
+      if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return Array.from(next).sort((left, right) => left - right);
+    });
+  }
+
+  function selectAllTorrentIntakeFiles() {
+    if (!torrentMetadata) {
+      return;
+    }
+    setSelectedTorrentFileIndexes(torrentMetadata.files.map((file) => file.index));
+  }
+
+  function clearAllTorrentIntakeFiles() {
+    setSelectedTorrentFileIndexes([]);
+  }
+
+  async function updateTorrentRuntimeFileSelection(onlyFiles: number[]) {
+    if (!detailsPanelJobId) {
+      return;
+    }
+    setIsDetailsTorrentFileSelectionSaving(true);
+    setTorrentRuntimeError("");
+    try {
+      const selection = await invoke<TorrentFileSelection>("update_torrent_file_selection", {
+        runtimeId: detailsPanelJobId,
+        onlyFiles: [...onlyFiles].sort((left, right) => left - right),
+      });
+      setDetailsTorrentFileSelection(selection);
+      await refreshJobs();
+    } catch (caughtError) {
+      setTorrentRuntimeError(
+        typeof caughtError === "string"
+          ? caughtError
+          : "Could not update torrent file selection.",
+      );
+    } finally {
+      setIsDetailsTorrentFileSelectionSaving(false);
+    }
+  }
+
+  function renderTorrentFileTree(
+    nodes: TorrentFileTreeNode[],
+    selectedIndexes: Set<number>,
+    onToggle: (index: number) => void,
+    disabled: boolean,
+    depth = 0,
+  ): ReactNode[] {
+    return nodes.flatMap((node) => {
+      if (node.kind === "folder") {
+        const descendantIndexes = collectTorrentNodeIndexes(node);
+        const selectedCount = descendantIndexes.filter((index) => selectedIndexes.has(index)).length;
+        return [
+          <div
+            className="torrent-tree-row folder"
+            key={`folder-${node.path}`}
+            style={{ paddingLeft: `${depth * 16}px` }}
+          >
+            <span>{node.name}</span>
+            <small>
+              {selectedCount}/{descendantIndexes.length} selected
+            </small>
+          </div>,
+          ...renderTorrentFileTree(node.children, selectedIndexes, onToggle, disabled, depth + 1),
+        ];
+      }
+
+      return [
+        <label
+          className="torrent-tree-row file"
+          key={`file-${node.file.index}`}
+          style={{ paddingLeft: `${depth * 16}px` }}
+        >
+          <input
+            checked={selectedIndexes.has(node.file.index)}
+            disabled={disabled}
+            onChange={() => onToggle(node.file.index)}
+            type="checkbox"
+          />
+          <span title={node.file.name}>
+            {(() => {
+              const segments = splitTorrentPath(node.file.name);
+              return segments[segments.length - 1] ?? node.file.name;
+            })()}
+          </span>
+          <strong>{formatBytes(node.file.length)}</strong>
+        </label>,
+      ];
+    });
   }
 
   useEffect(() => {
@@ -4989,6 +5216,76 @@ function App() {
                         </strong>
                       </div>
                     </div>
+
+                    {detailsPanelJob.source_kind === "torrent" ? (
+                      <div className="details-subpanel">
+                        <div className="torrent-file-list-header">
+                          <strong>Torrent files</strong>
+                          {detailsTorrentFileSelection ? (
+                            <div className="torrent-file-list-actions">
+                              <button
+                                type="button"
+                                disabled={isDetailsTorrentFileSelectionSaving}
+                                onClick={() => {
+                                  void updateTorrentRuntimeFileSelection(
+                                    detailsTorrentFileSelection.files.map((file) => file.index),
+                                  );
+                                }}
+                              >
+                                Select all
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isDetailsTorrentFileSelectionSaving}
+                                onClick={() => {
+                                  void updateTorrentRuntimeFileSelection([]);
+                                }}
+                              >
+                                Clear all
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                        {isDetailsTorrentFileSelectionLoading ? (
+                          <p className="details-subpanel-note">Loading torrent file tree...</p>
+                        ) : detailsTorrentFileSelection ? (
+                          <>
+                            <p className="details-subpanel-note">
+                              {detailsTorrentFileSelection.selected_count} of{" "}
+                              {detailsTorrentFileSelection.file_count} files selected
+                            </p>
+                            <div className="torrent-file-tree details">
+                              {renderTorrentFileTree(
+                                buildTorrentFileTree(detailsTorrentFileSelection.files),
+                                new Set(
+                                  detailsTorrentFileSelection.files
+                                    .filter((file) => file.selected)
+                                    .map((file) => file.index),
+                                ),
+                                (index) => {
+                                  const next = new Set(
+                                    detailsTorrentFileSelection.files
+                                      .filter((file) => file.selected)
+                                      .map((file) => file.index),
+                                  );
+                                  if (next.has(index)) {
+                                    next.delete(index);
+                                  } else {
+                                    next.add(index);
+                                  }
+                                  void updateTorrentRuntimeFileSelection(Array.from(next));
+                                },
+                                isDetailsTorrentFileSelectionSaving,
+                              )}
+                            </div>
+                          </>
+                        ) : (
+                          <p className="details-subpanel-note">
+                            File selection is not available for this torrent runtime yet.
+                          </p>
+                        )}
+                      </div>
+                    ) : null}
                   </>
                 ) : (
                   <div className="details-empty-state">
@@ -5047,8 +5344,8 @@ function App() {
                       : "Trinity detected a torrent file and opened the torrent intake flow directly."}
                 </p>
                 <p className="torrent-intake-note">
-                  Trinity now resolves real torrent metadata here. The full torrent transfer engine
-                  is still the next implementation step.
+                  Trinity now resolves real torrent metadata here, lets you choose which files to
+                  include, and can hand that selection straight to the torrent runtime.
                 </p>
               </div>
 
@@ -5124,8 +5421,9 @@ function App() {
                     <p>{activeTorrentRuntime.error_message}</p>
                   ) : (
                     <p>
-                      Trinity is running this torrent through the torrent backend now. Main-list
-                      integration is the next step.
+                      Trinity is running this torrent through the torrent backend now. You can
+                      manage it from the main list and adjust file selection from the details
+                      panel.
                     </p>
                   )}
                 </div>
@@ -5165,6 +5463,10 @@ function App() {
                       <span>Files</span>
                       <strong>{torrentMetadata.files.length}</strong>
                     </div>
+                    <div className="torrent-intake-item">
+                      <span>Selected</span>
+                      <strong>{selectedTorrentFileIndexes.length}</strong>
+                    </div>
                     <div className="torrent-intake-item wide">
                       <span>Info hash</span>
                       <strong title={torrentMetadata.info_hash}>{torrentMetadata.info_hash}</strong>
@@ -5189,19 +5491,28 @@ function App() {
 
               {torrentMetadata?.files.length ? (
                 <div className="torrent-intake-panel">
-                  <strong>Files</strong>
-                  <div className="torrent-file-list">
-                    {torrentMetadata.files.slice(0, 8).map((file) => (
-                      <div className="torrent-file-row" key={`${file.name}-${file.length}`}>
-                        <span title={file.name}>{file.name}</span>
-                        <strong>{formatBytes(file.length)}</strong>
-                      </div>
-                    ))}
-                    {torrentMetadata.files.length > 8 ? (
-                      <div className="torrent-file-row more">
-                        <span>…and {torrentMetadata.files.length - 8} more</span>
-                      </div>
-                    ) : null}
+                  <div className="torrent-file-list-header">
+                    <strong>Files</strong>
+                    <div className="torrent-file-list-actions">
+                      <button type="button" onClick={() => selectAllTorrentIntakeFiles()}>
+                        Select all
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!selectedTorrentFileIndexes.length}
+                        onClick={() => clearAllTorrentIntakeFiles()}
+                      >
+                        Clear all
+                      </button>
+                    </div>
+                  </div>
+                  <div className="torrent-file-tree">
+                    {renderTorrentFileTree(
+                      buildTorrentFileTree(torrentMetadata.files),
+                      new Set(selectedTorrentFileIndexes),
+                      toggleTorrentIntakeFile,
+                      isTorrentRuntimeStarting,
+                    )}
                   </div>
                 </div>
               ) : null}
@@ -5252,7 +5563,12 @@ function App() {
                 ) : (
                   <button
                     className="primary-action"
-                    disabled={isTorrentMetadataLoading || isTorrentRuntimeStarting || !!torrentMetadataError}
+                    disabled={
+                      isTorrentMetadataLoading ||
+                      isTorrentRuntimeStarting ||
+                      !!torrentMetadataError ||
+                      (!!torrentMetadata && selectedTorrentFileIndexes.length === 0)
+                    }
                     type="button"
                     onClick={() => {
                       void startTorrentRuntime();

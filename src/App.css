@@ -368,6 +368,19 @@ button {
   font-weight: 500;
 }
 
+.details-subpanel {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #40454a;
+  background: #202427;
+}
+
+.details-subpanel-note {
+  color: #a9b8c4;
+  font-size: 12px;
+}
+
 .details-empty-state {
   display: grid;
   place-content: center;
@@ -873,7 +886,8 @@ button {
 .theme-midnight .update-found-summary-item,
 .theme-midnight .update-found-panel,
 .theme-midnight .torrent-intake-item,
-.theme-midnight .torrent-intake-card {
+.theme-midnight .torrent-intake-card,
+.theme-midnight .details-subpanel {
   background: #09131d;
 }
 
@@ -1703,34 +1717,84 @@ button {
   margin-top: 2px;
 }
 
-.torrent-file-list {
-  display: grid;
-  gap: 6px;
-}
-
-.torrent-file-row {
+.torrent-file-list-header {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.torrent-file-list-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.torrent-file-list-actions button {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #7fc8ff;
+  font-size: 12px;
+}
+
+.torrent-file-list-actions button:disabled {
+  color: #697782;
+}
+
+.torrent-file-tree {
+  display: grid;
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.torrent-file-tree.details {
+  max-height: 180px;
+}
+
+.torrent-tree-row {
+  display: grid;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
   color: #dbe4ec;
   font-size: 12px;
 }
 
-.torrent-file-row span {
+.torrent-tree-row.folder {
+  grid-template-columns: minmax(0, 1fr) auto;
+  color: #9fb2c2;
+  font-weight: 600;
+}
+
+.torrent-tree-row.folder small {
+  color: #7f919e;
+  font-size: 11px;
+}
+
+.torrent-tree-row.file {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.torrent-tree-row.file input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+
+.torrent-tree-row.file span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.torrent-file-row strong {
+.torrent-tree-row.file strong {
   color: #f4f8fb;
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
-}
-
-.torrent-file-row.more {
-  color: #9fb2c2;
 }
 
 .add-form label {

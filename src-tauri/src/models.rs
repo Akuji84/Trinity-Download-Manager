@@ -131,8 +131,10 @@ pub struct DownloadUrlMetadata {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TorrentIntakeFile {
+    pub index: usize,
     pub name: String,
     pub length: u64,
+    pub selected: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -141,6 +143,15 @@ pub struct TorrentIntakeMetadata {
     pub info_hash: String,
     pub output_folder: String,
     pub total_bytes: u64,
+    pub files: Vec<TorrentIntakeFile>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TorrentFileSelection {
+    pub runtime_id: String,
+    pub display_name: String,
+    pub file_count: usize,
+    pub selected_count: usize,
     pub files: Vec<TorrentIntakeFile>,
 }
 

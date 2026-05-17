@@ -14,6 +14,7 @@ use tokio::sync::Mutex;
 use url::Url;
 
 use crate::models::TorrentRuntimeStatus;
+use crate::models::{TorrentFileSelection, TorrentIntakeFile};
 
 struct TorrentRuntime {
     runtime_id: String,
@@ -43,6 +44,7 @@ impl TorrentManager {
         app: &AppHandle,
         source: &str,
         output_folder: PathBuf,
+        only_files: Option<Vec<usize>>,
     ) -> anyhow::Result<TorrentRuntimeStatus> {
         let session = self.ensure_session(app, output_folder.clone()).await?;
         let source = source.trim();
@@ -60,6 +62,7 @@ impl TorrentManager {
                 add,
                 Some(AddTorrentOptions {
                     overwrite: true,
+                    only_files,
                     output_folder: Some(output_folder.to_string_lossy().to_string()),
                     ..Default::default()
                 }),
@@ -169,6 +172,36 @@ impl TorrentManager {
             .context("error removing torrent runtime")?;
         self.runtimes.lock().await.remove(runtime_id);
         Ok(())
+    }
+
+    pub async fn file_selection(&self, runtime_id: &str) -> anyhow::Result<TorrentFileSelection> {
+        self.sync_runtimes(None).await?;
+        let runtimes = self.runtimes.lock().await;
+        let runtime = runtimes
+            .get(runtime_id)
+            .with_context(|| format!("torrent runtime {runtime_id} was not found"))?;
+        file_selection_from_runtime(runtime)
+    }
+
+    pub async fn update_file_selection(
+        &self,
+        runtime_id: &str,
+        only_files: &[usize],
+    ) -> anyhow::Result<TorrentFileSelection> {
+        let session = self
+            .session
+            .lock()
+            .await
+            .clone()
+            .context("torrent session is not active")?;
+        let runtimes = self.runtimes.lock().await;
+        let runtime = runtimes
+            .get(runtime_id)
+            .with_context(|| format!("torrent runtime {runtime_id} was not found"))?;
+        session
+            .update_only_files(&runtime.handle, &HashSet::from_iter(only_files.iter().copied()))
+            .await?;
+        file_selection_from_runtime(runtime)
     }
 
     async fn ensure_session(
@@ -306,4 +339,39 @@ fn status_from_runtime(runtime: &TorrentRuntime) -> TorrentRuntimeStatus {
         is_paused: runtime.handle.is_paused(),
         error_message: stats.error,
     }
+}
+
+fn file_selection_from_runtime(runtime: &TorrentRuntime) -> anyhow::Result<TorrentFileSelection> {
+    let selected = runtime.handle.only_files();
+    let display_name = runtime
+        .handle
+        .name()
+        .unwrap_or_else(|| "Torrent".to_string());
+    let files = runtime
+        .handle
+        .with_metadata(|metadata| {
+            metadata
+                .file_infos
+                .iter()
+                .enumerate()
+                .map(|(index, file_info)| TorrentIntakeFile {
+                    index,
+                    name: file_info.relative_filename.to_string_lossy().replace('\\', "/"),
+                    length: file_info.len,
+                    selected: selected
+                        .as_ref()
+                        .map(|only_files| only_files.contains(&index))
+                        .unwrap_or(true),
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let selected_count = files.iter().filter(|file| file.selected).count();
+    Ok(TorrentFileSelection {
+        runtime_id: runtime.runtime_id.clone(),
+        display_name,
+        file_count: files.len(),
+        selected_count,
+        files,
+    })
 }

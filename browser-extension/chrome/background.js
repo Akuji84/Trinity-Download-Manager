@@ -9,6 +9,7 @@ const CONTEXT_MENU_IDS = {
   page: "trinity-download-page",
 };
 const interceptedDownloadIds = new Set();
+const suppressedChromeDownloadIds = new Set();
 const REQUEST_METADATA_WINDOW_MS = 15000;
 const DOWNLOAD_TRANSACTION_WINDOW_MS = 30000;
 const FILENAME_DETERMINATION_TIMEOUT_MS = 2500;
@@ -81,6 +82,16 @@ chrome.webRequest.onResponseStarted.addListener(
 // can cancel the download while it is paused, preventing Chrome from writing/opening the file.
 // A safety timeout releases the hold if handleCreatedDownload never picks it up.
 chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
+  if (suppressedChromeDownloadIds.has(downloadItem.id)) {
+    suppressedChromeDownloadIds.delete(downloadItem.id);
+    try {
+      suggest();
+    } catch {
+      // ignore
+    }
+    return;
+  }
+
   const basename = downloadItem.filename
     ? downloadItem.filename.replace(/\\/g, "/").split("/").filter(Boolean).at(-1) || null
     : null;
@@ -704,6 +715,34 @@ function deriveObservedFileNameFromHeaders(responseHeaders) {
   return null;
 }
 
+function isTorrentMimeType(value) {
+  const normalizedValue = String(value || "").trim().toLowerCase();
+  if (!normalizedValue) {
+    return false;
+  }
+
+  return (
+    normalizedValue.startsWith("application/x-bittorrent") ||
+    normalizedValue.startsWith("application/bittorrent") ||
+    normalizedValue.includes("bittorrent")
+  );
+}
+
+function isTorrentFileName(value) {
+  return String(value || "").trim().toLowerCase().endsWith(".torrent");
+}
+
+function isLikelyTorrentDownload(downloadItem, transaction, observedFileName) {
+  return (
+    isTorrentFileName(observedFileName) ||
+    isTorrentFileName(downloadItem?.filename) ||
+    isTorrentFileName(downloadItem?.finalUrl) ||
+    isTorrentFileName(downloadItem?.url) ||
+    isTorrentMimeType(transaction?.responseHeaders?.["content-type"]) ||
+    isTorrentMimeType(downloadItem?.mime)
+  );
+}
+
 function extractReplayHeaders(requestHeaders) {
   if (!Array.isArray(requestHeaders) || requestHeaders.length === 0) {
     return null;
@@ -945,6 +984,67 @@ async function handleCreatedDownload(downloadItem) {
   // We are intercepting this download. Mark it so concurrent onCreated calls are ignored.
   interceptedDownloadIds.add(downloadItem.id);
 
+  const transaction = findDownloadTransactionForItem(downloadItem);
+  const transactionObservedFileName = deriveObservedFileNameFromHeaders(transaction?.responseHeaders);
+  const quickObservedFileName =
+    transactionObservedFileName ||
+    deriveDownloadItemFileName(downloadItem);
+
+  // Torrent files should never get far enough for Chrome to show Save As.
+  // We already have enough metadata from the URL/headers to hand them to Trinity.
+  if (isLikelyTorrentDownload(downloadItem, transaction, quickObservedFileName)) {
+    const pageUrl = await resolveDownloadPageUrl(downloadItem);
+    try {
+      suppressedChromeDownloadIds.add(downloadItem.id);
+      await chrome.downloads.cancel(downloadItem.id);
+    } catch (error) {
+      console.warn("Could not cancel the browser torrent download before Trinity handoff", error);
+    }
+    releasePendingFilenameHold(downloadItem.id);
+
+    const sentToTrinity = await sendToTrinity({
+      url: downloadItem.url,
+      final_url: downloadItem.finalUrl || downloadItem.url,
+      request_method: transaction?.method || "GET",
+      request_body: transaction?.requestBody?.value ?? null,
+      request_body_encoding: transaction?.requestBody?.encoding ?? null,
+      request_form_data: transaction?.requestBody?.formData ?? null,
+      request_headers: transaction?.requestHeaders || null,
+      page_url: pageUrl,
+      suggested_file_name: quickObservedFileName || deriveDownloadItemFileName(downloadItem),
+      mime_type: transaction?.responseHeaders?.["content-type"] || downloadItem.mime || null,
+      response_status: transaction?.statusCode ?? null,
+      response_headers: transaction?.responseHeaders || null,
+      observed_file_name: quickObservedFileName,
+      observed_content_type: transaction?.responseHeaders?.["content-type"] || downloadItem.mime || null,
+      observed_content_length: transaction?.responseHeaders?.["content-length"]
+        ? Number(transaction.responseHeaders["content-length"]) || null
+        : null,
+      observed_accept_ranges: transaction?.responseHeaders?.["accept-ranges"] || null,
+      browser_observed: true,
+      referrer: downloadItem.referrer || pageUrl || null,
+      browser: "chrome",
+      user_agent: navigator.userAgent,
+      cookies: null,
+      output_folder: null,
+    });
+
+    if (sentToTrinity) {
+      try {
+        await chrome.downloads.erase({ id: downloadItem.id });
+      } catch (error) {
+        console.warn("Could not erase the canceled browser torrent download", error);
+      }
+      await showBridgeBadge("CAP", "#145d29");
+    }
+
+    setTimeout(() => {
+      interceptedDownloadIds.delete(downloadItem.id);
+      suppressedChromeDownloadIds.delete(downloadItem.id);
+    }, 5000);
+    return;
+  }
+
   // Wait for onDeterminingFilename — Chrome is paused here, no bytes written to disk yet.
   // We cancel while Chrome is paused so the file is never saved or opened.
   const [filenameResult, pageUrl] = await Promise.all([
@@ -974,10 +1074,9 @@ async function handleCreatedDownload(downloadItem) {
     try { filenameResult.suggest({ filename: downloadItem.filename || "", conflictAction: "uniquify" }); } catch { /* ignore */ }
   }
 
-  const transaction = findDownloadTransactionForItem(downloadItem);
   const observedFileName =
     filenameResult?.basename ||
-    deriveObservedFileNameFromHeaders(transaction?.responseHeaders) ||
+    transactionObservedFileName ||
     deriveDownloadItemFileName(downloadItem);
 
   const sentToTrinity = await sendToTrinity({
@@ -1016,7 +1115,10 @@ async function handleCreatedDownload(downloadItem) {
     await showBridgeBadge("CAP", "#145d29");
   }
 
-  setTimeout(() => interceptedDownloadIds.delete(downloadItem.id), 5000);
+  setTimeout(() => {
+    interceptedDownloadIds.delete(downloadItem.id);
+    suppressedChromeDownloadIds.delete(downloadItem.id);
+  }, 5000);
 }
 
 function shouldConsiderDownload(downloadItem) {

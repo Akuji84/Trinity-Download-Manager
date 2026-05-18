@@ -11,6 +11,8 @@ const CONTEXT_MENU_IDS = {
 const interceptedDownloadIds = new Set();
 const RECENT_CAPTURE_WINDOW_MS = 8000;
 const recentCapturedUrls = new Map();
+const ARMED_CAPTURE_WINDOW_MS = 5000;
+const armedCapturesByTab = new Map();
 
 // Cached bridge status so onCreated can cancel immediately without a network round-trip
 let cachedBridgeAlive = false;
@@ -68,7 +70,30 @@ chrome.downloads.onCreated.addListener((downloadItem) => {
   });
 });
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "get-current-tab-id") {
+    sendResponse({ tabId: Number.isInteger(sender?.tab?.id) ? sender.tab.id : null });
+    return false;
+  }
+
+  if (message?.type === "arm-download-capture") {
+    const tabId = Number.isInteger(message.tabId) ? message.tabId : null;
+    if (tabId != null) {
+      armDownloadCapture(tabId, message.pageUrl ?? null);
+      sendResponse({ ok: true });
+    } else {
+      sendResponse({ ok: false });
+    }
+    return false;
+  }
+
+  if (message?.type === "consume-armed-download-capture") {
+    const tabId = Number.isInteger(message.tabId) ? message.tabId : null;
+    const armed = tabId != null ? consumeArmedDownloadCapture(tabId) : null;
+    sendResponse({ armed });
+    return false;
+  }
+
   if (message?.type === "capture-download-click") {
     captureDownloadClick(message.payload)
       .then((result) => sendResponse(result))
@@ -504,6 +529,34 @@ function isHttpUrl(value) {
     return parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:";
   } catch {
     return false;
+  }
+}
+
+function armDownloadCapture(tabId, pageUrl) {
+  cleanupArmedCaptures();
+  armedCapturesByTab.set(tabId, {
+    pageUrl: typeof pageUrl === "string" ? pageUrl : null,
+    expiresAt: Date.now() + ARMED_CAPTURE_WINDOW_MS,
+  });
+}
+
+function consumeArmedDownloadCapture(tabId) {
+  cleanupArmedCaptures();
+  const armed = armedCapturesByTab.get(tabId);
+  if (!armed || armed.expiresAt <= Date.now()) {
+    armedCapturesByTab.delete(tabId);
+    return null;
+  }
+  armedCapturesByTab.delete(tabId);
+  return armed;
+}
+
+function cleanupArmedCaptures() {
+  const now = Date.now();
+  for (const [tabId, armed] of armedCapturesByTab.entries()) {
+    if (!armed || armed.expiresAt <= now) {
+      armedCapturesByTab.delete(tabId);
+    }
   }
 }
 

@@ -6,12 +6,15 @@
 
   const PAGE_CAPTURE_EVENT = "trinity-page-download-capture";
   const PAGE_CAPTURE_RESULT_EVENT = "trinity-page-download-result";
+  const PAGE_PIPELINE_CAPTURE_EVENT = "trinity-page-pipeline-capture";
   const DOWNLOAD_HINT_PATTERN =
     /(download|installer|install|setup|exe|msi|zip|rar|7z|pkg|dmg|apk|iso|torrent)/i;
 
   const originalWindowOpen = window.open.bind(window);
   const originalAnchorClick = HTMLAnchorElement.prototype.click;
   const originalFormSubmit = HTMLFormElement.prototype.submit;
+  const originalFetch = window.fetch ? window.fetch.bind(window) : null;
+  const originalCreateObjectUrl = URL.createObjectURL ? URL.createObjectURL.bind(URL) : null;
   const originalLocationAssign = window.location.assign.bind(window.location);
   const originalLocationReplace = window.location.replace.bind(window.location);
 
@@ -123,6 +126,30 @@
     );
   };
 
+  if (originalFetch) {
+    window.fetch = async function patchedFetch(input, init) {
+      const response = await originalFetch(input, init);
+      tryCaptureFromResponse(input, response);
+      return response;
+    };
+  }
+
+  if (originalCreateObjectUrl) {
+    URL.createObjectURL = function patchedCreateObjectURL(object) {
+      const objectUrl = originalCreateObjectUrl(object);
+      if (object instanceof Blob && isTorrentLikeBlob(object)) {
+        emitPipelineCapture({
+          url: objectUrl,
+          page_url: window.location.href,
+          suggested_file_name: null,
+          mime_type: object.type || "application/x-bittorrent",
+          referrer: window.location.href,
+        });
+      }
+      return objectUrl;
+    };
+  }
+
   function requestCapture(payload, onResult) {
     if (!payload?.url) {
       onResult(false);
@@ -199,6 +226,14 @@
     return DOWNLOAD_HINT_PATTERN.test(combinedText);
   }
 
+  function emitPipelineCapture(payload) {
+    window.dispatchEvent(
+      new CustomEvent(PAGE_PIPELINE_CAPTURE_EVENT, {
+        detail: { payload },
+      }),
+    );
+  }
+
   function shouldCaptureUrl(url, target) {
     const absoluteUrl = toAbsoluteSupportedUrl(url);
     if (!absoluteUrl) {
@@ -207,6 +242,62 @@
 
     const combinedText = [String(url || ""), String(target || "")].join(" ").trim();
     return isMagnetUrl(absoluteUrl) || DOWNLOAD_HINT_PATTERN.test(combinedText) || isLikelyBinaryUrl(absoluteUrl);
+  }
+
+  function tryCaptureFromResponse(input, response) {
+    if (!response) {
+      return;
+    }
+
+    const responseUrl = response.url || deriveRequestUrl(input);
+    const contentType = String(response.headers?.get?.("content-type") || "");
+    const disposition = String(response.headers?.get?.("content-disposition") || "");
+    const looksTorrent =
+      isMagnetUrl(responseUrl) ||
+      /\.torrent(?:$|[?#])/i.test(String(responseUrl || "")) ||
+      /application\/x-bittorrent/i.test(contentType) ||
+      /\.torrent/i.test(disposition);
+
+    if (!looksTorrent) {
+      return;
+    }
+
+    emitPipelineCapture({
+      url: responseUrl,
+      page_url: window.location.href,
+      suggested_file_name: deriveSuggestedFileName(responseUrl) || deriveFilenameFromDisposition(disposition),
+      mime_type: contentType || null,
+      referrer: window.location.href,
+    });
+  }
+
+  function deriveRequestUrl(input) {
+    if (typeof input === "string") {
+      return toAbsoluteSupportedUrl(input);
+    }
+    if (input && typeof input.url === "string") {
+      return toAbsoluteSupportedUrl(input.url);
+    }
+    return null;
+  }
+
+  function deriveFilenameFromDisposition(disposition) {
+    const utf8Match = disposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+    if (utf8Match?.[1]) {
+      try {
+        return decodeURIComponent(utf8Match[1]);
+      } catch {
+        return utf8Match[1];
+      }
+    }
+
+    const plainMatch = disposition.match(/filename\s*=\s*\"?([^\";]+)\"?/i);
+    return plainMatch?.[1] || null;
+  }
+
+  function isTorrentLikeBlob(blob) {
+    const type = String(blob?.type || "");
+    return /application\/x-bittorrent/i.test(type);
   }
 
   function isLikelyBinaryUrl(value) {

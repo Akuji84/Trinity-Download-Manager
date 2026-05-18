@@ -2,8 +2,10 @@ const DOWNLOAD_HINT_PATTERN =
   /(download|installer|install|setup|exe|msi|zip|rar|7z|pkg|dmg|apk|iso|torrent)/i;
 const PAGE_CAPTURE_EVENT = "trinity-page-download-capture";
 const PAGE_CAPTURE_RESULT_EVENT = "trinity-page-download-result";
+const PAGE_PIPELINE_CAPTURE_EVENT = "trinity-page-pipeline-capture";
 
 injectPageHook();
+let currentTabIdPromise = null;
 
 window.addEventListener(PAGE_CAPTURE_EVENT, (event) => {
   const detail = event.detail;
@@ -34,6 +36,39 @@ window.addEventListener(PAGE_CAPTURE_EVENT, (event) => {
   );
 });
 
+window.addEventListener(PAGE_PIPELINE_CAPTURE_EVENT, async (event) => {
+  const detail = event.detail;
+  if (!detail?.payload?.url) {
+    return;
+  }
+
+  const tabId = await getCurrentTabId();
+  if (!Number.isInteger(tabId)) {
+    return;
+  }
+
+  chrome.runtime.sendMessage(
+    {
+      type: "consume-armed-download-capture",
+      tabId,
+    },
+    (response) => {
+      if (chrome.runtime.lastError || !response?.armed) {
+        return;
+      }
+
+      chrome.runtime.sendMessage({
+        type: "capture-download-click",
+        payload: {
+          ...detail.payload,
+          page_url: detail.payload.page_url ?? response.armed.pageUrl ?? window.location.href,
+          referrer: detail.payload.referrer ?? response.armed.pageUrl ?? window.location.href,
+        },
+      });
+    },
+  );
+});
+
 document.addEventListener(
   "click",
   (event) => {
@@ -47,6 +82,11 @@ document.addEventListener(
 
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
       return;
+    }
+
+    const intentCandidate = findIntentCandidate(event);
+    if (intentCandidate && shouldArmCandidate(intentCandidate)) {
+      armDownloadCapture();
     }
 
     const candidate = findDownloadCandidate(event);
@@ -87,6 +127,21 @@ document.addEventListener(
   true,
 );
 
+document.addEventListener(
+  "submit",
+  (event) => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement)) {
+      return;
+    }
+
+    if (shouldArmCandidate(form)) {
+      armDownloadCapture();
+    }
+  },
+  true,
+);
+
 function injectPageHook() {
   const script = document.createElement("script");
   script.src = chrome.runtime.getURL("page-hook.js");
@@ -117,6 +172,28 @@ function findDownloadCandidate(event) {
       return dataElement;
     }
   }
+  return null;
+}
+
+function findIntentCandidate(event) {
+  const composedPath = typeof event?.composedPath === "function" ? event.composedPath() : null;
+  const candidates = Array.isArray(composedPath) && composedPath.length > 0
+    ? composedPath
+    : [event?.target];
+
+  for (const node of candidates) {
+    if (!(node instanceof Element)) {
+      continue;
+    }
+
+    const actionable = node.closest(
+      "a[href],button,[role='button'],input[type='button'],input[type='submit'],form,[data-download-url],[data-url],[data-href]",
+    );
+    if (actionable) {
+      return actionable;
+    }
+  }
+
   return null;
 }
 
@@ -186,6 +263,38 @@ function deriveSuggestedFileName(url, candidate) {
   }
 }
 
+async function armDownloadCapture() {
+  try {
+    const tabId = await getCurrentTabId();
+    if (!Number.isInteger(tabId)) {
+      return;
+    }
+
+    chrome.runtime.sendMessage({
+      type: "arm-download-capture",
+      tabId,
+      pageUrl: window.location.href,
+    });
+  } catch {
+    // ignore
+  }
+}
+
+function getCurrentTabId() {
+  if (!currentTabIdPromise) {
+    currentTabIdPromise = new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "get-current-tab-id" }, (response) => {
+        if (chrome.runtime.lastError) {
+          resolve(null);
+          return;
+        }
+        resolve(Number.isInteger(response?.tabId) ? response.tabId : null);
+      });
+    });
+  }
+  return currentTabIdPromise;
+}
+
 function deriveCandidateUrl(candidate) {
   if (candidate instanceof HTMLAnchorElement) {
     return candidate.href;
@@ -224,4 +333,29 @@ function isLikelyBinaryUrl(value) {
   } catch {
     return false;
   }
+}
+
+function shouldArmCandidate(candidate) {
+  if (!(candidate instanceof Element)) {
+    return false;
+  }
+
+  const explicitUrl = deriveCandidateUrl(candidate);
+  if (explicitUrl && (isMagnetUrl(explicitUrl) || isLikelyBinaryUrl(explicitUrl))) {
+    return true;
+  }
+
+  const combinedText = [
+    candidate.textContent || "",
+    candidate.getAttribute?.("aria-label") || "",
+    candidate.getAttribute?.("title") || "",
+    candidate.getAttribute?.("value") || "",
+    candidate.getAttribute?.("action") || "",
+    candidate.className || "",
+    candidate.id || "",
+  ]
+    .join(" ")
+    .trim();
+
+  return DOWNLOAD_HINT_PATTERN.test(combinedText);
 }

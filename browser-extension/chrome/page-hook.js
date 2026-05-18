@@ -12,11 +12,16 @@
 
   const originalWindowOpen = window.open.bind(window);
   const originalAnchorClick = HTMLAnchorElement.prototype.click;
+  const originalAnchorDispatchEvent = HTMLAnchorElement.prototype.dispatchEvent;
   const originalFormSubmit = HTMLFormElement.prototype.submit;
   const originalFetch = window.fetch ? window.fetch.bind(window) : null;
   const originalCreateObjectUrl = URL.createObjectURL ? URL.createObjectURL.bind(URL) : null;
+  const originalXhrOpen = XMLHttpRequest.prototype.open;
+  const originalXhrSend = XMLHttpRequest.prototype.send;
   const originalLocationAssign = window.location.assign.bind(window.location);
   const originalLocationReplace = window.location.replace.bind(window.location);
+  const blobSourceByUrl = new Map();
+  const xhrRequestUrlByInstance = new WeakMap();
 
   window.open = function patchedWindowOpen(url, target, features) {
     if (!shouldCaptureUrl(url, target)) {
@@ -42,6 +47,16 @@
   };
 
   HTMLAnchorElement.prototype.click = function patchedAnchorClick() {
+    const blobPayload = deriveBlobCapturePayload(this);
+    if (blobPayload) {
+      requestCapture(blobPayload, (captured) => {
+        if (!captured) {
+          originalAnchorClick.call(this);
+        }
+      });
+      return;
+    }
+
     if (!shouldCaptureAnchor(this)) {
       return originalAnchorClick.call(this);
     }
@@ -60,6 +75,20 @@
         }
       },
     );
+  };
+
+  HTMLAnchorElement.prototype.dispatchEvent = function patchedAnchorDispatchEvent(event) {
+    const blobPayload = deriveBlobCapturePayload(this);
+    if (blobPayload && event?.type === "click") {
+      requestCapture(blobPayload, (captured) => {
+        if (!captured) {
+          originalAnchorDispatchEvent.call(this, event);
+        }
+      });
+      return true;
+    }
+
+    return originalAnchorDispatchEvent.call(this, event);
   };
 
   HTMLFormElement.prototype.submit = function patchedFormSubmit() {
@@ -134,17 +163,46 @@
     };
   }
 
+  XMLHttpRequest.prototype.open = function patchedXhrOpen(method, url, async, user, password) {
+    xhrRequestUrlByInstance.set(this, toAbsoluteSupportedUrl(url));
+    return originalXhrOpen.call(this, method, url, async, user, password);
+  };
+
+  XMLHttpRequest.prototype.send = function patchedXhrSend(body) {
+    const handleReadyState = () => {
+      if (this.readyState !== 4) {
+        return;
+      }
+      tryCaptureFromXhr(this, xhrRequestUrlByInstance.get(this));
+      this.removeEventListener("readystatechange", handleReadyState);
+    };
+    this.addEventListener("readystatechange", handleReadyState);
+    return originalXhrSend.call(this, body);
+  };
+
   if (originalCreateObjectUrl) {
     URL.createObjectURL = function patchedCreateObjectURL(object) {
       const objectUrl = originalCreateObjectUrl(object);
       if (object instanceof Blob && isTorrentLikeBlob(object)) {
-        emitPipelineCapture({
-          url: objectUrl,
-          page_url: window.location.href,
-          suggested_file_name: null,
-          mime_type: object.type || "application/x-bittorrent",
-          referrer: window.location.href,
-        });
+        const pendingSource = window.__TRINITY_LAST_TORRENT_SOURCE__ || null;
+        if (pendingSource?.url) {
+          blobSourceByUrl.set(objectUrl, {
+            url: pendingSource.url,
+            page_url: window.location.href,
+            suggested_file_name: pendingSource.suggested_file_name || null,
+            mime_type: pendingSource.mime_type || object.type || "application/x-bittorrent",
+            referrer: window.location.href,
+          });
+          delete window.__TRINITY_LAST_TORRENT_SOURCE__;
+        } else {
+          emitPipelineCapture({
+            url: objectUrl,
+            page_url: window.location.href,
+            suggested_file_name: null,
+            mime_type: object.type || "application/x-bittorrent",
+            referrer: window.location.href,
+          });
+        }
       }
       return objectUrl;
     };
@@ -262,13 +320,61 @@
       return;
     }
 
-    emitPipelineCapture({
+    rememberTorrentSource({
       url: responseUrl,
       page_url: window.location.href,
       suggested_file_name: deriveSuggestedFileName(responseUrl) || deriveFilenameFromDisposition(disposition),
       mime_type: contentType || null,
       referrer: window.location.href,
     });
+  }
+
+  function tryCaptureFromXhr(xhr, requestUrl) {
+    const contentType = String(xhr.getResponseHeader?.("content-type") || "");
+    const disposition = String(xhr.getResponseHeader?.("content-disposition") || "");
+    const responseUrl = xhr.responseURL || requestUrl;
+    const looksTorrent =
+      isMagnetUrl(responseUrl) ||
+      /\.torrent(?:$|[?#])/i.test(String(responseUrl || "")) ||
+      /application\/x-bittorrent/i.test(contentType) ||
+      /\.torrent/i.test(disposition);
+
+    if (!looksTorrent) {
+      return;
+    }
+
+    rememberTorrentSource({
+      url: responseUrl,
+      page_url: window.location.href,
+      suggested_file_name: deriveSuggestedFileName(responseUrl) || deriveFilenameFromDisposition(disposition),
+      mime_type: contentType || null,
+      referrer: window.location.href,
+    });
+  }
+
+  function rememberTorrentSource(payload) {
+    window.__TRINITY_LAST_TORRENT_SOURCE__ = payload;
+    emitPipelineCapture(payload);
+  }
+
+  function deriveBlobCapturePayload(anchor) {
+    if (!(anchor instanceof HTMLAnchorElement)) {
+      return null;
+    }
+
+    if (!anchor.href || !anchor.href.startsWith("blob:")) {
+      return null;
+    }
+
+    const payload = blobSourceByUrl.get(anchor.href);
+    if (!payload?.url) {
+      return null;
+    }
+
+    return {
+      ...payload,
+      suggested_file_name: anchor.download || payload.suggested_file_name || null,
+    };
   }
 
   function deriveRequestUrl(input) {

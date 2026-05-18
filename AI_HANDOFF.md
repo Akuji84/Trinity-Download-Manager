@@ -1297,3 +1297,25 @@ Keep shrinking the remaining legacy resolver/re-discovery logic so browser-obser
 - **`handleCreatedDownload`**: Now runs `resolveDownloadPageUrl` and `waitForDeterminedFilename`
   concurrently via `Promise.all`, then uses the determined filename as the primary source for both
   `suggested_file_name` and `observed_file_name` sent to Trinity.
+
+## 2026-05-17 - Restore the old known-good pre-capture browser takeover path
+
+- **This is the correct architecture for the extension. Do not switch it back.**
+- The browser extension works reliably when Trinity takes the download **before Chrome owns it**.
+  That means `content.js` and `page-hook.js` must actively pre-capture direct clicks and
+  programmatic download triggers, send them to `capture-download-click`, and only fall back to the
+  browser if Trinity capture explicitly fails.
+- The later browser-owned model (`chrome.downloads.onCreated` / `onDeterminingFilename` as the
+  primary takeover path) is too late for some flows, especially `.torrent` downloads, because
+  Chrome may already have opened native Save As / install UI by the time the extension tries to
+  cancel it.
+- Restored the older known-good model from commit `8aeadc8`:
+  - `browser-extension/chrome/content.js` is active again and pre-captures likely download clicks
+  - `browser-extension/chrome/page-hook.js` is active again and pre-captures programmatic page
+    download triggers
+  - `browser-extension/chrome/background.js` treats `capture-download-click` as the primary
+    handoff path and tracks `recentCapturedUrls` so any later browser download event is only
+    duplicate cleanup
+- **Rule going forward:** `chrome.downloads.onCreated` is a cleanup/backstop path only. It must not
+  become the main takeover architecture again. If someone is tempted to move Trinity back to a
+  browser-managed-first model, treat that as a regression risk, not an improvement.

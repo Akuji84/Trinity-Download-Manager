@@ -175,7 +175,7 @@ async function sendTabToTrinity(tab) {
 }
 
 async function sendToTrinity(payload) {
-  if (!isHttpUrl(payload.url)) {
+  if (!isSupportedBridgeUrl(payload.url)) {
     await showBridgeBadge("URL?", "#7a3f00");
     return false;
   }
@@ -397,7 +397,7 @@ async function toggleSiteExclusion(siteHost) {
 }
 
 async function captureDownloadClick(payload) {
-  if (!payload || !isHttpUrl(payload.url)) {
+  if (!payload || !isSupportedBridgeUrl(payload.url)) {
     return { captured: false, fallbackToBrowser: true };
   }
 
@@ -505,6 +505,14 @@ function isHttpUrl(value) {
   } catch {
     return false;
   }
+}
+
+function isMagnetUrl(value) {
+  return typeof value === "string" && value.startsWith("magnet:?");
+}
+
+function isSupportedBridgeUrl(value) {
+  return isHttpUrl(value) || isMagnetUrl(value);
 }
 
 function markRecentlyCaptured(value) {

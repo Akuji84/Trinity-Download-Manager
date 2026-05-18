@@ -11,6 +11,7 @@
 
   const originalWindowOpen = window.open.bind(window);
   const originalAnchorClick = HTMLAnchorElement.prototype.click;
+  const originalFormSubmit = HTMLFormElement.prototype.submit;
   const originalLocationAssign = window.location.assign.bind(window.location);
   const originalLocationReplace = window.location.replace.bind(window.location);
 
@@ -21,7 +22,7 @@
 
     requestCapture(
       {
-        url: toAbsoluteHttpUrl(url),
+        url: toAbsoluteSupportedUrl(url),
         page_url: window.location.href,
         suggested_file_name: deriveSuggestedFileName(url),
         mime_type: null,
@@ -58,6 +59,28 @@
     );
   };
 
+  HTMLFormElement.prototype.submit = function patchedFormSubmit() {
+    const actionUrl = this.action || this.getAttribute("action");
+    if (!shouldCaptureUrl(actionUrl)) {
+      return originalFormSubmit.call(this);
+    }
+
+    requestCapture(
+      {
+        url: toAbsoluteSupportedUrl(actionUrl),
+        page_url: window.location.href,
+        suggested_file_name: deriveSuggestedFileName(actionUrl),
+        mime_type: null,
+        referrer: window.location.href,
+      },
+      (captured) => {
+        if (!captured) {
+          originalFormSubmit.call(this);
+        }
+      },
+    );
+  };
+
   window.location.assign = function patchedLocationAssign(url) {
     if (!shouldCaptureUrl(url)) {
       return originalLocationAssign(url);
@@ -65,7 +88,7 @@
 
     requestCapture(
       {
-        url: toAbsoluteHttpUrl(url),
+        url: toAbsoluteSupportedUrl(url),
         page_url: window.location.href,
         suggested_file_name: deriveSuggestedFileName(url),
         mime_type: null,
@@ -86,7 +109,7 @@
 
     requestCapture(
       {
-        url: toAbsoluteHttpUrl(url),
+        url: toAbsoluteSupportedUrl(url),
         page_url: window.location.href,
         suggested_file_name: deriveSuggestedFileName(url),
         mime_type: null,
@@ -152,11 +175,15 @@
       return false;
     }
 
-    if (!isHttpUrl(anchor.href)) {
+    if (!isSupportedUrl(anchor.href)) {
       return false;
     }
 
     if (anchor.hasAttribute("download")) {
+      return true;
+    }
+
+    if (isMagnetUrl(anchor.href) || isLikelyBinaryUrl(anchor.href)) {
       return true;
     }
 
@@ -173,13 +200,13 @@
   }
 
   function shouldCaptureUrl(url, target) {
-    const absoluteUrl = toAbsoluteHttpUrl(url);
+    const absoluteUrl = toAbsoluteSupportedUrl(url);
     if (!absoluteUrl) {
       return false;
     }
 
     const combinedText = [String(url || ""), String(target || "")].join(" ").trim();
-    return DOWNLOAD_HINT_PATTERN.test(combinedText) || isLikelyBinaryUrl(absoluteUrl);
+    return isMagnetUrl(absoluteUrl) || DOWNLOAD_HINT_PATTERN.test(combinedText) || isLikelyBinaryUrl(absoluteUrl);
   }
 
   function isLikelyBinaryUrl(value) {
@@ -192,7 +219,11 @@
     }
   }
 
-  function toAbsoluteHttpUrl(value) {
+  function toAbsoluteSupportedUrl(value) {
+    if (isMagnetUrl(value)) {
+      return String(value);
+    }
+
     try {
       const parsed = new URL(String(value), window.location.href);
       if (parsed.protocol === "http:" || parsed.protocol === "https:") {
@@ -202,8 +233,12 @@
     return null;
   }
 
-  function isHttpUrl(value) {
-    return !!toAbsoluteHttpUrl(value);
+  function isSupportedUrl(value) {
+    return !!toAbsoluteSupportedUrl(value);
+  }
+
+  function isMagnetUrl(value) {
+    return typeof value === "string" && value.startsWith("magnet:?");
   }
 
   function deriveSuggestedFileName(value) {

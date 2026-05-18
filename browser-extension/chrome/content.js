@@ -49,7 +49,7 @@ document.addEventListener(
       return;
     }
 
-    const candidate = findDownloadCandidate(event.target);
+    const candidate = findDownloadCandidate(event);
     if (!candidate) {
       return;
     }
@@ -96,26 +96,34 @@ function injectPageHook() {
   script.remove();
 }
 
-function findDownloadCandidate(startNode) {
-  if (!(startNode instanceof Element)) {
-    return null;
-  }
+function findDownloadCandidate(event) {
+  const composedPath = typeof event?.composedPath === "function" ? event.composedPath() : null;
+  const candidates = Array.isArray(composedPath) && composedPath.length > 0
+    ? composedPath
+    : [event?.target];
 
-  const anchor = startNode.closest("a[href]");
-  if (anchor) {
-    return anchor;
-  }
+  for (const node of candidates) {
+    if (!(node instanceof Element)) {
+      continue;
+    }
 
-  return startNode.closest("[data-download-url]");
+    const anchor = node.closest("a[href]");
+    if (anchor) {
+      return anchor;
+    }
+
+    const dataElement = node.closest("[data-download-url],[data-url],[data-href]");
+    if (dataElement) {
+      return dataElement;
+    }
+  }
+  return null;
 }
 
 function buildPayload(candidate) {
-  const url =
-    candidate instanceof HTMLAnchorElement
-      ? candidate.href
-      : candidate.getAttribute("data-download-url");
+  const url = deriveCandidateUrl(candidate);
 
-  if (!url || !isHttpUrl(url)) {
+  if (!url || !isSupportedCaptureUrl(url)) {
     return null;
   }
 
@@ -129,6 +137,10 @@ function buildPayload(candidate) {
 }
 
 function shouldCaptureCandidate(candidate, payload) {
+  if (isMagnetUrl(payload.url) || isLikelyBinaryUrl(payload.url)) {
+    return true;
+  }
+
   if (candidate instanceof HTMLAnchorElement && candidate.hasAttribute("download")) {
     return true;
   }
@@ -147,6 +159,11 @@ function shouldCaptureCandidate(candidate, payload) {
 }
 
 function fallbackToBrowser(candidate, url) {
+  if (isMagnetUrl(url)) {
+    window.location.href = url;
+    return;
+  }
+
   if (candidate instanceof HTMLAnchorElement) {
     window.location.href = candidate.href;
     return;
@@ -169,10 +186,41 @@ function deriveSuggestedFileName(url, candidate) {
   }
 }
 
+function deriveCandidateUrl(candidate) {
+  if (candidate instanceof HTMLAnchorElement) {
+    return candidate.href;
+  }
+
+  return (
+    candidate.getAttribute("data-download-url") ||
+    candidate.getAttribute("data-url") ||
+    candidate.getAttribute("data-href") ||
+    null
+  );
+}
+
+function isSupportedCaptureUrl(value) {
+  return isHttpUrl(value) || isMagnetUrl(value);
+}
+
 function isHttpUrl(value) {
   try {
     const parsedUrl = new URL(value);
     return parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function isMagnetUrl(value) {
+  return typeof value === "string" && value.startsWith("magnet:?");
+}
+
+function isLikelyBinaryUrl(value) {
+  try {
+    const parsedUrl = new URL(value);
+    const pathname = parsedUrl.pathname.toLowerCase();
+    return /\.(exe|msi|zip|rar|7z|pkg|dmg|apk|iso|torrent|deb|rpm)(?:$|[?#])/.test(pathname);
   } catch {
     return false;
   }
